@@ -1,0 +1,39 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: zerodha-trading-bot
+
+# Kite Connect Configuration
+kite:
+  api-key: ${KITE_API_KEY:4u07o35o6w5uhd2r}
+  api-secret: ${KITE_API_SECRET:n4ex6pjf9ldhtpngrsyzqhjbgyi8tgtt}
+  access-token: ${KITE_ACCESS_TOKEN:}
+  login-url: https://kite.zerodha.com/connect/login
+
+# Actuator endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# Logging
+logging:
+  level:
+    com.tradingbot: DEBUG
+    com.zerodhatech.kiteconnect: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+
+# Swagger/OpenAPI
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
