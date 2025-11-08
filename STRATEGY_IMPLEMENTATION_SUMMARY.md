@@ -1,0 +1,254 @@
+# Trading Strategies Feature - Implementation Summary
+
+## ✅ Successfully Implemented!
+
+I've added complete trading strategy functionality to your application with ATM Straddle and ATM Strangle strategies.
+
+## 📦 New Files Created
+
+### 1. Models
+- **StrategyType.java** - Enum with strategy types (ATM_STRADDLE, ATM_STRANGLE, etc.)
+- **StrategyExecution.java** - Model to track strategy execution details
+
+### 2. DTOs
+- **StrategyRequest.java** - Request object for executing strategies
+- **StrategyExecutionResponse.java** - Response with execution details and order information
+
+### 3. Services
+- **StrategyService.java** - Core business logic for strategy execution
+  - ATM Straddle implementation
+  - ATM Strangle implementation
+  - Automatic strike calculation
+  - Expiry matching (WEEKLY/MONTHLY)
+  - Position tracking
+
+### 4. Controllers
+- **StrategyController.java** - REST API endpoints for frontend integration
+
+### 5. Documentation
+- **STRATEGY_API_DOCS.md** - Complete API documentation with examples
+
+## 🎯 Implemented Strategies
+
+### 1. ATM Straddle (BUY)
+- **What it does**: Buys 1 ATM Call + 1 ATM Put at the same strike
+- **Logic**: 
+  - Fetches current NIFTY/BANKNIFTY spot price
+  - Calculates ATM strike (rounded to nearest strike interval)
+  - Places market/limit orders for both CE and PE
+  - Returns execution details with order IDs and prices
+
+### 2. ATM Strangle (BUY)
+- **What it does**: Buys 1 OTM Call + 1 OTM Put
+- **Logic**:
+  - Calculates ATM strike
+  - Adds strike gap (100 for NIFTY, 200 for BANKNIFTY)
+  - Places orders for higher CE and lower PE
+  - Lower premium cost than straddle
+
+## 🔌 API Endpoints for Frontend
+
+### Execute Strategy
+```
+POST /api/strategies/execute
+```
+
+**Request**:
+```json
+{
+  "strategyType": "ATM_STRADDLE",
+  "instrumentType": "NIFTY",
+  "expiry": "WEEKLY",
+  "quantity": 50,
+  "orderType": "MARKET"
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Strategy executed successfully",
+  "data": {
+    "executionId": "uuid",
+    "status": "COMPLETED",
+    "orders": [
+      {
+        "orderId": "123456",
+        "tradingSymbol": "NIFTY2511024000CE",
+        "optionType": "CE",
+        "strike": 24000,
+        "quantity": 50,
+        "price": 120.50
+      },
+      {
+        "orderId": "123457",
+        "tradingSymbol": "NIFTY2511024000PE",
+        "optionType": "PE",
+        "strike": 24000,
+        "quantity": 50,
+        "price": 115.75
+      }
+    ],
+    "totalPremium": 11812.50
+  }
+}
+```
+
+### Get Active Strategies
+```
+GET /api/strategies/active
+```
+
+### Get Available Instruments
+```
+GET /api/strategies/instruments
+```
+
+Returns: NIFTY, BANKNIFTY, FINNIFTY with lot sizes
+
+### Get Available Strategy Types
+```
+GET /api/strategies/types
+```
+
+Returns all strategy types with descriptions
+
+### Get Expiries
+```
+GET /api/strategies/expiries/{instrumentType}
+```
+
+Returns: WEEKLY, MONTHLY options
+
+## 🎨 Frontend Dashboard Components Needed
+
+### 1. Strategy Selection Form
+```jsx
+- Dropdown: Strategy Type (ATM_STRADDLE, ATM_STRANGLE)
+- Dropdown: Instrument (NIFTY, BANKNIFTY, FINNIFTY)
+- Dropdown: Expiry (WEEKLY, MONTHLY)
+- Input: Quantity (optional - defaults to 1 lot)
+- Input: Strike Gap (for strangle, optional)
+- Button: Execute Strategy
+```
+
+### 2. Active Strategies Dashboard
+```jsx
+- Table showing all active strategies
+- Columns: Execution ID, Strategy Type, Instrument, Entry Price, P&L
+- Real-time updates
+- Action buttons: View Details, Exit Strategy
+```
+
+### 3. Strategy Details View
+```jsx
+- Individual order details
+- Option symbols and strikes
+- Entry prices
+- Current market prices
+- P&L calculation
+```
+
+## 🔧 Key Features Implemented
+
+✅ **Automatic Strike Calculation**
+- Fetches live spot price from Kite
+- Rounds to nearest strike (50 for NIFTY, 100 for BANKNIFTY)
+
+✅ **Expiry Matching**
+- WEEKLY: Finds nearest Thursday expiry
+- MONTHLY: Finds last Thursday of month
+- Custom date: Exact date matching
+
+✅ **Lot Size Management**
+- NIFTY: 50 shares/lot
+- BANKNIFTY: 15 shares/lot
+- FINNIFTY: 40 shares/lot
+
+✅ **Order Execution**
+- Places individual orders for each leg
+- Tracks order IDs and execution prices
+- Calculates total premium paid
+
+✅ **Strategy Tracking**
+- In-memory storage of active strategies
+- Execution ID for tracking
+- Status management (PENDING, EXECUTING, COMPLETED, FAILED)
+
+## 📊 Strategy Logic Details
+
+### ATM Straddle Flow:
+1. Get current NIFTY/BANKNIFTY spot price via Kite API
+2. Calculate ATM strike (round spot price to nearest strike interval)
+3. Fetch all option instruments for selected expiry
+4. Find ATM CE (Call) and ATM PE (Put) options
+5. Place BUY order for CE
+6. Place BUY order for PE
+7. Return execution details with order IDs and prices
+
+### ATM Strangle Flow:
+1. Get current spot price
+2. Calculate ATM strike
+3. Add strike gap (default: 100 for NIFTY, 200 for BANKNIFTY)
+4. Calculate OTM strikes (CE = ATM + gap, PE = ATM - gap)
+5. Find OTM CE and OTM PE options
+6. Place BUY orders for both
+7. Return execution details
+
+## 🧪 Testing
+
+### Using Swagger UI
+1. Start the application
+2. Go to `http://localhost:8080/swagger-ui.html`
+3. Navigate to "Trading Strategies" section
+4. Try "POST /api/strategies/execute" endpoint
+
+### Sample Test Request:
+```json
+{
+  "strategyType": "ATM_STRADDLE",
+  "instrumentType": "NIFTY",
+  "expiry": "WEEKLY",
+  "quantity": 50
+}
+```
+
+## 🚨 Important Notes
+
+1. **Authentication Required**: User must be logged in via `/api/auth/session`
+2. **Market Hours**: Strategies execute only during market hours (9:15 AM - 3:30 PM IST)
+3. **Margin Required**: Ensure sufficient margin for option buying
+4. **NFO Exchange**: All options are traded on NFO (National Futures & Options)
+5. **Product Type**: Currently set to NRML (Normal - carry forward)
+
+## 📝 What's Ready for Frontend
+
+✅ Complete REST APIs
+✅ CORS enabled for cross-origin requests
+✅ Swagger documentation
+✅ Error handling
+✅ Validation
+✅ Response formatting
+
+## 🔮 Future Enhancements (Not Yet Implemented)
+
+- BULL_CALL_SPREAD strategy
+- BEAR_PUT_SPREAD strategy
+- IRON_CONDOR strategy
+- Auto square-off at 3:15 PM
+- Stop loss / Target implementation
+- Real-time P&L tracking
+- Strategy exit/close functionality
+- Position modification
+
+## 📚 Files to Review
+
+1. **STRATEGY_API_DOCS.md** - Complete API documentation
+2. **StrategyController.java** - All API endpoints
+3. **StrategyService.java** - Business logic
+4. **StrategyRequest.java** - Request format
+5. **StrategyExecutionResponse.java** - Response format
+
+Your trading strategy feature is now fully implemented and ready for frontend integration! 🎉
+
