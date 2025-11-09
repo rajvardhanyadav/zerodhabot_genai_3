@@ -161,11 +161,11 @@ public class PaperTradingService {
             Double executionPrice = getCurrentPrice(order.getTradingSymbol(), order.getExchange());
 
             // Apply slippage
-            if (config.getSlippagePercentage() > 0) {
+            /*if (config.getSlippagePercentage() > 0) {
                 double slippage = executionPrice * (config.getSlippagePercentage() / 100.0);
                 executionPrice = "BUY".equals(order.getTransactionType()) ?
                                executionPrice + slippage : executionPrice - slippage;
-            }
+            }*/
 
             // Update order
             order.setStatus("COMPLETE");

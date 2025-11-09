@@ -36,6 +36,18 @@ trading:
   enable-order-rejection: false
   rejection-probability: 0.02
 
+# Strategy Configuration
+strategy:
+  # Default stop loss in points (can be overridden via API request)
+  default-stop-loss-points: 10.0
+
+  # Default target in points (can be overridden via API request)
+  default-target-points: 15.0
+
+  # Auto square off settings
+  auto-square-off-enabled: false
+  auto-square-off-time: "15:15"
+
 # Actuator endpoints
 management:
   endpoints:

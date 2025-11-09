@@ -20,7 +20,7 @@ public class StrategyRequest {
     @NotNull(message = "Expiry is required")
     private String expiry; // Format: yyyy-MM-dd or WEEKLY/MONTHLY
 
-    private Integer quantity; // Default: 1 lot
+    private Integer lots; // Number of lots to trade (default: 1 lot). Will be multiplied by instrument lot size
 
     private String orderType; // MARKET or LIMIT (default: MARKET)
 
@@ -28,8 +28,7 @@ public class StrategyRequest {
 
     private Boolean autoSquareOff; // Auto square off at 3:15 PM (default: false)
 
-    private Double stopLoss; // Stop loss percentage (optional)
+    private Double stopLossPoints; // Stop loss in points (optional, uses default from config if not provided)
 
-    private Double target; // Target percentage (optional)
+    private Double targetPoints; // Target in points (optional, uses default from config if not provided)
 }
-

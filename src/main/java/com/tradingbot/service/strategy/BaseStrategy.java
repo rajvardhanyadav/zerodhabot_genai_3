@@ -1,6 +1,7 @@
 package com.tradingbot.service.strategy;
 
 import com.tradingbot.dto.OrderRequest;
+import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
@@ -125,6 +126,26 @@ public abstract class BaseStrategy implements TradingStrategy {
             case "FINNIFTY" -> 40;
             default -> throw new IllegalArgumentException("Unsupported instrument type: " + instrumentType);
         };
+    }
+
+    /**
+     * Calculate actual order quantity based on number of lots and instrument lot size.
+     * This method ensures consistent quantity calculation across all strategies.
+     *
+     * @param request Strategy request containing the number of lots (or null for default 1 lot)
+     * @return Actual quantity to trade (numberOfLots * lotSize)
+     * @throws KiteException if error fetching lot size from Kite API
+     * @throws IOException if network error occurs
+     */
+    protected int calculateOrderQuantity(StrategyRequest request) throws KiteException, IOException {
+        int lotSize = getLotSize(request.getInstrumentType());
+        int numberOfLots = request.getLots() != null ? request.getLots() : 1;
+        int quantity = numberOfLots * lotSize;
+
+        log.info("Order quantity calculation - Lots: {}, Lot Size: {}, Total Quantity: {}",
+                numberOfLots, lotSize, quantity);
+
+        return quantity;
     }
 
     /**
