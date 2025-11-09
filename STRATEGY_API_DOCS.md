@@ -228,7 +228,159 @@ Get available expiry dates for an instrument.
 {
   "success": true,
   "message": "Success",
-  "data": ["WEEKLY", "MONTHLY"]
+  "data": [
+    "2025-11-14",
+    "2025-11-21",
+    "2025-11-28",
+    "2025-12-26"
+  ]
+}
+```
+
+---
+
+### 7. Stop Strategy by ID
+Stop a specific active strategy by closing all legs at market price.
+
+**Endpoint**: `DELETE /api/strategies/stop/{executionId}`
+
+**Path Parameters**:
+- `executionId`: Unique execution identifier of the strategy to stop
+
+**Success Response** (200 OK):
+```json
+{
+  "success": true,
+  "message": "Strategy stopped successfully",
+  "data": {
+    "executionId": "abc123-def456-ghi789",
+    "totalLegs": 2,
+    "successCount": 2,
+    "failureCount": 0,
+    "status": "SUCCESS",
+    "exitOrders": [
+      {
+        "tradingSymbol": "NIFTY2511024000CE",
+        "optionType": "CE",
+        "quantity": "50",
+        "exitOrderId": "221108000789012",
+        "status": "SUCCESS",
+        "message": "Order placed successfully"
+      },
+      {
+        "tradingSymbol": "NIFTY2511024000PE",
+        "optionType": "PE",
+        "quantity": "50",
+        "exitOrderId": "221108000789013",
+        "status": "SUCCESS",
+        "message": "Order placed successfully"
+      }
+    ]
+  }
+}
+```
+
+**Error Response** (400 Bad Request):
+```json
+{
+  "success": false,
+  "message": "Strategy not found: abc123-def456-ghi789",
+  "data": null
+}
+```
+
+**Error Response** (400 Bad Request - Invalid State):
+```json
+{
+  "success": false,
+  "message": "Strategy is not active. Current status: COMPLETED",
+  "data": null
+}
+```
+
+---
+
+### 8. Stop All Active Strategies
+Stop all currently active strategies by closing all legs at market price.
+
+**Endpoint**: `DELETE /api/strategies/stop-all`
+
+**Success Response** (200 OK):
+```json
+{
+  "success": true,
+  "message": "All active strategies stopped",
+  "data": {
+    "message": "Stopped 3 strategies",
+    "totalStrategies": 3,
+    "totalLegsClosedSuccessfully": 6,
+    "totalLegsFailed": 0,
+    "results": [
+      {
+        "executionId": "abc123-def456-ghi789",
+        "totalLegs": 2,
+        "successCount": 2,
+        "failureCount": 0,
+        "status": "SUCCESS",
+        "exitOrders": [
+          {
+            "tradingSymbol": "NIFTY2511024000CE",
+            "optionType": "CE",
+            "quantity": "50",
+            "exitOrderId": "221108000789012",
+            "status": "SUCCESS",
+            "message": "Order placed successfully"
+          },
+          {
+            "tradingSymbol": "NIFTY2511024000PE",
+            "optionType": "PE",
+            "quantity": "50",
+            "exitOrderId": "221108000789013",
+            "status": "SUCCESS",
+            "message": "Order placed successfully"
+          }
+        ]
+      },
+      {
+        "executionId": "xyz789-abc123-def456",
+        "totalLegs": 2,
+        "successCount": 2,
+        "failureCount": 0,
+        "status": "SUCCESS",
+        "exitOrders": [
+          {
+            "tradingSymbol": "BANKNIFTY25110520CE",
+            "optionType": "CE",
+            "quantity": "15",
+            "exitOrderId": "221108000789014",
+            "status": "SUCCESS",
+            "message": "Order placed successfully"
+          },
+          {
+            "tradingSymbol": "BANKNIFTY25110520PE",
+            "optionType": "PE",
+            "quantity": "15",
+            "exitOrderId": "221108000789015",
+            "status": "SUCCESS",
+            "message": "Order placed successfully"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**Success Response** (200 OK - No Active Strategies):
+```json
+{
+  "success": true,
+  "message": "All active strategies stopped",
+  "data": {
+    "message": "No active strategies to stop",
+    "totalStrategies": 0,
+    "results": []
+  }
 }
 ```
 
@@ -297,6 +449,64 @@ const getInstruments = async () => {
     console.error('Error fetching instruments:', error);
   }
 };
+
+// Stop a specific strategy
+const stopStrategy = async (executionId) => {
+  try {
+    const response = await fetch(`http://localhost:8080/api/strategies/stop/${executionId}`, {
+      method: 'DELETE'
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      console.log('Strategy stopped:', result.data);
+      alert(`Strategy stopped! ${result.data.successCount} legs closed successfully.`);
+      return result.data;
+    } else {
+      console.error('Error:', result.message);
+      alert(`Error: ${result.message}`);
+    }
+  } catch (error) {
+    console.error('Network error:', error);
+  }
+};
+
+// Stop all active strategies
+const stopAllStrategies = async () => {
+  try {
+    const response = await fetch('http://localhost:8080/api/strategies/stop-all', {
+      method: 'DELETE'
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      console.log('All strategies stopped:', result.data);
+      alert(`${result.data.message}\nLegs closed: ${result.data.totalLegsClosedSuccessfully}`);
+      return result.data;
+    } else {
+      console.error('Error:', result.message);
+      alert(`Error: ${result.message}`);
+    }
+  } catch (error) {
+    console.error('Network error:', error);
+  }
+};
+
+// Get expiries for an instrument
+const getExpiries = async (instrumentType) => {
+  try {
+    const response = await fetch(`http://localhost:8080/api/strategies/expiries/${instrumentType}`);
+    const result = await response.json();
+    
+    if (result.success) {
+      return result.data;
+    }
+  } catch (error) {
+    console.error('Error fetching expiries:', error);
+  }
+};
 ```
 
 ### Angular/TypeScript Example
@@ -328,6 +538,18 @@ export class StrategyService {
 
   getStrategyTypes(): Observable<ApiResponse> {
     return this.http.get<ApiResponse>(`${this.apiUrl}/types`);
+  }
+
+  stopStrategy(executionId: string): Observable<ApiResponse> {
+    return this.http.delete<ApiResponse>(`${this.apiUrl}/stop/${executionId}`);
+  }
+
+  stopAllStrategies(): Observable<ApiResponse> {
+    return this.http.delete<ApiResponse>(`${this.apiUrl}/stop-all`);
+  }
+
+  getExpiries(instrumentType: string): Observable<ApiResponse> {
+    return this.http.get<ApiResponse>(`${this.apiUrl}/expiries/${instrumentType}`);
   }
 }
 
@@ -426,4 +648,3 @@ Navigate to "Trading Strategies" section to test all endpoints interactively.
 ## Support
 
 For issues or questions, refer to the main README.md or check Swagger documentation.
-

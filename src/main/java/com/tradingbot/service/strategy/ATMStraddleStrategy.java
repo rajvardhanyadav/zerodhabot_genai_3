@@ -49,7 +49,8 @@ public class ATMStraddleStrategy extends BaseStrategy {
     }
 
     @Override
-    public StrategyExecutionResponse execute(StrategyRequest request, String executionId)
+    public StrategyExecutionResponse execute(StrategyRequest request, String executionId,
+                                            StrategyCompletionCallback completionCallback)
             throws KiteException, IOException {
 
         // Get SL and Target from request, or use defaults from config
@@ -151,7 +152,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
         // Setup position monitoring with SL and Target
         setupMonitoring(executionId, atmCall, atmPut, callPrice, putPrice,
                        callOrderResponse.getOrderId(), putOrderResponse.getOrderId(),
-                       quantity, orderDetails, stopLossPoints, targetPoints);
+                       quantity, orderDetails, stopLossPoints, targetPoints, completionCallback);
 
         StrategyExecutionResponse response = new StrategyExecutionResponse();
         response.setExecutionId(executionId);
@@ -176,7 +177,8 @@ public class ATMStraddleStrategy extends BaseStrategy {
                                  double callEntryPrice, double putEntryPrice,
                                  String callOrderId, String putOrderId,
                                  int quantity, List<StrategyExecutionResponse.OrderDetail> orderDetails,
-                                 double stopLossPoints, double targetPoints) {
+                                 double stopLossPoints, double targetPoints,
+                                 StrategyCompletionCallback completionCallback) {
 
         // Create position monitor with configurable SL and target
         PositionMonitor monitor = new PositionMonitor(executionId, stopLossPoints, targetPoints);
@@ -193,7 +195,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
         monitor.setExitCallback(reason -> {
             log.warn("Exit triggered for execution {}: {}", executionId, reason);
             exitAllLegs(executionId, callOrderId, putOrderId, callInstrument.tradingsymbol,
-                       putInstrument.tradingsymbol, quantity, reason);
+                       putInstrument.tradingsymbol, quantity, reason, completionCallback);
         });
 
         // Ensure WebSocket is connected
@@ -211,7 +213,8 @@ public class ATMStraddleStrategy extends BaseStrategy {
      * Exit all legs when SL or Target is hit
      */
     private void exitAllLegs(String executionId, String callOrderId, String putOrderId,
-                            String callSymbol, String putSymbol, int quantity, String reason) {
+                            String callSymbol, String putSymbol, int quantity, String reason,
+                            StrategyCompletionCallback completionCallback) {
         try {
             String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
             log.info("[{} MODE] Exiting all legs for execution {}: {}", tradingMode, executionId, reason);
@@ -237,6 +240,11 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
             // Stop monitoring
             webSocketService.stopMonitoring(executionId);
+
+            // Notify completion via callback
+            if (completionCallback != null) {
+                completionCallback.onStrategyCompleted(executionId, reason);
+            }
 
             log.info("[{} MODE] Successfully exited all legs for execution {}", tradingMode, executionId);
 

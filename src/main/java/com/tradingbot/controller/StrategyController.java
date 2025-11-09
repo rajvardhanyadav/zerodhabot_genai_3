@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.*;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -132,6 +133,44 @@ public class StrategyController {
         } catch (Exception e) {
             log.error("Unexpected error fetching expiries", e);
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/stop/{executionId}")
+    @Operation(summary = "Stop a specific strategy by closing all legs at market price")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> stopStrategy(@PathVariable String executionId) {
+        try {
+            log.info("Request to stop strategy: {}", executionId);
+            Map<String, Object> result = strategyService.stopStrategy(executionId);
+            return ResponseEntity.ok(ApiResponse.success("Strategy stopped successfully", result));
+        } catch (IllegalArgumentException e) {
+            log.error("Strategy not found: {}", executionId);
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        } catch (IllegalStateException e) {
+            log.error("Invalid strategy state: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        } catch (KiteException | IOException e) {
+            log.error("Error stopping strategy: {}", executionId, e);
+            return ResponseEntity.badRequest().body(ApiResponse.error("Failed to stop strategy: " + e.getMessage()));
+        } catch (Exception e) {
+            log.error("Unexpected error stopping strategy", e);
+            return ResponseEntity.badRequest().body(ApiResponse.error("Unexpected error: " + e.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/stop-all")
+    @Operation(summary = "Stop all active strategies by closing all legs at market price")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> stopAllStrategies() {
+        try {
+            log.info("Request to stop all active strategies");
+            Map<String, Object> result = strategyService.stopAllActiveStrategies();
+            return ResponseEntity.ok(ApiResponse.success("All active strategies stopped", result));
+        } catch (KiteException | IOException e) {
+            log.error("Error stopping all strategies", e);
+            return ResponseEntity.badRequest().body(ApiResponse.error("Failed to stop strategies: " + e.getMessage()));
+        } catch (Exception e) {
+            log.error("Unexpected error stopping all strategies", e);
+            return ResponseEntity.badRequest().body(ApiResponse.error("Unexpected error: " + e.getMessage()));
         }
     }
 
