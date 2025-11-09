@@ -1,6 +1,7 @@
 package com.tradingbot.service.strategy;
 
 import com.tradingbot.model.StrategyType;
+import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

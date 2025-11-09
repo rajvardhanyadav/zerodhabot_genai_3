@@ -1,6 +1,6 @@
 # Zerodha Trading Bot - Complete API Reference
 
-**Version:** 1.0.0  
+**Version:** 2.0.0  
 **Base URL:** `http://localhost:8080` (Development) | `https://your-app.onrender.com` (Production)  
 **Last Updated:** November 9, 2025
 
@@ -15,11 +15,12 @@
 5. [Account APIs](#account-apis)
 6. [GTT (Good Till Triggered) APIs](#gtt-apis)
 7. [Trading Strategies APIs](#trading-strategies-apis)
-8. [Health Check APIs](#health-check-apis)
-9. [Common Response Format](#common-response-format)
-10. [Error Codes](#error-codes)
-11. [Authentication Flow](#authentication-flow)
-12. [Code Examples](#code-examples)
+8. [Position Monitoring APIs](#position-monitoring-apis)
+9. [Health Check APIs](#health-check-apis)
+10. [Common Response Format](#common-response-format)
+11. [Error Codes](#error-codes)
+12. [Authentication Flow](#authentication-flow)
+13. [Code Examples](#code-examples)
 
 ---
 
@@ -925,7 +926,7 @@ Cancel a GTT order.
 
 ### 1. Execute Strategy
 
-Execute an automated trading strategy.
+Execute an automated trading strategy with real-time monitoring, stop loss, and target profit features.
 
 **Endpoint:** `POST /api/strategies/execute`
 
@@ -965,8 +966,8 @@ Execute an automated trading strategy.
   "message": "Strategy executed successfully",
   "data": {
     "executionId": "abc123-def456-ghi789",
-    "status": "COMPLETED",
-    "message": "ATM Straddle executed successfully",
+    "status": "ACTIVE",
+    "message": "ATM Straddle executed successfully. Monitoring with SL=10pts, Target=15pts",
     "orders": [
       {
         "orderId": "221108000123456",
@@ -994,6 +995,13 @@ Execute an automated trading strategy.
   }
 }
 ```
+
+**Important Notes:**
+- **ATM_STRADDLE** now includes automatic monitoring with:
+  - **Stop Loss:** 10 points on any leg (automatically exits both legs)
+  - **Target:** 15 points on any leg (automatically exits both legs)
+  - **Real-time WebSocket monitoring** for sub-second price updates
+  - Status will be `ACTIVE` indicating real-time monitoring is enabled
 
 ---
 
@@ -1085,7 +1093,7 @@ Get list of all available strategy types.
 
 ### 5. Get Available Instruments
 
-Get list of tradeable instruments for strategies.
+Get list of tradeable instruments for strategies with real-time lot sizes fetched from Kite API.
 
 **Endpoint:** `GET /api/strategies/instruments`
 
@@ -1098,24 +1106,26 @@ Get list of tradeable instruments for strategies.
     {
       "code": "NIFTY",
       "name": "NIFTY 50",
-      "lotSize": 50,
+      "lotSize": 75,
       "strikeInterval": 50.0
     },
     {
       "code": "BANKNIFTY",
-      "name": "BANK NIFTY",
-      "lotSize": 15,
+      "name": "NIFTY BANK",
+      "lotSize": 35,
       "strikeInterval": 100.0
     },
     {
       "code": "FINNIFTY",
-      "name": "FIN NIFTY",
+      "name": "NIFTY FINSEREXBNK",
       "lotSize": 40,
       "strikeInterval": 50.0
     }
   ]
 }
 ```
+
+**Important:** Lot sizes are dynamically fetched from Kite API and cached for the session, ensuring accuracy.
 
 ---
 
@@ -1136,6 +1146,112 @@ Get available expiry dates for an instrument.
   "data": ["WEEKLY", "MONTHLY"]
 }
 ```
+
+---
+
+## Position Monitoring APIs
+
+### 1. Get Monitoring Status
+
+Get the real-time WebSocket monitoring status.
+
+**Endpoint:** `GET /api/monitoring/status`
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "connected": true,
+    "activeMonitors": 3
+  }
+}
+```
+
+**Response Fields:**
+- `connected` - Whether WebSocket is connected to Kite
+- `activeMonitors` - Number of active strategy executions being monitored
+
+---
+
+### 2. Connect WebSocket
+
+Manually connect the WebSocket for real-time monitoring.
+
+**Endpoint:** `POST /api/monitoring/connect`
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "WebSocket connection initiated",
+  "data": "WebSocket connection initiated"
+}
+```
+
+**Note:** WebSocket automatically connects when a strategy with monitoring is executed. This endpoint is for manual control.
+
+---
+
+### 3. Disconnect WebSocket
+
+Disconnect the WebSocket connection.
+
+**Endpoint:** `POST /api/monitoring/disconnect`
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "WebSocket disconnected",
+  "data": "WebSocket disconnected"
+}
+```
+
+**Warning:** Disconnecting will stop all real-time monitoring. Active strategies will not trigger stop loss or target exits.
+
+---
+
+### 4. Stop Monitoring Execution
+
+Stop monitoring a specific strategy execution.
+
+**Endpoint:** `DELETE /api/monitoring/{executionId}`
+
+**Path Parameters:**
+- `executionId` - Strategy execution ID to stop monitoring
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Monitoring stopped for execution: abc123-def456-ghi789",
+  "data": "Monitoring stopped for execution: abc123-def456-ghi789"
+}
+```
+
+**Use Case:** Manually stop monitoring if you want to manage the position yourself without automated SL/Target exits.
 
 ---
 
@@ -1586,9 +1702,14 @@ ws.onmessage = (event) => {
 - Trading Strategies (ATM Straddle & ATM Strangle)
 - Health Check APIs
 
+**Version 2.0.0** (November 9, 2025)
+- Enhanced Trading Strategies with real-time monitoring
+- New Position Monitoring APIs
+- Dynamic lot size fetching for strategies
+- Bug fixes and performance improvements
+
 ---
 
 **End of API Documentation**
 
 For issues or support, contact your system administrator or refer to the Kite Connect documentation.
-

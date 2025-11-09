@@ -1,9 +1,12 @@
 package com.tradingbot.service.strategy;
 
 import com.tradingbot.dto.OrderRequest;
+import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.service.TradingService;
+import com.tradingbot.service.strategy.monitoring.PositionMonitor;
+import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Instrument;
 import lombok.extern.slf4j.Slf4j;
@@ -18,20 +21,31 @@ import java.util.Map;
  * ATM Straddle Strategy
  * Buy 1 ATM Call + Buy 1 ATM Put
  * Non-directional strategy that profits from high volatility
+ *
+ * Features:
+ * - Stop Loss: 10 points on any leg
+ * - Target: 15 points on any leg
+ * - Real-time monitoring via WebSocket
+ * - Auto-exit both legs when either SL or Target is hit
  */
 @Slf4j
 @Component
 public class ATMStraddleStrategy extends BaseStrategy {
 
-    public ATMStraddleStrategy(TradingService tradingService, Map<String, Integer> lotSizeCache) {
+    private final WebSocketService webSocketService;
+
+    public ATMStraddleStrategy(TradingService tradingService,
+                               Map<String, Integer> lotSizeCache,
+                               WebSocketService webSocketService) {
         super(tradingService, lotSizeCache);
+        this.webSocketService = webSocketService;
     }
 
     @Override
     public StrategyExecutionResponse execute(StrategyRequest request, String executionId)
             throws KiteException, IOException {
 
-        log.info("Executing ATM Straddle for {}", request.getInstrumentType());
+        log.info("Executing ATM Straddle for {} with SL=10pts, Target=15pts", request.getInstrumentType());
 
         // Get current spot price
         double spotPrice = getCurrentSpotPrice(request.getInstrumentType());
@@ -113,18 +127,97 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
         double totalPremium = (callPrice + putPrice) * quantity;
 
+        // Setup position monitoring with SL and Target
+        setupMonitoring(executionId, atmCall, atmPut, callPrice, putPrice,
+                       callOrderResponse.getOrderId(), putOrderResponse.getOrderId(),
+                       quantity, orderDetails);
+
         StrategyExecutionResponse response = new StrategyExecutionResponse();
         response.setExecutionId(executionId);
-        response.setStatus("COMPLETED");
-        response.setMessage("ATM Straddle executed successfully");
+        response.setStatus("ACTIVE");
+        response.setMessage("ATM Straddle executed successfully. Monitoring with SL=10pts, Target=15pts");
         response.setOrders(orderDetails);
         response.setTotalPremium(totalPremium);
         response.setCurrentValue(totalPremium);
         response.setProfitLoss(0.0);
         response.setProfitLossPercentage(0.0);
 
-        log.info("ATM Straddle executed successfully. Total Premium: {}", totalPremium);
+        log.info("ATM Straddle executed successfully. Total Premium: {}. Real-time monitoring started.", totalPremium);
         return response;
+    }
+
+    /**
+     * Setup real-time monitoring with stop loss and target
+     */
+    private void setupMonitoring(String executionId, Instrument callInstrument, Instrument putInstrument,
+                                 double callEntryPrice, double putEntryPrice,
+                                 String callOrderId, String putOrderId,
+                                 int quantity, List<StrategyExecutionResponse.OrderDetail> orderDetails) {
+
+        // Create position monitor with 10 point SL and 15 point target
+        PositionMonitor monitor = new PositionMonitor(executionId, 10.0, 15.0);
+
+        // Add Call leg
+        monitor.addLeg(callOrderId, callInstrument.tradingsymbol, callInstrument.instrument_token,
+                      callEntryPrice, quantity, "CE");
+
+        // Add Put leg
+        monitor.addLeg(putOrderId, putInstrument.tradingsymbol, putInstrument.instrument_token,
+                      putEntryPrice, quantity, "PE");
+
+        // Set exit callback to square off both legs
+        monitor.setExitCallback(reason -> {
+            log.warn("Exit triggered for execution {}: {}", executionId, reason);
+            exitAllLegs(executionId, callOrderId, putOrderId, callInstrument.tradingsymbol,
+                       putInstrument.tradingsymbol, quantity, reason);
+        });
+
+        // Ensure WebSocket is connected
+        if (!webSocketService.isConnected()) {
+            webSocketService.connect();
+        }
+
+        // Start monitoring
+        webSocketService.startMonitoring(executionId, monitor);
+
+        log.info("Position monitoring started for execution: {}", executionId);
+    }
+
+    /**
+     * Exit all legs when SL or Target is hit
+     */
+    private void exitAllLegs(String executionId, String callOrderId, String putOrderId,
+                            String callSymbol, String putSymbol, int quantity, String reason) {
+        try {
+            log.info("Exiting all legs for execution {}: {}", executionId, reason);
+
+            // Place sell orders for both legs
+            OrderRequest callExitOrder = createOrderRequest(callSymbol, "SELL", quantity, "MARKET", null);
+            OrderResponse callExitResponse = tradingService.placeOrder(callExitOrder);
+
+            if ("SUCCESS".equals(callExitResponse.getStatus())) {
+                log.info("Call leg exited successfully: {}", callExitResponse.getOrderId());
+            } else {
+                log.error("Failed to exit Call leg: {}", callExitResponse.getMessage());
+            }
+
+            OrderRequest putExitOrder = createOrderRequest(putSymbol, "SELL", quantity, "MARKET", null);
+            OrderResponse putExitResponse = tradingService.placeOrder(putExitOrder);
+
+            if ("SUCCESS".equals(putExitResponse.getStatus())) {
+                log.info("Put leg exited successfully: {}", putExitResponse.getOrderId());
+            } else {
+                log.error("Failed to exit Put leg: {}", putExitResponse.getMessage());
+            }
+
+            // Stop monitoring
+            webSocketService.stopMonitoring(executionId);
+
+            log.info("Successfully exited all legs for execution {}", executionId);
+
+        } catch (Exception | KiteException e) {
+            log.error("Error exiting legs for execution {}: {}", executionId, e.getMessage(), e);
+        }
     }
 
     @Override
@@ -134,7 +227,6 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
     @Override
     public String getStrategyDescription() {
-        return "Buy ATM Call + Buy ATM Put (Non-directional strategy)";
+        return "Buy ATM Call + Buy ATM Put (Non-directional strategy with SL=10pts, Target=15pts)";
     }
 }
-
