@@ -96,12 +96,23 @@ public class StrategyController {
     @Operation(summary = "Get available instruments")
     public ResponseEntity<ApiResponse<List<InstrumentInfo>>> getInstruments() {
         try {
-            List<InstrumentInfo> instruments = Arrays.asList(
-                new InstrumentInfo("NIFTY", "NIFTY 50", 50, 50.0),
-                new InstrumentInfo("BANKNIFTY", "BANK NIFTY", 15, 100.0),
-                new InstrumentInfo("FINNIFTY", "FIN NIFTY", 40, 50.0)
-            );
+            // Fetch instruments dynamically from Kite API with cached lot sizes
+            List<StrategyService.InstrumentDetail> instrumentDetails = strategyService.getAvailableInstruments();
+
+            // Convert to controller's InstrumentInfo format
+            List<InstrumentInfo> instruments = instrumentDetails.stream()
+                .map(detail -> new InstrumentInfo(
+                    detail.code(),
+                    detail.name(),
+                    detail.lotSize(),
+                    detail.strikeInterval()
+                ))
+                .collect(Collectors.toList());
+
             return ResponseEntity.ok(ApiResponse.success(instruments));
+        } catch (KiteException | IOException e) {
+            log.error("Error fetching instruments from Kite API", e);
+            return ResponseEntity.badRequest().body(ApiResponse.error("Failed to fetch instruments: " + e.getMessage()));
         } catch (Exception e) {
             log.error("Error fetching instruments", e);
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));

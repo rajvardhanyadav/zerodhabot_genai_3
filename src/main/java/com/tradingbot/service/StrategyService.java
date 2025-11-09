@@ -382,8 +382,8 @@ public class StrategyService {
      */
     private int getFallbackLotSize(String instrumentType) {
         return switch (instrumentType.toUpperCase()) {
-            case "NIFTY" -> 50;
-            case "BANKNIFTY" -> 15;
+            case "NIFTY" -> 75;
+            case "BANKNIFTY" -> 35;
             case "FINNIFTY" -> 40;
             default -> throw new IllegalArgumentException("Unsupported instrument type: " + instrumentType);
         };
@@ -588,4 +588,63 @@ public class StrategyService {
 
         return expiries;
     }
+
+    /**
+     * Get available instruments with their details from Kite API
+     * Returns instrument code, name, lot size, and strike interval
+     */
+    public List<InstrumentDetail> getAvailableInstruments() throws KiteException, IOException {
+        log.info("Fetching available instruments from Kite API");
+
+        List<InstrumentDetail> instrumentDetails = new ArrayList<>();
+
+        // List of supported instruments
+        String[] supportedInstruments = {"NIFTY", "BANKNIFTY", "FINNIFTY"};
+
+        for (String instrumentCode : supportedInstruments) {
+            try {
+                // Fetch lot size using existing cached logic
+                int lotSize = getLotSize(instrumentCode);
+
+                // Get strike interval
+                double strikeInterval = getStrikeInterval(instrumentCode);
+
+                // Get display name
+                String displayName = getInstrumentDisplayName(instrumentCode);
+
+                instrumentDetails.add(new InstrumentDetail(
+                    instrumentCode,
+                    displayName,
+                    lotSize,
+                    strikeInterval
+                ));
+
+                log.debug("Added instrument: {} with lot size: {}", instrumentCode, lotSize);
+
+            } catch (Exception e) {
+                log.error("Error fetching details for instrument {}: {}", instrumentCode, e.getMessage());
+                // Continue with other instruments even if one fails
+            }
+        }
+
+        log.info("Successfully fetched {} instruments", instrumentDetails.size());
+        return instrumentDetails;
+    }
+
+    /**
+     * Get display name for instrument
+     */
+    private String getInstrumentDisplayName(String instrumentCode) {
+        return switch (instrumentCode.toUpperCase()) {
+            case "NIFTY" -> "NIFTY 50";
+            case "BANKNIFTY" -> "NIFTY BANK";
+            case "FINNIFTY" -> "NIFTY FINSEREXBNK";
+            default -> instrumentCode;
+        };
+    }
+
+    /**
+     * DTO for instrument details
+     */
+    public record InstrumentDetail(String code, String name, int lotSize, double strikeInterval) {}
 }
