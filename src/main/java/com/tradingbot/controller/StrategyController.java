@@ -34,7 +34,7 @@ public class StrategyController {
     public ResponseEntity<ApiResponse<StrategyExecutionResponse>> executeStrategy(
             @Valid @RequestBody StrategyRequest request) {
         try {
-            log.info("Executing strategy: {} for {}", request.getStrategyType(), request.getInstrumentType());
+            log.error("Executing strategy: {} for {}", request.getStrategyType(), request.getInstrumentType());
             StrategyExecutionResponse response = strategyService.executeStrategy(request);
             return ResponseEntity.ok(ApiResponse.success("Strategy executed successfully", response));
         } catch (KiteException | IOException e) {
@@ -112,11 +112,14 @@ public class StrategyController {
     @Operation(summary = "Get available expiry dates for an instrument")
     public ResponseEntity<ApiResponse<List<String>>> getExpiries(@PathVariable String instrumentType) {
         try {
-            // For now, return predefined options. In production, fetch from Kite API
-            List<String> expiries = Arrays.asList("WEEKLY", "MONTHLY");
+            log.info("Fetching expiries for instrument: {}", instrumentType);
+            List<String> expiries = strategyService.getAvailableExpiries(instrumentType);
             return ResponseEntity.ok(ApiResponse.success(expiries));
+        } catch (KiteException | IOException e) {
+            log.error("Error fetching expiries for {}", instrumentType, e);
+            return ResponseEntity.badRequest().body(ApiResponse.error("Failed to fetch expiries: " + e.getMessage()));
         } catch (Exception e) {
-            log.error("Error fetching expiries", e);
+            log.error("Unexpected error fetching expiries", e);
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
         }
     }
@@ -143,4 +146,3 @@ public class StrategyController {
 
     public record InstrumentInfo(String code, String name, int lotSize, double strikeInterval) {}
 }
-

@@ -26,12 +26,13 @@ public class StrategyService {
 
     private final TradingService tradingService;
     private final Map<String, StrategyExecution> activeStrategies = new ConcurrentHashMap<>();
+    private final Map<String, Integer> lotSizeCache = new ConcurrentHashMap<>();
 
     /**
      * Execute a trading strategy
      */
     public StrategyExecutionResponse executeStrategy(StrategyRequest request) throws KiteException, IOException {
-        log.info("Executing strategy: {} for instrument: {}", request.getStrategyType(), request.getInstrumentType());
+        log.error("Executing strategy: {} for instrument: {}", request.getStrategyType(), request.getInstrumentType());
 
         String executionId = UUID.randomUUID().toString();
         StrategyExecution execution = new StrategyExecution();
@@ -70,25 +71,27 @@ public class StrategyService {
     private StrategyExecutionResponse executeATMStraddle(StrategyRequest request, String executionId)
             throws KiteException, IOException {
 
-        log.info("Executing ATM Straddle for {}", request.getInstrumentType());
+        log.error("Executing ATM Straddle for {}", request.getInstrumentType());
 
         // Get current spot price
         double spotPrice = getCurrentSpotPrice(request.getInstrumentType());
-        log.info("Current spot price: {}", spotPrice);
+        log.error("Current spot price: {}", spotPrice);
 
         // Calculate ATM strike
         double atmStrike = getATMStrike(spotPrice, request.getInstrumentType());
-        log.info("ATM Strike: {}", atmStrike);
+        log.error("ATM Strike: {}", atmStrike);
 
         // Get option instruments
         List<Instrument> instruments = getOptionInstruments(
             request.getInstrumentType(),
             request.getExpiry()
         );
+        log.error("Found {} option instruments for {}", instruments.size(), request.getInstrumentType());
 
         // Find ATM Call and Put
         Instrument atmCall = findOptionInstrument(instruments, atmStrike, "CE");
         Instrument atmPut = findOptionInstrument(instruments, atmStrike, "PE");
+        log.error("ATM Call: {}, ATM Put: {}", atmCall != null ? atmCall.tradingsymbol : "null", atmPut != null ? atmPut.tradingsymbol : "null");
 
         if (atmCall == null || atmPut == null) {
             throw new RuntimeException("ATM options not found for strike: " + atmStrike);
@@ -101,6 +104,14 @@ public class StrategyService {
         // Place Call order
         OrderRequest callOrder = createOrderRequest(atmCall.tradingsymbol, "BUY", quantity, orderType, null);
         var callOrderResponse = tradingService.placeOrder(callOrder);
+
+        // Validate Call order response
+        if (callOrderResponse == null || callOrderResponse.getOrderId() == null ||
+            !"SUCCESS".equals(callOrderResponse.getStatus())) {
+            String errorMsg = callOrderResponse != null ? callOrderResponse.getMessage() : "No response received";
+            log.error("Call order placement failed: {}", errorMsg);
+            throw new RuntimeException("Call order placement failed: " + errorMsg);
+        }
 
         double callPrice = getOrderPrice(callOrderResponse.getOrderId());
         orderDetails.add(new StrategyExecutionResponse.OrderDetail(
@@ -116,6 +127,14 @@ public class StrategyService {
         // Place Put order
         OrderRequest putOrder = createOrderRequest(atmPut.tradingsymbol, "BUY", quantity, orderType, null);
         var putOrderResponse = tradingService.placeOrder(putOrder);
+
+        // Validate Put order response
+        if (putOrderResponse == null || putOrderResponse.getOrderId() == null ||
+            !"SUCCESS".equals(putOrderResponse.getStatus())) {
+            String errorMsg = putOrderResponse != null ? putOrderResponse.getMessage() : "No response received";
+            log.error("Put order placement failed: {}", errorMsg);
+            throw new RuntimeException("Put order placement failed: " + errorMsg);
+        }
 
         double putPrice = getOrderPrice(putOrderResponse.getOrderId());
         orderDetails.add(new StrategyExecutionResponse.OrderDetail(
@@ -140,7 +159,7 @@ public class StrategyService {
         response.setProfitLoss(0.0);
         response.setProfitLossPercentage(0.0);
 
-        log.info("ATM Straddle executed. Total Premium: {}", totalPremium);
+        log.error("ATM Straddle executed. Total Premium: {}", totalPremium);
         return response;
     }
 
@@ -151,11 +170,11 @@ public class StrategyService {
     private StrategyExecutionResponse executeATMStrangle(StrategyRequest request, String executionId)
             throws KiteException, IOException {
 
-        log.info("Executing ATM Strangle for {}", request.getInstrumentType());
+        log.error("Executing ATM Strangle for {}", request.getInstrumentType());
 
         // Get current spot price
         double spotPrice = getCurrentSpotPrice(request.getInstrumentType());
-        log.info("Current spot price: {}", spotPrice);
+        log.error("Current spot price: {}", spotPrice);
 
         // Calculate ATM strike
         double atmStrike = getATMStrike(spotPrice, request.getInstrumentType());
@@ -167,7 +186,7 @@ public class StrategyService {
         double callStrike = atmStrike + strikeGap;
         double putStrike = atmStrike - strikeGap;
 
-        log.info("Strangle Strikes - Call: {}, Put: {}", callStrike, putStrike);
+        log.error("Strangle Strikes - Call: {}, Put: {}", callStrike, putStrike);
 
         // Get option instruments
         List<Instrument> instruments = getOptionInstruments(
@@ -191,6 +210,14 @@ public class StrategyService {
         OrderRequest callOrder = createOrderRequest(otmCall.tradingsymbol, "BUY", quantity, orderType, null);
         var callOrderResponse = tradingService.placeOrder(callOrder);
 
+        // Validate Call order response
+        if (callOrderResponse == null || callOrderResponse.getOrderId() == null ||
+            !"SUCCESS".equals(callOrderResponse.getStatus())) {
+            String errorMsg = callOrderResponse != null ? callOrderResponse.getMessage() : "No response received";
+            log.error("Call order placement failed: {}", errorMsg);
+            throw new RuntimeException("Call order placement failed: " + errorMsg);
+        }
+
         double callPrice = getOrderPrice(callOrderResponse.getOrderId());
         orderDetails.add(new StrategyExecutionResponse.OrderDetail(
             callOrderResponse.getOrderId(),
@@ -205,6 +232,14 @@ public class StrategyService {
         // Place Put order
         OrderRequest putOrder = createOrderRequest(otmPut.tradingsymbol, "BUY", quantity, orderType, null);
         var putOrderResponse = tradingService.placeOrder(putOrder);
+
+        // Validate Put order response
+        if (putOrderResponse == null || putOrderResponse.getOrderId() == null ||
+            !"SUCCESS".equals(putOrderResponse.getStatus())) {
+            String errorMsg = putOrderResponse != null ? putOrderResponse.getMessage() : "No response received";
+            log.error("Put order placement failed: {}", errorMsg);
+            throw new RuntimeException("Put order placement failed: " + errorMsg);
+        }
 
         double putPrice = getOrderPrice(putOrderResponse.getOrderId());
         orderDetails.add(new StrategyExecutionResponse.OrderDetail(
@@ -229,7 +264,7 @@ public class StrategyService {
         response.setProfitLoss(0.0);
         response.setProfitLossPercentage(0.0);
 
-        log.info("ATM Strangle executed. Total Premium: {}", totalPremium);
+        log.error("ATM Strangle executed. Total Premium: {}", totalPremium);
         return response;
     }
 
@@ -281,14 +316,76 @@ public class StrategyService {
     }
 
     /**
-     * Get lot size for instrument
+     * Get lot size for instrument by fetching from Kite API
+     * Results are cached for the session to avoid repeated API calls
      */
-    private int getLotSize(String instrumentType) {
+    private int getLotSize(String instrumentType) throws KiteException, IOException {
+        String instrumentKey = instrumentType.toUpperCase();
+
+        // Check if lot size is already cached
+        if (lotSizeCache.containsKey(instrumentKey)) {
+            log.debug("Returning cached lot size for {}: {}", instrumentKey, lotSizeCache.get(instrumentKey));
+            return lotSizeCache.get(instrumentKey);
+        }
+
+        // Fetch lot size from Kite instruments
+        log.info("Fetching lot size from Kite API for instrument: {}", instrumentKey);
+
+        try {
+            String exchange = "NFO"; // National Futures and Options exchange
+            List<Instrument> allInstruments = tradingService.getInstruments(exchange);
+
+            // Map instrument type to Kite instrument name
+            String instrumentName = switch (instrumentKey) {
+                case "NIFTY" -> "NIFTY";
+                case "BANKNIFTY" -> "BANKNIFTY";
+                case "FINNIFTY" -> "FINNIFTY";
+                default -> instrumentKey;
+            };
+
+            // Find any instrument with this name to get the lot size
+            // We filter for futures (FUT) as they have the same lot size as options
+            Optional<Instrument> instrument = allInstruments.stream()
+                .filter(i -> i.name != null && i.name.equals(instrumentName))
+                .filter(i -> i.lot_size > 0)
+                .findFirst();
+
+            if (instrument.isPresent()) {
+                int lotSize = instrument.get().lot_size;
+                log.info("Found lot size for {}: {}", instrumentKey, lotSize);
+
+                // Cache the lot size for future use
+                lotSizeCache.put(instrumentKey, lotSize);
+
+                return lotSize;
+            } else {
+                // If not found in API, use fallback values with warning
+                log.warn("Lot size not found in Kite API for {}, using fallback value", instrumentKey);
+                int fallbackLotSize = getFallbackLotSize(instrumentKey);
+                lotSizeCache.put(instrumentKey, fallbackLotSize);
+                return fallbackLotSize;
+            }
+
+        } catch (Exception e) {
+            // If API call fails, use fallback values
+            log.error("Error fetching lot size from Kite API for {}: {}", instrumentKey, e.getMessage());
+            log.warn("Using fallback lot size for {}", instrumentKey);
+            int fallbackLotSize = getFallbackLotSize(instrumentKey);
+            lotSizeCache.put(instrumentKey, fallbackLotSize);
+            return fallbackLotSize;
+        }
+    }
+
+    /**
+     * Get fallback lot size when Kite API is unavailable
+     * These are approximate values and may not be accurate
+     */
+    private int getFallbackLotSize(String instrumentType) {
         return switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> 50;
             case "BANKNIFTY" -> 15;
             case "FINNIFTY" -> 40;
-            default -> 50;
+            default -> throw new IllegalArgumentException("Unsupported instrument type: " + instrumentType);
         };
     }
 
@@ -455,13 +552,40 @@ public class StrategyService {
      * Get available expiry dates for an instrument
      */
     public List<String> getAvailableExpiries(String instrumentType) throws KiteException, IOException {
-        List<Instrument> instruments = getOptionInstruments(instrumentType, "");
+        log.info("Fetching available expiries for instrument: {}", instrumentType);
 
-        return instruments.stream()
-            .map(i -> i.expiry)
+        String exchange = "NFO"; // Futures & Options exchange
+        List<Instrument> allInstruments = tradingService.getInstruments(exchange);
+
+        // Map instrument type to Kite instrument name
+        String instrumentName = switch (instrumentType.toUpperCase()) {
+            case "NIFTY" -> "NIFTY";
+            case "BANKNIFTY" -> "BANKNIFTY";
+            case "FINNIFTY" -> "FINNIFTY";
+            default -> instrumentType.toUpperCase();
+        };
+
+        // Filter instruments for the given index and get unique expiry dates
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+
+        List<String> expiries = allInstruments.stream()
+            .filter(i -> i.name != null && i.name.equals(instrumentName))
+            .filter(i -> i.expiry != null)
+            .filter(i -> {
+                // Only include future expiries (not expired)
+                return i.expiry.after(new Date());
+            })
+            .map(i -> sdf.format(i.expiry))
             .distinct()
             .sorted()
-            .map(date -> new SimpleDateFormat("yyyy-MM-dd").format(date))
             .collect(Collectors.toList());
+
+        log.info("Found {} expiry dates for {}: {}", expiries.size(), instrumentType, expiries);
+
+        if (expiries.isEmpty()) {
+            log.warn("No expiries found for instrument: {}", instrumentType);
+        }
+
+        return expiries;
     }
 }

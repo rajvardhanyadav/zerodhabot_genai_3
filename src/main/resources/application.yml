@@ -26,7 +26,6 @@ management:
 logging:
   level:
     com.tradingbot: DEBUG
-    com.zerodhatech.kiteconnect: DEBUG
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
 

@@ -1,37 +1,935 @@
-# Trading Strategies API Documentation
+# Zerodha Trading Bot - Complete API Reference
 
-## Overview
-This API allows frontend applications to execute automated trading strategies for NIFTY and BANKNIFTY options.
+**Version:** 1.0.0
+**Base URL:** `http://localhost:8080` (Development) | `https://your-app.onrender.com` (Production)
+**Last Updated:** November 9, 2025
 
-## Base URL
+---
+
+## Table of Contents
+
+1. [Authentication APIs](#authentication-apis)
+2. [Order Management APIs](#order-management-apis)
+3. [Portfolio APIs](#portfolio-apis)
+4. [Market Data APIs](#market-data-apis)
+5. [Account APIs](#account-apis)
+6. [GTT (Good Till Triggered) APIs](#gtt-apis)
+7. [Trading Strategies APIs](#trading-strategies-apis)
+8. [Health Check APIs](#health-check-apis)
+9. [Common Response Format](#common-response-format)
+10. [Error Codes](#error-codes)
+11. [Authentication Flow](#authentication-flow)
+12. [Code Examples](#code-examples)
+
+---
+
+## Authentication APIs
+
+### 1. Get Login URL
+
+Get the Kite Connect login URL for OAuth authentication.
+
+**Endpoint:** `GET /api/auth/login-url`
+
+**Headers:**
 ```
-http://localhost:8080/api/strategies
+Content-Type: application/json
 ```
 
-## Available Strategies
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Login URL generated",
+  "data": "https://kite.zerodha.com/connect/login?api_key=your_api_key&v=3"
+}
+```
 
-### 1. ATM Straddle
-- **Type**: `ATM_STRADDLE`
-- **Description**: Buy 1 ATM Call + Buy 1 ATM Put
-- **Use Case**: Non-directional strategy, profits from high volatility
-- **Risk**: Limited to premium paid
-- **Status**: ✅ Implemented
+**Usage:**
+1. Call this endpoint to get the login URL
+2. Redirect user to this URL in browser
+3. User logs in with Zerodha credentials
+4. User is redirected back with `request_token` parameter
 
-### 2. ATM Strangle
-- **Type**: `ATM_STRANGLE`
-- **Description**: Buy 1 OTM Call + Buy 1 OTM Put
-- **Use Case**: Lower cost alternative to straddle
-- **Risk**: Limited to premium paid
-- **Status**: ✅ Implemented
+---
 
-## API Endpoints
+### 2. Generate Session
+
+Generate access token using the request token received after login.
+
+**Endpoint:** `POST /api/auth/session`
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "requestToken": "your_request_token_here"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Session generated successfully",
+  "data": {
+    "userId": "AB1234",
+    "userName": "John Doe",
+    "userShortname": "John",
+    "email": "john@example.com",
+    "userType": "individual",
+    "broker": "ZERODHA",
+    "accessToken": "your_access_token_here",
+    "publicToken": "your_public_token_here",
+    "loginTime": "2025-11-09 09:15:00"
+  }
+}
+```
+
+**Important:** Store the `accessToken` securely. It's automatically set in the backend for subsequent API calls.
+
+---
+
+### 3. Get User Profile
+
+Get the profile details of the logged-in user.
+
+**Endpoint:** `GET /api/auth/profile`
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "userId": "AB1234",
+    "userName": "John Doe",
+    "userShortname": "John",
+    "email": "john@example.com",
+    "userType": "individual",
+    "broker": "ZERODHA",
+    "exchanges": ["NSE", "BSE", "NFO", "MCX"],
+    "products": ["CNC", "MIS", "NRML"],
+    "orderTypes": ["MARKET", "LIMIT", "SL", "SL-M"]
+  }
+}
+```
+
+---
+
+## Order Management APIs
+
+### 1. Place Order
+
+Place a new trading order.
+
+**Endpoint:** `POST /api/orders`
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "tradingSymbol": "INFY",
+  "exchange": "NSE",
+  "transactionType": "BUY",
+  "quantity": 1,
+  "product": "CNC",
+  "orderType": "MARKET",
+  "price": null,
+  "triggerPrice": null,
+  "validity": "DAY",
+  "disclosedQuantity": 0
+}
+```
+
+**Request Fields:**
+
+| Field | Type | Required | Description | Values |
+|-------|------|----------|-------------|--------|
+| tradingSymbol | String | Yes | Trading symbol | INFY, TCS, RELIANCE, etc. |
+| exchange | String | Yes | Exchange | NSE, BSE, NFO, MCX |
+| transactionType | String | Yes | Buy or Sell | BUY, SELL |
+| quantity | Integer | Yes | Number of shares | Any positive integer |
+| product | String | Yes | Product type | CNC, MIS, NRML |
+| orderType | String | Yes | Order type | MARKET, LIMIT, SL, SL-M |
+| price | Double | No | Limit price | Required for LIMIT orders |
+| triggerPrice | Double | No | Trigger price | Required for SL, SL-M |
+| validity | String | No | Order validity | DAY, IOC (default: DAY) |
+| disclosedQuantity | Integer | No | Disclosed quantity | Default: 0 |
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Order placed successfully",
+  "data": {
+    "orderId": "221108000123456",
+    "status": "SUCCESS",
+    "message": "Order placed successfully"
+  }
+}
+```
+
+---
+
+### 2. Modify Order
+
+Modify an existing pending order.
+
+**Endpoint:** `PUT /api/orders/{orderId}`
+
+**Path Parameters:**
+- `orderId` - The order ID to modify
+
+**Request Body:**
+```json
+{
+  "quantity": 2,
+  "price": 1500.50,
+  "orderType": "LIMIT",
+  "triggerPrice": null,
+  "validity": "DAY",
+  "disclosedQuantity": 0
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Order modified successfully",
+  "data": {
+    "orderId": "221108000123456",
+    "status": "SUCCESS",
+    "message": "Order modified successfully"
+  }
+}
+```
+
+---
+
+### 3. Cancel Order
+
+Cancel a pending order.
+
+**Endpoint:** `DELETE /api/orders/{orderId}`
+
+**Path Parameters:**
+- `orderId` - The order ID to cancel
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Order cancelled successfully",
+  "data": {
+    "orderId": "221108000123456",
+    "status": "SUCCESS",
+    "message": "Order cancelled successfully"
+  }
+}
+```
+
+---
+
+### 4. Get All Orders
+
+Get all orders placed for the current day.
+
+**Endpoint:** `GET /api/orders`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    {
+      "orderId": "221108000123456",
+      "exchangeOrderId": "1000000012345678",
+      "placedBy": "AB1234",
+      "variety": "regular",
+      "status": "COMPLETE",
+      "tradingSymbol": "INFY",
+      "exchange": "NSE",
+      "instrumentToken": "408065",
+      "transactionType": "BUY",
+      "orderType": "MARKET",
+      "product": "CNC",
+      "quantity": 1,
+      "price": 0,
+      "triggerPrice": 0,
+      "averagePrice": 1450.75,
+      "filledQuantity": 1,
+      "pendingQuantity": 0,
+      "cancelledQuantity": 0,
+      "disclosedQuantity": 0,
+      "validity": "DAY",
+      "orderTimestamp": "2025-11-09 09:30:15",
+      "exchangeTimestamp": "2025-11-09 09:30:16",
+      "statusMessage": "Order completed"
+    }
+  ]
+}
+```
+
+**Order Status Values:**
+- `PENDING` - Order is pending
+- `OPEN` - Order is open (partially filled)
+- `COMPLETE` - Order is completed
+- `CANCELLED` - Order is cancelled
+- `REJECTED` - Order is rejected
+
+---
+
+### 5. Get Order History
+
+Get the history/trail of a specific order.
+
+**Endpoint:** `GET /api/orders/{orderId}/history`
+
+**Path Parameters:**
+- `orderId` - The order ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    {
+      "orderId": "221108000123456",
+      "status": "PUT ORDER REQ RECEIVED",
+      "statusMessage": "Order request received",
+      "orderTimestamp": "2025-11-09 09:30:14"
+    },
+    {
+      "orderId": "221108000123456",
+      "status": "VALIDATION PENDING",
+      "statusMessage": "Order validation pending",
+      "orderTimestamp": "2025-11-09 09:30:15"
+    },
+    {
+      "orderId": "221108000123456",
+      "status": "COMPLETE",
+      "statusMessage": "Order completed",
+      "averagePrice": 1450.75,
+      "filledQuantity": 1,
+      "orderTimestamp": "2025-11-09 09:30:16"
+    }
+  ]
+}
+```
+
+---
+
+## Portfolio APIs
+
+### 1. Get Positions
+
+Get all open positions (day and net).
+
+**Endpoint:** `GET /api/portfolio/positions`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "net": [
+      {
+        "tradingSymbol": "INFY",
+        "exchange": "NSE",
+        "instrumentToken": "408065",
+        "product": "CNC",
+        "quantity": 10,
+        "averagePrice": 1450.50,
+        "lastPrice": 1475.25,
+        "closePrice": 1455.00,
+        "pnl": 247.50,
+        "m2m": 202.50,
+        "unrealised": 247.50,
+        "realised": 0,
+        "multiplier": 1,
+        "buyQuantity": 10,
+        "buyPrice": 1450.50,
+        "buyValue": 14505.00,
+        "sellQuantity": 0,
+        "sellPrice": 0,
+        "sellValue": 0,
+        "value": 14505.00,
+        "overnightQuantity": 0,
+        "dayBuyQuantity": 10,
+        "dayBuyPrice": 1450.50,
+        "dayBuyValue": 14505.00,
+        "daySellQuantity": 0,
+        "daySellPrice": 0,
+        "daySellValue": 0
+      }
+    ],
+    "day": []
+  }
+}
+```
+
+---
+
+### 2. Get Holdings
+
+Get all long-term holdings.
+
+**Endpoint:** `GET /api/portfolio/holdings`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    {
+      "tradingSymbol": "RELIANCE",
+      "exchange": "NSE",
+      "isin": "INE002A01018",
+      "quantity": 25,
+      "t1Quantity": 0,
+      "averagePrice": 2350.75,
+      "lastPrice": 2425.50,
+      "closePrice": 2420.00,
+      "pnl": 1868.75,
+      "dayChange": 0.23,
+      "dayChangePercentage": 0.01,
+      "collateralQuantity": 0,
+      "collateralType": ""
+    }
+  ]
+}
+```
+
+---
+
+### 3. Get Trades
+
+Get all executed trades for the day.
+
+**Endpoint:** `GET /api/portfolio/trades`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    {
+      "tradeId": "12345678",
+      "orderId": "221108000123456",
+      "exchangeOrderId": "1000000012345678",
+      "tradingSymbol": "INFY",
+      "exchange": "NSE",
+      "instrumentToken": "408065",
+      "transactionType": "BUY",
+      "product": "CNC",
+      "quantity": 1,
+      "averagePrice": 1450.75,
+      "tradeTimestamp": "2025-11-09 09:30:16",
+      "exchangeTimestamp": "2025-11-09 09:30:16"
+    }
+  ]
+}
+```
+
+---
+
+### 4. Convert Position
+
+Convert a position from one product type to another.
+
+**Endpoint:** `PUT /api/portfolio/positions/convert`
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| tradingSymbol | String | Yes | Trading symbol |
+| exchange | String | Yes | Exchange (NSE, BSE, etc.) |
+| transactionType | String | Yes | BUY or SELL |
+| positionType | String | Yes | day or overnight |
+| oldProduct | String | Yes | Current product (MIS, CNC, NRML) |
+| newProduct | String | Yes | Target product (MIS, CNC, NRML) |
+| quantity | Integer | Yes | Quantity to convert |
+
+**Example:**
+```
+PUT /api/portfolio/positions/convert?tradingSymbol=INFY&exchange=NSE&transactionType=BUY&positionType=day&oldProduct=MIS&newProduct=CNC&quantity=10
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Position converted successfully",
+  "data": {
+    "result": true
+  }
+}
+```
+
+---
+
+## Market Data APIs
+
+### 1. Get Quote
+
+Get real-time market quotes for instruments.
+
+**Endpoint:** `GET /api/market/quote`
+
+**Query Parameters:**
+- `instruments` - Array of instrument identifiers (format: EXCHANGE:SYMBOL)
+
+**Example:**
+```
+GET /api/market/quote?instruments=NSE:INFY&instruments=NSE:TCS
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "NSE:INFY": {
+      "instrumentToken": 408065,
+      "timestamp": "2025-11-09 15:29:30",
+      "lastPrice": 1475.25,
+      "lastQuantity": 1,
+      "lastTradeTime": "2025-11-09 15:29:30",
+      "averagePrice": 1470.50,
+      "volume": 1234567,
+      "buyQuantity": 125000,
+      "sellQuantity": 98000,
+      "ohlc": {
+        "open": 1460.00,
+        "high": 1480.50,
+        "low": 1455.25,
+        "close": 1465.75
+      },
+      "netChange": 9.50,
+      "oi": 0,
+      "oiDayHigh": 0,
+      "oiDayLow": 0,
+      "depth": {
+        "buy": [
+          {
+            "price": 1475.00,
+            "quantity": 500,
+            "orders": 5
+          }
+        ],
+        "sell": [
+          {
+            "price": 1475.50,
+            "quantity": 300,
+            "orders": 3
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+---
+
+### 2. Get OHLC
+
+Get OHLC (Open, High, Low, Close) data for instruments.
+
+**Endpoint:** `GET /api/market/ohlc`
+
+**Query Parameters:**
+- `instruments` - Array of instrument identifiers
+
+**Example:**
+```
+GET /api/market/ohlc?instruments=NSE:NIFTY 50&instruments=NSE:NIFTY BANK
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "NSE:NIFTY 50": {
+      "instrumentToken": 256265,
+      "lastPrice": 24150.50,
+      "ohlc": {
+        "open": 24050.25,
+        "high": 24180.75,
+        "low": 24025.00,
+        "close": 24100.50
+      }
+    }
+  }
+}
+```
+
+---
+
+### 3. Get LTP (Last Traded Price)
+
+Get last traded price for instruments.
+
+**Endpoint:** `GET /api/market/ltp`
+
+**Query Parameters:**
+- `instruments` - Array of instrument identifiers
+
+**Example:**
+```
+GET /api/market/ltp?instruments=NSE:INFY&instruments=NSE:TCS
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "NSE:INFY": {
+      "instrumentToken": 408065,
+      "lastPrice": 1475.25
+    },
+    "NSE:TCS": {
+      "instrumentToken": 2953217,
+      "lastPrice": 3650.50
+    }
+  }
+}
+```
+
+---
+
+### 4. Get Historical Data
+
+Get historical candle data for an instrument.
+
+**Endpoint:** `GET /api/market/historical`
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description | Values |
+|-----------|------|----------|-------------|--------|
+| instrumentToken | String | Yes | Instrument token | e.g., 408065 |
+| from | String | Yes | Start date | yyyy-MM-dd format |
+| to | String | Yes | End date | yyyy-MM-dd format |
+| interval | String | Yes | Candle interval | minute, 3minute, 5minute, 10minute, 15minute, 30minute, 60minute, day |
+| continuous | Boolean | No | Continuous data | Default: false |
+| oi | Boolean | No | Include OI data | Default: false |
+
+**Example:**
+```
+GET /api/market/historical?instrumentToken=408065&from=2025-11-01&to=2025-11-09&interval=day&continuous=false&oi=false
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "candles": [
+      {
+        "date": "2025-11-01T00:00:00+0530",
+        "open": 1450.00,
+        "high": 1465.50,
+        "low": 1445.25,
+        "close": 1460.75,
+        "volume": 1234567,
+        "oi": 0
+      },
+      {
+        "date": "2025-11-04T00:00:00+0530",
+        "open": 1462.00,
+        "high": 1475.25,
+        "low": 1458.00,
+        "close": 1470.50,
+        "volume": 1456789,
+        "oi": 0
+      }
+    ]
+  }
+}
+```
+
+---
+
+### 5. Get All Instruments
+
+Get list of all tradeable instruments.
+
+**Endpoint:** `GET /api/market/instruments`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    {
+      "instrumentToken": 408065,
+      "exchangeToken": 1594,
+      "tradingSymbol": "INFY",
+      "name": "INFOSYS",
+      "lastPrice": 0,
+      "expiry": null,
+      "strike": "0.0",
+      "tickSize": 0.05,
+      "lotSize": 1,
+      "instrumentType": "EQ",
+      "segment": "NSE",
+      "exchange": "NSE"
+    }
+  ]
+}
+```
+
+---
+
+### 6. Get Instruments by Exchange
+
+Get instruments for a specific exchange.
+
+**Endpoint:** `GET /api/market/instruments/{exchange}`
+
+**Path Parameters:**
+- `exchange` - Exchange code (NSE, BSE, NFO, MCX, etc.)
+
+**Example:**
+```
+GET /api/market/instruments/NFO
+```
+
+**Response:** Similar to Get All Instruments but filtered by exchange.
+
+---
+
+## Account APIs
+
+### Get Account Margins
+
+Get account margin details for equity or commodity segment.
+
+**Endpoint:** `GET /api/account/margins/{segment}`
+
+**Path Parameters:**
+- `segment` - Segment type: `equity` or `commodity`
+
+**Example:**
+```
+GET /api/account/margins/equity
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "enabled": true,
+    "net": 150000.50,
+    "available": {
+      "adhocMargin": 0,
+      "cash": 100000.00,
+      "collateral": 50000.50,
+      "intradayPayin": 0,
+      "liveBalance": 150000.50,
+      "openingBalance": 148000.00
+    },
+    "utilised": {
+      "debits": 25000.00,
+      "exposure": 15000.00,
+      "m2mRealised": 500.50,
+      "m2mUnrealised": 1200.00,
+      "optionPremium": 8000.00,
+      "payout": 0,
+      "span": 10000.00,
+      "holdingSales": 0,
+      "turnover": 0
+    }
+  }
+}
+```
+
+---
+
+## GTT (Good Till Triggered) APIs
+
+### 1. Get All GTT Orders
+
+Get all active GTT orders.
+
+**Endpoint:** `GET /api/gtt`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": [
+    {
+      "id": 123456,
+      "userId": "AB1234",
+      "type": "single",
+      "createdAt": "2025-11-09 09:00:00",
+      "updatedAt": "2025-11-09 09:00:00",
+      "expiresAt": "2025-12-09 09:00:00",
+      "status": "active",
+      "condition": {
+        "exchange": "NSE",
+        "tradingSymbol": "INFY",
+        "triggerValues": [1500.00],
+        "lastPrice": 1475.25
+      },
+      "orders": [
+        {
+          "transactionType": "BUY",
+          "quantity": 10,
+          "price": 1500.00,
+          "orderType": "LIMIT",
+          "product": "CNC"
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+### 2. Place GTT Order
+
+Place a new GTT order.
+
+**Endpoint:** `POST /api/gtt`
+
+**Request Body:**
+```json
+{
+  "type": "single",
+  "condition": {
+    "exchange": "NSE",
+    "tradingSymbol": "INFY",
+    "triggerValues": [1500.00],
+    "lastPrice": 1475.25
+  },
+  "orders": [
+    {
+      "transactionType": "BUY",
+      "quantity": 10,
+      "price": 1500.00,
+      "orderType": "LIMIT",
+      "product": "CNC"
+    }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "GTT order placed successfully",
+  "data": {
+    "id": 123456,
+    "status": "active"
+  }
+}
+```
+
+---
+
+### 3. Get GTT Order by ID
+
+Get details of a specific GTT order.
+
+**Endpoint:** `GET /api/gtt/{triggerId}`
+
+**Path Parameters:**
+- `triggerId` - GTT trigger ID
+
+**Response:** Similar to individual GTT object from Get All GTT Orders.
+
+---
+
+### 4. Modify GTT Order
+
+Modify an existing GTT order.
+
+**Endpoint:** `PUT /api/gtt/{triggerId}`
+
+**Request Body:** Same as Place GTT Order
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "GTT order modified successfully",
+  "data": {
+    "id": 123456,
+    "status": "active"
+  }
+}
+```
+
+---
+
+### 5. Cancel GTT Order
+
+Cancel a GTT order.
+
+**Endpoint:** `DELETE /api/gtt/{triggerId}`
+
+**Path Parameters:**
+- `triggerId` - GTT trigger ID
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "GTT order cancelled successfully",
+  "data": {
+    "id": 123456,
+    "status": "cancelled"
+  }
+}
+```
+
+---
+
+## Trading Strategies APIs
 
 ### 1. Execute Strategy
-Execute a trading strategy based on user selection.
 
-**Endpoint**: `POST /api/strategies/execute`
+Execute an automated trading strategy.
 
-**Request Body**:
+**Endpoint:** `POST /api/strategies/execute`
+
+**Request Body:**
 ```json
 {
   "strategyType": "ATM_STRADDLE",
@@ -46,20 +944,21 @@ Execute a trading strategy based on user selection.
 }
 ```
 
-**Request Fields**:
-| Field | Type | Required | Description | Example |
-|-------|------|----------|-------------|---------|
-| strategyType | String | Yes | Type of strategy | ATM_STRADDLE, ATM_STRANGLE |
-| instrumentType | String | Yes | Index to trade | NIFTY, BANKNIFTY, FINNIFTY |
-| expiry | String | Yes | Option expiry | WEEKLY, MONTHLY, or yyyy-MM-dd |
-| quantity | Integer | No | Lot quantity (default: 1 lot) | 50 |
-| orderType | String | No | Order type (default: MARKET) | MARKET, LIMIT |
-| strikeGap | Double | No | Strike gap for strangle (auto-calculated) | 100.0 |
-| autoSquareOff | Boolean | No | Auto exit at 3:15 PM | true, false |
-| stopLoss | Double | No | Stop loss percentage | 50.0 |
-| target | Double | No | Target profit percentage | 100.0 |
+**Request Fields:**
 
-**Success Response** (200 OK):
+| Field | Type | Required | Description | Values |
+|-------|------|----------|-------------|--------|
+| strategyType | String | Yes | Strategy type | ATM_STRADDLE, ATM_STRANGLE |
+| instrumentType | String | Yes | Index | NIFTY, BANKNIFTY, FINNIFTY |
+| expiry | String | Yes | Expiry type | WEEKLY, MONTHLY, yyyy-MM-dd |
+| quantity | Integer | No | Lot quantity | Default: 1 lot |
+| orderType | String | No | Order type | MARKET, LIMIT (default: MARKET) |
+| strikeGap | Double | No | Strike gap for strangle | Auto-calculated if not provided |
+| autoSquareOff | Boolean | No | Auto exit at 3:15 PM | Default: false |
+| stopLoss | Double | No | Stop loss % | Optional |
+| target | Double | No | Target profit % | Optional |
+
+**Response:**
 ```json
 {
   "success": true,
@@ -96,23 +995,15 @@ Execute a trading strategy based on user selection.
 }
 ```
 
-**Error Response** (400 Bad Request):
-```json
-{
-  "success": false,
-  "message": "Strategy execution failed: Insufficient funds",
-  "data": null
-}
-```
-
 ---
 
 ### 2. Get Active Strategies
-Retrieve all currently active strategy executions.
 
-**Endpoint**: `GET /api/strategies/active`
+Get all currently active strategy executions.
 
-**Response**:
+**Endpoint:** `GET /api/strategies/active`
+
+**Response:**
 ```json
 {
   "success": true,
@@ -137,23 +1028,25 @@ Retrieve all currently active strategy executions.
 ---
 
 ### 3. Get Strategy Details
+
 Get details of a specific strategy execution.
 
-**Endpoint**: `GET /api/strategies/{executionId}`
+**Endpoint:** `GET /api/strategies/{executionId}`
 
-**Path Parameters**:
-- `executionId`: Unique execution identifier
+**Path Parameters:**
+- `executionId` - Strategy execution ID
 
-**Response**: Same as individual strategy object from active strategies list.
+**Response:** Same as individual strategy object from Get Active Strategies.
 
 ---
 
 ### 4. Get Available Strategy Types
+
 Get list of all available strategy types.
 
-**Endpoint**: `GET /api/strategies/types`
+**Endpoint:** `GET /api/strategies/types`
 
-**Response**:
+**Response:**
 ```json
 {
   "success": true,
@@ -173,6 +1066,16 @@ Get list of all available strategy types.
       "name": "BULL_CALL_SPREAD",
       "description": "Bullish strategy using call options",
       "implemented": false
+    },
+    {
+      "name": "BEAR_PUT_SPREAD",
+      "description": "Bearish strategy using put options",
+      "implemented": false
+    },
+    {
+      "name": "IRON_CONDOR",
+      "description": "Range-bound strategy with limited risk",
+      "implemented": false
     }
   ]
 }
@@ -181,11 +1084,12 @@ Get list of all available strategy types.
 ---
 
 ### 5. Get Available Instruments
-Get list of tradeable instruments with details.
 
-**Endpoint**: `GET /api/strategies/instruments`
+Get list of tradeable instruments for strategies.
 
-**Response**:
+**Endpoint:** `GET /api/strategies/instruments`
+
+**Response:**
 ```json
 {
   "success": true,
@@ -216,14 +1120,15 @@ Get list of tradeable instruments with details.
 ---
 
 ### 6. Get Available Expiries
+
 Get available expiry dates for an instrument.
 
-**Endpoint**: `GET /api/strategies/expiries/{instrumentType}`
+**Endpoint:** `GET /api/strategies/expiries/{instrumentType}`
 
-**Path Parameters**:
-- `instrumentType`: Instrument code (NIFTY, BANKNIFTY, FINNIFTY)
+**Path Parameters:**
+- `instrumentType` - Instrument code (NIFTY, BANKNIFTY, FINNIFTY)
 
-**Response**:
+**Response:**
 ```json
 {
   "success": true,
@@ -234,196 +1139,456 @@ Get available expiry dates for an instrument.
 
 ---
 
-## Frontend Integration Examples
+## Health Check APIs
 
-### React/JavaScript Example
+### Application Health Check
 
-```javascript
-// Execute ATM Straddle Strategy
-const executeStrategy = async () => {
-  try {
-    const response = await fetch('http://localhost:8080/api/strategies/execute', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        strategyType: 'ATM_STRADDLE',
-        instrumentType: 'NIFTY',
-        expiry: 'WEEKLY',
-        quantity: 50,
-        orderType: 'MARKET'
-      })
-    });
+Check if the application is running and healthy.
 
-    const result = await response.json();
+**Endpoint:** `GET /api/health`
 
-    if (result.success) {
-      console.log('Strategy executed:', result.data);
-      alert(`Strategy executed! Execution ID: ${result.data.executionId}`);
-    } else {
-      console.error('Error:', result.message);
-      alert(`Error: ${result.message}`);
-    }
-  } catch (error) {
-    console.error('Network error:', error);
-  }
-};
-
-// Get active strategies
-const getActiveStrategies = async () => {
-  try {
-    const response = await fetch('http://localhost:8080/api/strategies/active');
-    const result = await response.json();
-
-    if (result.success) {
-      return result.data;
-    }
-  } catch (error) {
-    console.error('Error fetching strategies:', error);
-  }
-};
-
-// Get available instruments
-const getInstruments = async () => {
-  try {
-    const response = await fetch('http://localhost:8080/api/strategies/instruments');
-    const result = await response.json();
-
-    if (result.success) {
-      return result.data;
-    }
-  } catch (error) {
-    console.error('Error fetching instruments:', error);
-  }
-};
-```
-
-### Angular/TypeScript Example
-
-```typescript
-import { HttpClient } from '@angular/common/http';
-import { Injectable } from '@angular/core';
-import { Observable } from 'rxjs';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class StrategyService {
-  private apiUrl = 'http://localhost:8080/api/strategies';
-
-  constructor(private http: HttpClient) {}
-
-  executeStrategy(request: StrategyRequest): Observable<ApiResponse> {
-    return this.http.post<ApiResponse>(`${this.apiUrl}/execute`, request);
-  }
-
-  getActiveStrategies(): Observable<ApiResponse> {
-    return this.http.get<ApiResponse>(`${this.apiUrl}/active`);
-  }
-
-  getInstruments(): Observable<ApiResponse> {
-    return this.http.get<ApiResponse>(`${this.apiUrl}/instruments`);
-  }
-
-  getStrategyTypes(): Observable<ApiResponse> {
-    return this.http.get<ApiResponse>(`${this.apiUrl}/types`);
-  }
-}
-
-interface StrategyRequest {
-  strategyType: string;
-  instrumentType: string;
-  expiry: string;
-  quantity?: number;
-  orderType?: string;
-  strikeGap?: number;
-}
-
-interface ApiResponse {
-  success: boolean;
-  message: string;
-  data: any;
+**Response:**
+```json
+{
+  "status": "UP",
+  "timestamp": "2025-11-09T10:30:00",
+  "application": "Zerodha Trading Bot",
+  "version": "1.0.0"
 }
 ```
 
 ---
 
-## Dashboard UI Components Needed
+## Common Response Format
 
-### 1. Strategy Selection Form
-- Dropdown: Strategy Type (ATM_STRADDLE, ATM_STRANGLE)
-- Dropdown: Instrument (NIFTY, BANKNIFTY, FINNIFTY)
-- Dropdown: Expiry (WEEKLY, MONTHLY)
-- Input: Quantity (optional, defaults to 1 lot)
-- Button: Execute Strategy
+All API responses follow this standard format:
 
-### 2. Active Strategies Table
-- Columns: Execution ID, Strategy Type, Instrument, Status, Entry Price, Current P&L
-- Actions: View Details, Square Off
+### Success Response
+```json
+{
+  "success": true,
+  "message": "Success message",
+  "data": { /* Response data */ }
+}
+```
 
-### 3. Strategy Details Modal
-- Show individual order details
-- Real-time P&L updates
-- Option to exit strategy
+### Error Response
+```json
+{
+  "success": false,
+  "message": "Error description",
+  "data": null
+}
+```
+
+---
+
+## Error Codes
+
+| HTTP Status | Description | Example |
+|-------------|-------------|---------|
+| 200 | Success | Request completed successfully |
+| 400 | Bad Request | Invalid parameters or validation error |
+| 401 | Unauthorized | Invalid or missing access token |
+| 403 | Forbidden | Insufficient permissions |
+| 404 | Not Found | Resource not found |
+| 500 | Internal Server Error | Server-side error |
+
+### Common Error Messages
+
+**Authentication Errors:**
+- "Invalid or expired access token"
+- "Session expired, please login again"
+- "Invalid API credentials"
+
+**Order Errors:**
+- "Insufficient funds"
+- "Invalid order parameters"
+- "Order cannot be modified/cancelled"
+- "Trading symbol not found"
+- "Market is closed"
+
+**Strategy Errors:**
+- "Strategy not implemented"
+- "ATM options not found for strike"
+- "Invalid instrument type"
+- "Invalid expiry date"
+
+---
+
+## Authentication Flow
+
+### Complete OAuth Flow
+
+```
+1. Frontend calls: GET /api/auth/login-url
+   ↓
+2. Backend returns: Kite login URL
+   ↓
+3. Frontend redirects user to Kite login URL
+   ↓
+4. User logs in on Kite Connect
+   ↓
+5. Kite redirects back with: request_token
+   ↓
+6. Frontend calls: POST /api/auth/session
+   Body: { "requestToken": "..." }
+   ↓
+7. Backend generates and stores access_token
+   ↓
+8. All subsequent API calls use this session
+```
+
+### Session Management
+
+- Access tokens are valid for a trading day
+- Tokens expire at 6:00 AM IST next day
+- Re-authenticate daily before market hours
+- Backend automatically uses stored token for API calls
+
+---
+
+## Code Examples
+
+### JavaScript/React Example
+
+```javascript
+// 1. Get Login URL
+const getLoginUrl = async () => {
+  const response = await fetch('http://localhost:8080/api/auth/login-url');
+  const data = await response.json();
+
+  if (data.success) {
+    window.location.href = data.data; // Redirect to Kite login
+  }
+};
+
+// 2. Generate Session (after redirect back with request_token)
+const generateSession = async (requestToken) => {
+  const response = await fetch('http://localhost:8080/api/auth/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestToken })
+  });
+
+  const data = await response.json();
+
+  if (data.success) {
+    console.log('Logged in:', data.data.userName);
+  }
+};
+
+// 3. Place Order
+const placeOrder = async () => {
+  const order = {
+    tradingSymbol: 'INFY',
+    exchange: 'NSE',
+    transactionType: 'BUY',
+    quantity: 1,
+    product: 'CNC',
+    orderType: 'MARKET',
+    validity: 'DAY'
+  };
+
+  const response = await fetch('http://localhost:8080/api/orders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(order)
+  });
+
+  const data = await response.json();
+
+  if (data.success) {
+    console.log('Order placed:', data.data.orderId);
+  } else {
+    console.error('Error:', data.message);
+  }
+};
+
+// 4. Execute Strategy
+const executeStrategy = async () => {
+  const strategy = {
+    strategyType: 'ATM_STRADDLE',
+    instrumentType: 'NIFTY',
+    expiry: 'WEEKLY',
+    quantity: 50,
+    orderType: 'MARKET'
+  };
+
+  const response = await fetch('http://localhost:8080/api/strategies/execute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(strategy)
+  });
+
+  const data = await response.json();
+
+  if (data.success) {
+    console.log('Strategy executed:', data.data.executionId);
+    console.log('Total Premium:', data.data.totalPremium);
+  }
+};
+
+// 5. Get Market Quote
+const getQuote = async () => {
+  const response = await fetch(
+    'http://localhost:8080/api/market/quote?instruments=NSE:INFY&instruments=NSE:TCS'
+  );
+
+  const data = await response.json();
+
+  if (data.success) {
+    console.log('INFY Price:', data.data['NSE:INFY'].lastPrice);
+    console.log('TCS Price:', data.data['NSE:TCS'].lastPrice);
+  }
+};
+
+// 6. Get Positions
+const getPositions = async () => {
+  const response = await fetch('http://localhost:8080/api/portfolio/positions');
+  const data = await response.json();
+
+  if (data.success) {
+    console.log('Net Positions:', data.data.net);
+    console.log('Day Positions:', data.data.day);
+  }
+};
+```
+
+---
+
+### Python Example
+
+```python
+import requests
+
+BASE_URL = 'http://localhost:8080'
+
+# 1. Get Login URL
+def get_login_url():
+    response = requests.get(f'{BASE_URL}/api/auth/login-url')
+    data = response.json()
+
+    if data['success']:
+        print('Login URL:', data['data'])
+        return data['data']
+
+# 2. Generate Session
+def generate_session(request_token):
+    response = requests.post(
+        f'{BASE_URL}/api/auth/session',
+        json={'requestToken': request_token}
+    )
+    data = response.json()
+
+    if data['success']:
+        print('Logged in as:', data['data']['userName'])
+        return data['data']
+
+# 3. Place Order
+def place_order():
+    order = {
+        'tradingSymbol': 'INFY',
+        'exchange': 'NSE',
+        'transactionType': 'BUY',
+        'quantity': 1,
+        'product': 'CNC',
+        'orderType': 'MARKET',
+        'validity': 'DAY'
+    }
+
+    response = requests.post(
+        f'{BASE_URL}/api/orders',
+        json=order
+    )
+    data = response.json()
+
+    if data['success']:
+        print('Order ID:', data['data']['orderId'])
+        return data['data']
+    else:
+        print('Error:', data['message'])
+
+# 4. Execute Strategy
+def execute_strategy():
+    strategy = {
+        'strategyType': 'ATM_STRADDLE',
+        'instrumentType': 'NIFTY',
+        'expiry': 'WEEKLY',
+        'quantity': 50,
+        'orderType': 'MARKET'
+    }
+
+    response = requests.post(
+        f'{BASE_URL}/api/strategies/execute',
+        json=strategy
+    )
+    data = response.json()
+
+    if data['success']:
+        print('Execution ID:', data['data']['executionId'])
+        print('Total Premium:', data['data']['totalPremium'])
+        return data['data']
+
+# 5. Get Market Quote
+def get_quote():
+    params = {
+        'instruments': ['NSE:INFY', 'NSE:TCS']
+    }
+
+    response = requests.get(
+        f'{BASE_URL}/api/market/quote',
+        params=params
+    )
+    data = response.json()
+
+    if data['success']:
+        print('INFY:', data['data']['NSE:INFY']['lastPrice'])
+        print('TCS:', data['data']['NSE:TCS']['lastPrice'])
+
+# 6. Get Positions
+def get_positions():
+    response = requests.get(f'{BASE_URL}/api/portfolio/positions')
+    data = response.json()
+
+    if data['success']:
+        print('Net Positions:', len(data['data']['net']))
+        return data['data']
+```
+
+---
+
+### cURL Examples
+
+```bash
+# 1. Get Login URL
+curl -X GET http://localhost:8080/api/auth/login-url
+
+# 2. Generate Session
+curl -X POST http://localhost:8080/api/auth/session \
+  -H "Content-Type: application/json" \
+  -d '{"requestToken":"your_request_token"}'
+
+# 3. Place Order
+curl -X POST http://localhost:8080/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tradingSymbol": "INFY",
+    "exchange": "NSE",
+    "transactionType": "BUY",
+    "quantity": 1,
+    "product": "CNC",
+    "orderType": "MARKET",
+    "validity": "DAY"
+  }'
+
+# 4. Get Orders
+curl -X GET http://localhost:8080/api/orders
+
+# 5. Cancel Order
+curl -X DELETE http://localhost:8080/api/orders/221108000123456
+
+# 6. Get Quote
+curl -X GET "http://localhost:8080/api/market/quote?instruments=NSE:INFY&instruments=NSE:TCS"
+
+# 7. Get Positions
+curl -X GET http://localhost:8080/api/portfolio/positions
+
+# 8. Execute Strategy
+curl -X POST http://localhost:8080/api/strategies/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "strategyType": "ATM_STRADDLE",
+    "instrumentType": "NIFTY",
+    "expiry": "WEEKLY",
+    "quantity": 50,
+    "orderType": "MARKET"
+  }'
+
+# 9. Get Active Strategies
+curl -X GET http://localhost:8080/api/strategies/active
+
+# 10. Health Check
+curl -X GET http://localhost:8080/api/health
+```
+
+---
+
+## Rate Limits
+
+**Kite Connect API Rate Limits:**
+- 3 requests per second per API key
+- Plan API calls accordingly to avoid throttling
+
+**Best Practices:**
+- Batch multiple symbol requests in quote/OHLC APIs
+- Cache frequently accessed data
+- Use WebSocket for real-time streaming data
+- Implement exponential backoff for retries
+
+---
+
+## Websocket Support (Future Enhancement)
+
+Real-time streaming will be available via WebSocket in future versions:
+
+```javascript
+// Future WebSocket implementation
+const ws = new WebSocket('ws://localhost:8080/ws/market-data');
+
+ws.onmessage = (event) => {
+  const tick = JSON.parse(event.data);
+  console.log('Live tick:', tick);
+};
+```
+
+---
+
+## Support & Documentation
+
+- **Swagger UI:** http://localhost:8080/swagger-ui.html
+- **API Docs:** http://localhost:8080/api-docs
+- **Kite Connect Docs:** https://kite.trade/docs/connect/v3/
+- **Kite Java SDK:** https://kite.trade/docs/javakiteconnect/v3/
 
 ---
 
 ## Important Notes
 
-1. **Authentication**: All API calls require valid Kite session token (set via `/api/auth/session`)
-
-2. **Market Hours**: Strategies can only be executed during market hours (9:15 AM - 3:30 PM IST)
-
-3. **Lot Sizes**:
+1. **Session Validity:** Access tokens expire at 6:00 AM IST daily
+2. **Market Hours:** 9:15 AM - 3:30 PM IST (Monday to Friday)
+3. **Product Types:**
+   - CNC: Cash & Carry (delivery)
+   - MIS: Margin Intraday Square-off
+   - NRML: Normal (carry forward for F&O)
+4. **Order Types:**
+   - MARKET: Execute at market price
+   - LIMIT: Execute at specified price or better
+   - SL: Stop-Loss order
+   - SL-M: Stop-Loss Market order
+5. **Lot Sizes:**
    - NIFTY: 50 shares per lot
    - BANKNIFTY: 15 shares per lot
    - FINNIFTY: 40 shares per lot
 
-4. **Strike Intervals**:
-   - NIFTY: 50 points
-   - BANKNIFTY: 100 points
-   - FINNIFTY: 50 points
+---
 
-5. **Default Strike Gaps (for Strangle)**:
-   - NIFTY: 100 points
-   - BANKNIFTY: 200 points
+## Changelog
 
-6. **Error Handling**: Always check the `success` field in responses
+**Version 1.0.0** (November 9, 2025)
+- Initial release
+- Authentication APIs
+- Order Management APIs
+- Portfolio APIs
+- Market Data APIs
+- Account APIs
+- GTT APIs
+- Trading Strategies (ATM Straddle & ATM Strangle)
+- Health Check APIs
 
 ---
 
-## Testing with Swagger
+**End of API Documentation**
 
-Access Swagger UI at: `http://localhost:8080/swagger-ui.html`
-
-Navigate to "Trading Strategies" section to test all endpoints interactively.
-
----
-
-## Status Codes
-
-| Status | Description |
-|--------|-------------|
-| PENDING | Strategy is queued for execution |
-| EXECUTING | Strategy is being executed |
-| COMPLETED | Strategy executed successfully |
-| FAILED | Strategy execution failed |
-
----
-
-## Next Steps for Frontend Developers
-
-1. Create a dashboard page with strategy selection form
-2. Implement real-time strategy monitoring
-3. Add P&L calculation and display
-4. Implement strategy exit/square-off functionality
-5. Add notifications for strategy status updates
-6. Create charts for strategy performance visualization
-
----
-
-## Support
-
-For issues or questions, refer to the main README.md or check Swagger documentation.
+For issues or support, contact your system administrator or refer to the Kite Connect documentation.
 

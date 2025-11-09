@@ -37,7 +37,7 @@ public class TradingService {
     public User generateSession(String requestToken) throws KiteException, IOException {
         User user = kiteConnect.generateSession(requestToken, kiteConfig.getApiSecret());
         kiteConnect.setAccessToken(user.accessToken);
-        log.info("Session generated successfully for user: {}", user.userId);
+        log.error("Session generated successfully for user: {}", user.userId);
         return user;
     }
 
@@ -59,22 +59,40 @@ public class TradingService {
      * Place a new order
      */
     public OrderResponse placeOrder(OrderRequest orderRequest) throws KiteException, IOException {
-        OrderParams orderParams = new OrderParams();
-        orderParams.tradingsymbol = orderRequest.getTradingSymbol();
-        orderParams.exchange = orderRequest.getExchange();
-        orderParams.transactionType = orderRequest.getTransactionType();
-        orderParams.quantity = orderRequest.getQuantity();
-        orderParams.product = orderRequest.getProduct();
-        orderParams.orderType = orderRequest.getOrderType();
-        orderParams.price = orderRequest.getPrice();
-        orderParams.triggerPrice = orderRequest.getTriggerPrice();
-        orderParams.validity = orderRequest.getValidity();
-        orderParams.disclosedQuantity = orderRequest.getDisclosedQuantity();
+        try {
+            OrderParams orderParams = new OrderParams();
+            orderParams.tradingsymbol = orderRequest.getTradingSymbol();
+            orderParams.exchange = orderRequest.getExchange();
+            orderParams.transactionType = orderRequest.getTransactionType();
+            orderParams.quantity = orderRequest.getQuantity();
+            orderParams.product = orderRequest.getProduct();
+            orderParams.orderType = orderRequest.getOrderType();
+            orderParams.price = orderRequest.getPrice();
+            orderParams.triggerPrice = orderRequest.getTriggerPrice();
+            orderParams.validity = orderRequest.getValidity();
+            orderParams.disclosedQuantity = orderRequest.getDisclosedQuantity();
 
-        Order order = kiteConnect.placeOrder(orderParams, "regular");
-        log.info("Order placed successfully: {}", order.orderId);
+            Order order = kiteConnect.placeOrder(orderParams, "regular");
 
-        return new OrderResponse(order.orderId, "SUCCESS", "Order placed successfully");
+            // Check if order was placed successfully
+            if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
+                log.info("Order placed successfully: {}", order.orderId);
+                return new OrderResponse(order.orderId, "SUCCESS", "Order placed successfully");
+            } else {
+                log.error("Order placement failed - no order ID returned");
+                return new OrderResponse(null, "FAILED", "Order placement failed - no order ID returned");
+            }
+
+        } catch (KiteException e) {
+            log.error("Kite API error while placing order: {}", e.message, e);
+            return new OrderResponse(null, "FAILED", "Order placement failed: " + e.message);
+        } catch (IOException e) {
+            log.error("Network error while placing order: {}", e.getMessage(), e);
+            return new OrderResponse(null, "FAILED", "Network error: " + e.getMessage());
+        } catch (Exception e) {
+            log.error("Unexpected error while placing order: {}", e.getMessage(), e);
+            return new OrderResponse(null, "FAILED", "Unexpected error: " + e.getMessage());
+        }
     }
 
     /**
@@ -90,7 +108,7 @@ public class TradingService {
         orderParams.disclosedQuantity = orderRequest.getDisclosedQuantity();
 
         Order order = kiteConnect.modifyOrder(orderId, orderParams, "regular");
-        log.info("Order modified successfully: {}", orderId);
+        log.error("Order modified successfully: {}", orderId);
 
         return new OrderResponse(order.orderId, "SUCCESS", "Order modified successfully");
     }
@@ -99,10 +117,28 @@ public class TradingService {
      * Cancel an order
      */
     public OrderResponse cancelOrder(String orderId) throws KiteException, IOException {
-        Order order = kiteConnect.cancelOrder(orderId, "regular");
-        log.info("Order cancelled successfully: {}", orderId);
+        try {
+            Order order = kiteConnect.cancelOrder(orderId, "regular");
 
-        return new OrderResponse(order.orderId, "SUCCESS", "Order cancelled successfully");
+            // Check if order was cancelled successfully
+            if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
+                log.info("Order cancelled successfully: {}", orderId);
+                return new OrderResponse(order.orderId, "SUCCESS", "Order cancelled successfully");
+            } else {
+                log.error("Order cancellation failed for orderId: {}", orderId);
+                return new OrderResponse(orderId, "FAILED", "Order cancellation failed");
+            }
+
+        } catch (KiteException e) {
+            log.error("Kite API error while cancelling order {}: {}", orderId, e.message, e);
+            return new OrderResponse(orderId, "FAILED", "Order cancellation failed: " + e.message);
+        } catch (IOException e) {
+            log.error("Network error while cancelling order {}: {}", orderId, e.getMessage(), e);
+            return new OrderResponse(orderId, "FAILED", "Network error: " + e.getMessage());
+        } catch (Exception e) {
+            log.error("Unexpected error while cancelling order {}: {}", orderId, e.getMessage(), e);
+            return new OrderResponse(orderId, "FAILED", "Unexpected error: " + e.getMessage());
+        }
     }
 
     /**
