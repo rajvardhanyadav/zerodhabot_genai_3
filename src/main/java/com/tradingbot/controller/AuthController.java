@@ -41,6 +41,7 @@ public class AuthController {
     public ResponseEntity<ApiResponse<User>> generateSession(@RequestBody LoginRequest loginRequest) {
         try {
             User user = tradingService.generateSession(loginRequest.getRequestToken());
+            log.info("Access Token: {}", user.accessToken);
             return ResponseEntity.ok(ApiResponse.success("Session generated successfully", user));
         } catch (KiteException | IOException e) {
             log.error("Error generating session", e);

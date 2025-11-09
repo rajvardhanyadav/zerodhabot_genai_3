@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -39,11 +40,25 @@ public class WebSocketService {
         try {
             String accessToken = kiteConnect.getAccessToken();
             if (accessToken == null || accessToken.isEmpty()) {
-                log.error("Access token not available for WebSocket connection");
-                return;
+                log.error("Access token not available for WebSocket connection. Please login first via /api/auth/session");
+                throw new IllegalStateException("Access token not set. Please authenticate first.");
             }
 
-            ticker = new KiteTicker(kiteConfig.getApiKey(), accessToken);
+            // Validate token is not just the config value (which might be expired)
+            log.info("Attempting WebSocket connection...");
+            log.info("API Key : {}", kiteConfig.getApiKey());
+            log.debug("Access Token length: {}", accessToken);
+
+            // Verify we can make API calls before attempting WebSocket connection
+            try {
+                kiteConnect.getProfile();
+                log.info("Access token validated successfully");
+            } catch (KiteException | IOException e) {
+                log.error("Access token validation failed. Token may be expired. Please re-login via /api/auth/session");
+                throw new IllegalStateException("Invalid or expired access token. Please authenticate again.", e);
+            }
+
+            ticker = new KiteTicker(accessToken, kiteConfig.getApiKey());
 
             ticker.setOnConnectedListener(() -> {
                 isConnected = true;
@@ -54,6 +69,26 @@ public class WebSocketService {
             ticker.setOnDisconnectedListener(() -> {
                 isConnected = false;
                 log.warn("WebSocket disconnected");
+            });
+
+            ticker.setOnErrorListener(new com.zerodhatech.ticker.OnError() {
+                @Override
+                public void onError(Exception exception) {
+                    log.error("WebSocket error occurred", exception);
+                    isConnected = false;
+                }
+
+                @Override
+                public void onError(KiteException kiteException) {
+                    log.error("WebSocket Kite error occurred", kiteException);
+                    isConnected = false;
+                }
+
+                @Override
+                public void onError(String error) {
+                    log.error("WebSocket error occurred: {}", error);
+                    isConnected = false;
+                }
             });
 
             ticker.setOnTickerArrivalListener(this::processTicks);
@@ -70,9 +105,14 @@ public class WebSocketService {
             ticker.connect();
             log.info("WebSocket connection initiated");
 
+        } catch (IllegalStateException e) {
+            log.error("WebSocket connection failed: {}", e.getMessage());
+            isConnected = false;
+            throw e;
         } catch (Exception e) {
             log.error("Error connecting WebSocket: {}", e.getMessage(), e);
             isConnected = false;
+            throw new RuntimeException("Failed to establish WebSocket connection: " + e.getMessage(), e);
         }
     }
 

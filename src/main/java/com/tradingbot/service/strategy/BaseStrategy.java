@@ -2,6 +2,7 @@ package com.tradingbot.service.strategy;
 
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.service.TradingService;
+import com.tradingbot.service.UnifiedTradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Instrument;
 import com.zerodhatech.models.LTPQuote;
@@ -16,12 +17,14 @@ import java.util.stream.Collectors;
 
 /**
  * Abstract base class for trading strategies with common utility methods
+ * Now supports both Paper Trading and Live Trading through UnifiedTradingService
  */
 @Slf4j
 @RequiredArgsConstructor
 public abstract class BaseStrategy implements TradingStrategy {
 
     protected final TradingService tradingService;
+    protected final UnifiedTradingService unifiedTradingService;
     protected final Map<String, Integer> lotSizeCache;
 
     /**
@@ -235,7 +238,7 @@ public abstract class BaseStrategy implements TradingStrategy {
      * Get order price from order history
      */
     protected double getOrderPrice(String orderId) throws KiteException, IOException {
-        List<Order> orderHistory = tradingService.getOrderHistory(orderId);
+        List<Order> orderHistory = unifiedTradingService.getOrderHistory(orderId);
         if (!orderHistory.isEmpty()) {
             Order lastOrder = orderHistory.get(orderHistory.size() - 1);
 
@@ -258,4 +261,3 @@ public abstract class BaseStrategy implements TradingStrategy {
         return 0.0;
     }
 }
-

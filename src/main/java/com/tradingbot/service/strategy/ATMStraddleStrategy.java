@@ -5,6 +5,7 @@ import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.service.TradingService;
+import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.service.strategy.monitoring.PositionMonitor;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
@@ -27,6 +28,7 @@ import java.util.Map;
  * - Target: 15 points on any leg
  * - Real-time monitoring via WebSocket
  * - Auto-exit both legs when either SL or Target is hit
+ * - Supports both Paper Trading and Live Trading modes
  */
 @Slf4j
 @Component
@@ -35,9 +37,10 @@ public class ATMStraddleStrategy extends BaseStrategy {
     private final WebSocketService webSocketService;
 
     public ATMStraddleStrategy(TradingService tradingService,
+                               UnifiedTradingService unifiedTradingService,
                                Map<String, Integer> lotSizeCache,
                                WebSocketService webSocketService) {
-        super(tradingService, lotSizeCache);
+        super(tradingService, unifiedTradingService, lotSizeCache);
         this.webSocketService = webSocketService;
     }
 
@@ -45,7 +48,9 @@ public class ATMStraddleStrategy extends BaseStrategy {
     public StrategyExecutionResponse execute(StrategyRequest request, String executionId)
             throws KiteException, IOException {
 
-        log.info("Executing ATM Straddle for {} with SL=10pts, Target=15pts", request.getInstrumentType());
+        String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
+        log.info("[{} MODE] Executing ATM Straddle for {} with SL=10pts, Target=15pts",
+                 tradingMode, request.getInstrumentType());
 
         // Get current spot price
         double spotPrice = getCurrentSpotPrice(request.getInstrumentType());
@@ -77,10 +82,10 @@ public class ATMStraddleStrategy extends BaseStrategy {
         int quantity = request.getQuantity() != null ? request.getQuantity() : getLotSize(request.getInstrumentType());
         String orderType = request.getOrderType() != null ? request.getOrderType() : "MARKET";
 
-        // Place Call order
-        log.info("Placing CALL order for {}", atmCall.tradingsymbol);
+        // Place Call order using UnifiedTradingService (supports paper trading)
+        log.info("[{} MODE] Placing CALL order for {}", tradingMode, atmCall.tradingsymbol);
         OrderRequest callOrder = createOrderRequest(atmCall.tradingsymbol, "BUY", quantity, orderType, null);
-        var callOrderResponse = tradingService.placeOrder(callOrder);
+        var callOrderResponse = unifiedTradingService.placeOrder(callOrder);
 
         // Validate Call order response
         if (callOrderResponse == null || callOrderResponse.getOrderId() == null ||
@@ -101,10 +106,10 @@ public class ATMStraddleStrategy extends BaseStrategy {
             "COMPLETED"
         ));
 
-        // Place Put order
-        log.info("Placing PUT order for {}", atmPut.tradingsymbol);
+        // Place Put order using UnifiedTradingService (supports paper trading)
+        log.info("[{} MODE] Placing PUT order for {}", tradingMode, atmPut.tradingsymbol);
         OrderRequest putOrder = createOrderRequest(atmPut.tradingsymbol, "BUY", quantity, orderType, null);
-        var putOrderResponse = tradingService.placeOrder(putOrder);
+        var putOrderResponse = unifiedTradingService.placeOrder(putOrder);
 
         // Validate Put order response
         if (putOrderResponse == null || putOrderResponse.getOrderId() == null ||
@@ -135,14 +140,15 @@ public class ATMStraddleStrategy extends BaseStrategy {
         StrategyExecutionResponse response = new StrategyExecutionResponse();
         response.setExecutionId(executionId);
         response.setStatus("ACTIVE");
-        response.setMessage("ATM Straddle executed successfully. Monitoring with SL=10pts, Target=15pts");
+        response.setMessage(String.format("[%s MODE] ATM Straddle executed successfully. Monitoring with SL=10pts, Target=15pts", tradingMode));
         response.setOrders(orderDetails);
         response.setTotalPremium(totalPremium);
         response.setCurrentValue(totalPremium);
         response.setProfitLoss(0.0);
         response.setProfitLossPercentage(0.0);
 
-        log.info("ATM Straddle executed successfully. Total Premium: {}. Real-time monitoring started.", totalPremium);
+        log.info("[{} MODE] ATM Straddle executed successfully. Total Premium: {}. Real-time monitoring started.",
+                 tradingMode, totalPremium);
         return response;
     }
 
@@ -189,23 +195,24 @@ public class ATMStraddleStrategy extends BaseStrategy {
     private void exitAllLegs(String executionId, String callOrderId, String putOrderId,
                             String callSymbol, String putSymbol, int quantity, String reason) {
         try {
-            log.info("Exiting all legs for execution {}: {}", executionId, reason);
+            String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
+            log.info("[{} MODE] Exiting all legs for execution {}: {}", tradingMode, executionId, reason);
 
-            // Place sell orders for both legs
+            // Place sell orders for both legs using UnifiedTradingService
             OrderRequest callExitOrder = createOrderRequest(callSymbol, "SELL", quantity, "MARKET", null);
-            OrderResponse callExitResponse = tradingService.placeOrder(callExitOrder);
+            OrderResponse callExitResponse = unifiedTradingService.placeOrder(callExitOrder);
 
             if ("SUCCESS".equals(callExitResponse.getStatus())) {
-                log.info("Call leg exited successfully: {}", callExitResponse.getOrderId());
+                log.info("[{} MODE] Call leg exited successfully: {}", tradingMode, callExitResponse.getOrderId());
             } else {
                 log.error("Failed to exit Call leg: {}", callExitResponse.getMessage());
             }
 
             OrderRequest putExitOrder = createOrderRequest(putSymbol, "SELL", quantity, "MARKET", null);
-            OrderResponse putExitResponse = tradingService.placeOrder(putExitOrder);
+            OrderResponse putExitResponse = unifiedTradingService.placeOrder(putExitOrder);
 
             if ("SUCCESS".equals(putExitResponse.getStatus())) {
-                log.info("Put leg exited successfully: {}", putExitResponse.getOrderId());
+                log.info("[{} MODE] Put leg exited successfully: {}", tradingMode, putExitResponse.getOrderId());
             } else {
                 log.error("Failed to exit Put leg: {}", putExitResponse.getMessage());
             }
@@ -213,7 +220,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
             // Stop monitoring
             webSocketService.stopMonitoring(executionId);
 
-            log.info("Successfully exited all legs for execution {}", executionId);
+            log.info("[{} MODE] Successfully exited all legs for execution {}", tradingMode, executionId);
 
         } catch (Exception | KiteException e) {
             log.error("Error exiting legs for execution {}: {}", executionId, e.getMessage(), e);
@@ -227,6 +234,6 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
     @Override
     public String getStrategyDescription() {
-        return "Buy ATM Call + Buy ATM Put (Non-directional strategy with SL=10pts, Target=15pts)";
+        return "Buy ATM Call + Buy ATM Put (Non-directional strategy with SL=10pts, Target=15pts) - Supports Paper & Live Trading";
     }
 }

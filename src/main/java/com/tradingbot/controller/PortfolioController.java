@@ -1,7 +1,7 @@
 package com.tradingbot.controller;
 
 import com.tradingbot.dto.ApiResponse;
-import com.tradingbot.service.TradingService;
+import com.tradingbot.service.UnifiedTradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Holding;
 import com.zerodhatech.models.Position;
@@ -22,16 +22,17 @@ import java.util.Map;
 @RequestMapping("/api/portfolio")
 @RequiredArgsConstructor
 @Slf4j
-@Tag(name = "Portfolio", description = "Portfolio and position management endpoints")
+@Tag(name = "Portfolio", description = "Portfolio and position management endpoints - Automatically routes to Paper or Live trading")
 public class PortfolioController {
 
-    private final TradingService tradingService;
+    private final UnifiedTradingService unifiedTradingService;
 
     @GetMapping("/positions")
-    @Operation(summary = "Get all positions")
+    @Operation(summary = "Get all positions",
+               description = "Returns positions from Paper Trading or Live Trading based on configuration")
     public ResponseEntity<ApiResponse<Map<String, List<Position>>>> getPositions() {
         try {
-            Map<String, List<Position>> positions = tradingService.getPositions();
+            Map<String, List<Position>> positions = unifiedTradingService.getPositions();
             return ResponseEntity.ok(ApiResponse.success(positions));
         } catch (KiteException | IOException e) {
             log.error("Error fetching positions", e);
@@ -40,10 +41,11 @@ public class PortfolioController {
     }
 
     @GetMapping("/holdings")
-    @Operation(summary = "Get all holdings")
+    @Operation(summary = "Get all holdings",
+               description = "Returns holdings (only available in Live Trading mode)")
     public ResponseEntity<ApiResponse<List<Holding>>> getHoldings() {
         try {
-            List<Holding> holdings = tradingService.getHoldings();
+            List<Holding> holdings = unifiedTradingService.getHoldings();
             return ResponseEntity.ok(ApiResponse.success(holdings));
         } catch (KiteException | IOException e) {
             log.error("Error fetching holdings", e);
@@ -52,10 +54,11 @@ public class PortfolioController {
     }
 
     @GetMapping("/trades")
-    @Operation(summary = "Get all trades for the day")
+    @Operation(summary = "Get all trades for the day",
+               description = "Returns trades from Paper Trading or Live Trading based on configuration")
     public ResponseEntity<ApiResponse<List<Trade>>> getTrades() {
         try {
-            List<Trade> trades = tradingService.getTrades();
+            List<Trade> trades = unifiedTradingService.getTrades();
             return ResponseEntity.ok(ApiResponse.success(trades));
         } catch (KiteException | IOException e) {
             log.error("Error fetching trades", e);
@@ -64,7 +67,8 @@ public class PortfolioController {
     }
 
     @PutMapping("/positions/convert")
-    @Operation(summary = "Convert position product type")
+    @Operation(summary = "Convert position product type",
+               description = "Convert position from one product type to another (only available in Live Trading mode)")
     public ResponseEntity<ApiResponse<JSONObject>> convertPosition(
             @RequestParam String tradingSymbol,
             @RequestParam String exchange,
@@ -74,7 +78,7 @@ public class PortfolioController {
             @RequestParam String newProduct,
             @RequestParam int quantity) {
         try {
-            JSONObject result = tradingService.convertPosition(tradingSymbol, exchange, transactionType,
+            JSONObject result = unifiedTradingService.convertPosition(tradingSymbol, exchange, transactionType,
                     positionType, oldProduct, newProduct, quantity);
             return ResponseEntity.ok(ApiResponse.success("Position converted successfully", result));
         } catch (KiteException | IOException e) {

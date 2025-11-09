@@ -12,6 +12,30 @@ kite:
   access-token: ${KITE_ACCESS_TOKEN:}
   login-url: https://kite.zerodha.com/connect/login
 
+# Paper Trading Configuration
+trading:
+  # Master switch: true = Paper Trading, false = Live Trading
+  paper-trading-enabled: true
+
+  # Initial virtual balance for paper trading (in INR)
+  initial-balance: 1000000.0
+
+  # Brokerage and charges
+  apply-brokerage-charges: true
+  brokerage-per-order: 20.0
+  stt-percentage: 0.025
+  transaction-charges: 0.00325
+  gst-percentage: 18.0
+  sebi-charges: 0.0001
+  stamp-duty: 0.003
+
+  # Execution settings
+  slippage-percentage: 0.05
+  enable-execution-delay: true
+  execution-delay-ms: 500
+  enable-order-rejection: false
+  rejection-probability: 0.02
+
 # Actuator endpoints
 management:
   endpoints:
@@ -35,4 +59,3 @@ springdoc:
     path: /api-docs
   swagger-ui:
     path: /swagger-ui.html
-

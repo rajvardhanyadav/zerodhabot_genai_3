@@ -4,6 +4,7 @@ import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.service.TradingService;
+import com.tradingbot.service.UnifiedTradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Instrument;
 import lombok.extern.slf4j.Slf4j;
@@ -18,20 +19,24 @@ import java.util.Map;
  * ATM Strangle Strategy
  * Buy 1 OTM Call + Buy 1 OTM Put
  * Lower cost than straddle with wider breakeven points
+ * Supports both Paper Trading and Live Trading modes
  */
 @Slf4j
 @Component
 public class ATMStrangleStrategy extends BaseStrategy {
 
-    public ATMStrangleStrategy(TradingService tradingService, Map<String, Integer> lotSizeCache) {
-        super(tradingService, lotSizeCache);
+    public ATMStrangleStrategy(TradingService tradingService,
+                               UnifiedTradingService unifiedTradingService,
+                               Map<String, Integer> lotSizeCache) {
+        super(tradingService, unifiedTradingService, lotSizeCache);
     }
 
     @Override
     public StrategyExecutionResponse execute(StrategyRequest request, String executionId)
             throws KiteException, IOException {
 
-        log.info("Executing ATM Strangle for {}", request.getInstrumentType());
+        String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
+        log.info("[{} MODE] Executing ATM Strangle for {}", tradingMode, request.getInstrumentType());
 
         // Get current spot price
         double spotPrice = getCurrentSpotPrice(request.getInstrumentType());
@@ -67,10 +72,10 @@ public class ATMStrangleStrategy extends BaseStrategy {
         int quantity = request.getQuantity() != null ? request.getQuantity() : getLotSize(request.getInstrumentType());
         String orderType = request.getOrderType() != null ? request.getOrderType() : "MARKET";
 
-        // Place Call order
-        log.info("Placing OTM CALL order for {}", otmCall.tradingsymbol);
+        // Place Call order using UnifiedTradingService (supports paper trading)
+        log.info("[{} MODE] Placing OTM CALL order for {}", tradingMode, otmCall.tradingsymbol);
         OrderRequest callOrder = createOrderRequest(otmCall.tradingsymbol, "BUY", quantity, orderType, null);
-        var callOrderResponse = tradingService.placeOrder(callOrder);
+        var callOrderResponse = unifiedTradingService.placeOrder(callOrder);
 
         // Validate Call order response
         if (callOrderResponse == null || callOrderResponse.getOrderId() == null ||
@@ -91,10 +96,10 @@ public class ATMStrangleStrategy extends BaseStrategy {
             "COMPLETED"
         ));
 
-        // Place Put order
-        log.info("Placing OTM PUT order for {}", otmPut.tradingsymbol);
+        // Place Put order using UnifiedTradingService (supports paper trading)
+        log.info("[{} MODE] Placing OTM PUT order for {}", tradingMode, otmPut.tradingsymbol);
         OrderRequest putOrder = createOrderRequest(otmPut.tradingsymbol, "BUY", quantity, orderType, null);
-        var putOrderResponse = tradingService.placeOrder(putOrder);
+        var putOrderResponse = unifiedTradingService.placeOrder(putOrder);
 
         // Validate Put order response
         if (putOrderResponse == null || putOrderResponse.getOrderId() == null ||
@@ -120,14 +125,14 @@ public class ATMStrangleStrategy extends BaseStrategy {
         StrategyExecutionResponse response = new StrategyExecutionResponse();
         response.setExecutionId(executionId);
         response.setStatus("COMPLETED");
-        response.setMessage("ATM Strangle executed successfully");
+        response.setMessage(String.format("[%s MODE] ATM Strangle executed successfully", tradingMode));
         response.setOrders(orderDetails);
         response.setTotalPremium(totalPremium);
         response.setCurrentValue(totalPremium);
         response.setProfitLoss(0.0);
         response.setProfitLossPercentage(0.0);
 
-        log.info("ATM Strangle executed successfully. Total Premium: {}", totalPremium);
+        log.info("[{} MODE] ATM Strangle executed successfully. Total Premium: {}", tradingMode, totalPremium);
         return response;
     }
 
@@ -150,7 +155,6 @@ public class ATMStrangleStrategy extends BaseStrategy {
 
     @Override
     public String getStrategyDescription() {
-        return "Buy OTM Call + Buy OTM Put (Lower cost than straddle)";
+        return "Buy OTM Call + Buy OTM Put (Lower cost than straddle) - Supports Paper & Live Trading";
     }
 }
-

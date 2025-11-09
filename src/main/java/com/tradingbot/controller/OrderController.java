@@ -3,7 +3,7 @@ package com.tradingbot.controller;
 import com.tradingbot.dto.ApiResponse;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
-import com.tradingbot.service.TradingService;
+import com.tradingbot.service.UnifiedTradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Order;
 import io.swagger.v3.oas.annotations.Operation;
@@ -21,16 +21,17 @@ import java.util.List;
 @RequestMapping("/api/orders")
 @RequiredArgsConstructor
 @Slf4j
-@Tag(name = "Orders", description = "Order management endpoints")
+@Tag(name = "Orders", description = "Order management endpoints - Automatically routes to Paper or Live trading")
 public class OrderController {
 
-    private final TradingService tradingService;
+    private final UnifiedTradingService unifiedTradingService;
 
     @PostMapping
-    @Operation(summary = "Place a new order")
+    @Operation(summary = "Place a new order",
+               description = "Place order in Paper Trading or Live Trading mode based on configuration")
     public ResponseEntity<ApiResponse<OrderResponse>> placeOrder(@Valid @RequestBody OrderRequest orderRequest) {
         try {
-            OrderResponse response = tradingService.placeOrder(orderRequest);
+            OrderResponse response = unifiedTradingService.placeOrder(orderRequest);
             return ResponseEntity.ok(ApiResponse.success("Order placed successfully", response));
         } catch (KiteException | IOException e) {
             log.error("Error placing order", e);
@@ -44,7 +45,7 @@ public class OrderController {
             @PathVariable String orderId,
             @Valid @RequestBody OrderRequest orderRequest) {
         try {
-            OrderResponse response = tradingService.modifyOrder(orderId, orderRequest);
+            OrderResponse response = unifiedTradingService.modifyOrder(orderId, orderRequest);
             return ResponseEntity.ok(ApiResponse.success("Order modified successfully", response));
         } catch (KiteException | IOException e) {
             log.error("Error modifying order", e);
@@ -56,7 +57,7 @@ public class OrderController {
     @Operation(summary = "Cancel an order")
     public ResponseEntity<ApiResponse<OrderResponse>> cancelOrder(@PathVariable String orderId) {
         try {
-            OrderResponse response = tradingService.cancelOrder(orderId);
+            OrderResponse response = unifiedTradingService.cancelOrder(orderId);
             return ResponseEntity.ok(ApiResponse.success("Order cancelled successfully", response));
         } catch (KiteException | IOException e) {
             log.error("Error cancelling order", e);
@@ -68,7 +69,7 @@ public class OrderController {
     @Operation(summary = "Get all orders for the day")
     public ResponseEntity<ApiResponse<List<Order>>> getOrders() {
         try {
-            List<Order> orders = tradingService.getOrders();
+            List<Order> orders = unifiedTradingService.getOrders();
             return ResponseEntity.ok(ApiResponse.success(orders));
         } catch (KiteException | IOException e) {
             log.error("Error fetching orders", e);
@@ -80,7 +81,7 @@ public class OrderController {
     @Operation(summary = "Get order history")
     public ResponseEntity<ApiResponse<List<Order>>> getOrderHistory(@PathVariable String orderId) {
         try {
-            List<Order> orderHistory = tradingService.getOrderHistory(orderId);
+            List<Order> orderHistory = unifiedTradingService.getOrderHistory(orderId);
             return ResponseEntity.ok(ApiResponse.success(orderHistory));
         } catch (KiteException | IOException e) {
             log.error("Error fetching order history", e);
@@ -88,4 +89,3 @@ public class OrderController {
         }
     }
 }
-
