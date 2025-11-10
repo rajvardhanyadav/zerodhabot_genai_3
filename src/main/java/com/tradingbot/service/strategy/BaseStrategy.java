@@ -248,7 +248,7 @@ public abstract class BaseStrategy implements TradingStrategy {
         request.setExchange("NFO");
         request.setTransactionType(transactionType);
         request.setQuantity(quantity);
-        request.setProduct("NRML");
+        request.setProduct("MIS");
         request.setOrderType(orderType);
         request.setPrice(price);
         request.setValidity("DAY");

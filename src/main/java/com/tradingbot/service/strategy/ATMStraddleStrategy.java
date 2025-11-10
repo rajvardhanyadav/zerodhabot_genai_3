@@ -9,6 +9,7 @@ import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.service.strategy.monitoring.PositionMonitor;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
+import com.tradingbot.util.StrategyConstants;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Instrument;
 import com.zerodhatech.models.Order;
@@ -24,7 +25,7 @@ import java.util.Map;
  * ATM Straddle Strategy
  * Buy 1 ATM Call + Buy 1 ATM Put
  * Non-directional strategy that profits from high volatility
- *
+ * <p>
  * Features:
  * - Stop Loss: Configurable (default from config)
  * - Target: Configurable (default from config)
@@ -51,124 +52,161 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
     @Override
     public StrategyExecutionResponse execute(StrategyRequest request, String executionId,
-                                            StrategyCompletionCallback completionCallback)
+                                             StrategyCompletionCallback completionCallback)
             throws KiteException, IOException {
 
-        // Get SL and Target from request, or use defaults from config
-        double stopLossPoints = request.getStopLossPoints() != null
-            ? request.getStopLossPoints()
-            : strategyConfig.getDefaultStopLossPoints();
+        double stopLossPoints = getStopLossPoints(request);
+        double targetPoints = getTargetPoints(request);
+        String tradingMode = getTradingMode();
 
-        double targetPoints = request.getTargetPoints() != null
-            ? request.getTargetPoints()
-            : strategyConfig.getDefaultTargetPoints();
+        log.info(StrategyConstants.LOG_EXECUTING_STRATEGY,
+                tradingMode, request.getInstrumentType(), stopLossPoints, targetPoints);
 
-        String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
-        log.info("[{} MODE] Executing ATM Straddle for {} with SL={}pts, Target={}pts",
-                 tradingMode, request.getInstrumentType(), stopLossPoints, targetPoints);
-
-        // Get current spot price
         double spotPrice = getCurrentSpotPrice(request.getInstrumentType());
         log.info("Current spot price: {}", spotPrice);
 
-        // Calculate ATM strike
         double atmStrike = getATMStrike(spotPrice, request.getInstrumentType());
         log.info("ATM Strike: {}", atmStrike);
 
-        // Get option instruments
-        List<Instrument> instruments = getOptionInstruments(
-            request.getInstrumentType(),
-            request.getExpiry()
-        );
+        List<Instrument> instruments = getOptionInstruments(request.getInstrumentType(), request.getExpiry());
         log.info("Found {} option instruments for {}", instruments.size(), request.getInstrumentType());
 
-        // Find ATM Call and Put
-        Instrument atmCall = findOptionInstrument(instruments, atmStrike, "CE");
-        Instrument atmPut = findOptionInstrument(instruments, atmStrike, "PE");
-        log.info("ATM Call: {}, ATM Put: {}",
-            atmCall != null ? atmCall.tradingsymbol : "null",
-            atmPut != null ? atmPut.tradingsymbol : "null");
+        Instrument atmCall = findOptionInstrument(instruments, atmStrike, StrategyConstants.OPTION_TYPE_CALL);
+        Instrument atmPut = findOptionInstrument(instruments, atmStrike, StrategyConstants.OPTION_TYPE_PUT);
 
-        if (atmCall == null || atmPut == null) {
-            throw new RuntimeException("ATM options not found for strike: " + atmStrike);
-        }
+        validateATMOptions(atmCall, atmPut, atmStrike);
 
         List<StrategyExecutionResponse.OrderDetail> orderDetails = new ArrayList<>();
-
-        // Calculate actual quantity using centralized method from BaseStrategy
         int quantity = calculateOrderQuantity(request);
+        String orderType = getOrderType(request);
 
-        String orderType = request.getOrderType() != null ? request.getOrderType() : "MARKET";
+        // Place both legs
+        placeCallLeg(atmCall, quantity, orderType, orderDetails, tradingMode);
+        placePutLeg(atmPut, quantity, orderType, orderDetails, tradingMode);
 
-        // Place Call order using UnifiedTradingService (supports paper trading)
-        log.info("[{} MODE] Placing CALL order for {}", tradingMode, atmCall.tradingsymbol);
-        OrderRequest callOrder = createOrderRequest(atmCall.tradingsymbol, "BUY", quantity, orderType, null);
-        var callOrderResponse = unifiedTradingService.placeOrder(callOrder);
+        double totalPremium = calculateTotalPremium(orderDetails);
 
-        // Validate Call order response
-        if (callOrderResponse == null || callOrderResponse.getOrderId() == null ||
-            !"SUCCESS".equals(callOrderResponse.getStatus())) {
-            String errorMsg = callOrderResponse != null ? callOrderResponse.getMessage() : "No response received";
-            log.error("Call order placement failed: {}", errorMsg);
-            throw new RuntimeException("Call order placement failed: " + errorMsg);
+        setupMonitoring(executionId, atmCall, atmPut,
+                orderDetails.get(0).getOrderId(), orderDetails.get(1).getOrderId(),
+                quantity, orderDetails, stopLossPoints, targetPoints, completionCallback);
+
+        return buildSuccessResponse(executionId, orderDetails, totalPremium, stopLossPoints, targetPoints, tradingMode);
+    }
+
+    private double getStopLossPoints(StrategyRequest request) {
+        return request.getStopLossPoints() != null
+                ? request.getStopLossPoints()
+                : strategyConfig.getDefaultStopLossPoints();
+    }
+
+    private double getTargetPoints(StrategyRequest request) {
+        return request.getTargetPoints() != null
+                ? request.getTargetPoints()
+                : strategyConfig.getDefaultTargetPoints();
+    }
+
+    private String getTradingMode() {
+        return unifiedTradingService.isPaperTradingEnabled()
+                ? StrategyConstants.TRADING_MODE_PAPER
+                : StrategyConstants.TRADING_MODE_LIVE;
+    }
+
+    private String getOrderType(StrategyRequest request) {
+        return request.getOrderType() != null
+                ? request.getOrderType()
+                : StrategyConstants.ORDER_TYPE_MARKET;
+    }
+
+    private void validateATMOptions(Instrument atmCall, Instrument atmPut, double atmStrike) {
+        log.info("ATM Call: {}, ATM Put: {}",
+                atmCall != null ? atmCall.tradingsymbol : "null",
+                atmPut != null ? atmPut.tradingsymbol : "null");
+
+        if (atmCall == null || atmPut == null) {
+            throw new RuntimeException(StrategyConstants.ERROR_ATM_OPTIONS_NOT_FOUND + atmStrike);
         }
+    }
+
+    private void placeCallLeg(Instrument atmCall, int quantity, String orderType,
+                              List<StrategyExecutionResponse.OrderDetail> orderDetails,
+                              String tradingMode) throws KiteException, IOException {
+        log.info(StrategyConstants.LOG_PLACING_ORDER, tradingMode, StrategyConstants.OPTION_TYPE_CALL, atmCall.tradingsymbol);
+
+        OrderRequest callOrder = createOrderRequest(atmCall.tradingsymbol, StrategyConstants.TRANSACTION_BUY,
+                quantity, orderType, null);
+        OrderResponse callOrderResponse = unifiedTradingService.placeOrder(callOrder);
+
+        validateOrderResponse(callOrderResponse, "Call");
 
         double callPrice = getOrderPrice(callOrderResponse.getOrderId());
-        orderDetails.add(new StrategyExecutionResponse.OrderDetail(
-            callOrderResponse.getOrderId(),
-            atmCall.tradingsymbol,
-            "CE",
-            atmStrike,
-            quantity,
-            callPrice,
-            "COMPLETED"
-        ));
+        orderDetails.add(createOrderDetail(callOrderResponse.getOrderId(), atmCall, quantity, callPrice));
+    }
 
-        // Place Put order using UnifiedTradingService (supports paper trading)
-        log.info("[{} MODE] Placing PUT order for {}", tradingMode, atmPut.tradingsymbol);
-        OrderRequest putOrder = createOrderRequest(atmPut.tradingsymbol, "BUY", quantity, orderType, null);
-        var putOrderResponse = unifiedTradingService.placeOrder(putOrder);
+    private void placePutLeg(Instrument atmPut, int quantity, String orderType,
+                             List<StrategyExecutionResponse.OrderDetail> orderDetails,
+                             String tradingMode) throws KiteException, IOException {
+        log.info(StrategyConstants.LOG_PLACING_ORDER, tradingMode, StrategyConstants.OPTION_TYPE_PUT, atmPut.tradingsymbol);
 
-        // Validate Put order response
-        if (putOrderResponse == null || putOrderResponse.getOrderId() == null ||
-            !"SUCCESS".equals(putOrderResponse.getStatus())) {
-            String errorMsg = putOrderResponse != null ? putOrderResponse.getMessage() : "No response received";
-            log.error("Put order placement failed: {}", errorMsg);
-            throw new RuntimeException("Put order placement failed: " + errorMsg);
-        }
+        OrderRequest putOrder = createOrderRequest(atmPut.tradingsymbol, StrategyConstants.TRANSACTION_BUY,
+                quantity, orderType, null);
+        OrderResponse putOrderResponse = unifiedTradingService.placeOrder(putOrder);
+
+        validateOrderResponse(putOrderResponse, "Put");
 
         double putPrice = getOrderPrice(putOrderResponse.getOrderId());
-        orderDetails.add(new StrategyExecutionResponse.OrderDetail(
-            putOrderResponse.getOrderId(),
-            atmPut.tradingsymbol,
-            "PE",
-            atmStrike,
-            quantity,
-            putPrice,
-            "COMPLETED"
-        ));
+        orderDetails.add(createOrderDetail(putOrderResponse.getOrderId(), atmPut, quantity, putPrice));
+    }
 
-        log.info("[{} MODE] Both legs placed successfully. Call Price: {}, Put Price: {}", tradingMode, callPrice, putPrice);
-        double totalPremium = (callPrice + putPrice) * quantity;
+    private void validateOrderResponse(OrderResponse orderResponse, String legType) {
+        if (orderResponse == null || orderResponse.getOrderId() == null ||
+                !StrategyConstants.ORDER_STATUS_SUCCESS.equals(orderResponse.getStatus())) {
+            String errorMsg = orderResponse != null ? orderResponse.getMessage() : StrategyConstants.ERROR_NO_RESPONSE;
+            log.error("{} {}{}", legType, StrategyConstants.ERROR_ORDER_PLACEMENT_FAILED, errorMsg);
+            throw new RuntimeException(legType + " " + StrategyConstants.ERROR_ORDER_PLACEMENT_FAILED + errorMsg);
+        }
+    }
 
-        // Setup position monitoring with SL and Target
-        setupMonitoring(executionId, atmCall, atmPut,
-                       callOrderResponse.getOrderId(), putOrderResponse.getOrderId(),
-                       quantity, orderDetails, stopLossPoints, targetPoints, completionCallback);
+    private StrategyExecutionResponse.OrderDetail createOrderDetail(String orderId, Instrument instrument,
+                                                                    int quantity, double price) {
+        return new StrategyExecutionResponse.OrderDetail(
+                orderId,
+                instrument.tradingsymbol,
+                instrument.instrument_type.equals("CE") ? StrategyConstants.OPTION_TYPE_CALL : StrategyConstants.OPTION_TYPE_PUT,
+                Double.valueOf(instrument.strike),
+                quantity,
+                price,
+                StrategyConstants.ORDER_STATUS_COMPLETED
+        );
+    }
 
+    private double calculateTotalPremium(List<StrategyExecutionResponse.OrderDetail> orderDetails) {
+        double callPrice = orderDetails.get(0).getPrice();
+        double putPrice = orderDetails.get(1).getPrice();
+        int quantity = orderDetails.get(0).getQuantity();
+
+        log.info(StrategyConstants.LOG_BOTH_LEGS_PLACED, getTradingMode(), callPrice, putPrice);
+
+        return (callPrice + putPrice) * quantity;
+    }
+
+    private StrategyExecutionResponse buildSuccessResponse(String executionId,
+                                                           List<StrategyExecutionResponse.OrderDetail> orderDetails,
+                                                           double totalPremium,
+                                                           double stopLossPoints,
+                                                           double targetPoints,
+                                                           String tradingMode) {
         StrategyExecutionResponse response = new StrategyExecutionResponse();
         response.setExecutionId(executionId);
-        response.setStatus("ACTIVE");
-        response.setMessage(String.format("[%s MODE] ATM Straddle executed successfully. Monitoring with SL=%.1fpts, Target=%.1fpts",
-                           tradingMode, stopLossPoints, targetPoints));
+        response.setStatus(StrategyConstants.STRATEGY_STATUS_ACTIVE);
+        response.setMessage(String.format(StrategyConstants.MSG_STRATEGY_SUCCESS,
+                tradingMode, stopLossPoints, targetPoints));
         response.setOrders(orderDetails);
         response.setTotalPremium(totalPremium);
         response.setCurrentValue(totalPremium);
         response.setProfitLoss(0.0);
         response.setProfitLossPercentage(0.0);
 
-        log.info("[{} MODE] ATM Straddle executed successfully. Total Premium: {}. Real-time monitoring started.",
-                 tradingMode, totalPremium);
+        log.info(StrategyConstants.LOG_STRATEGY_EXECUTED, tradingMode, totalPremium);
         return response;
     }
 
@@ -183,121 +221,147 @@ public class ATMStraddleStrategy extends BaseStrategy {
                                  StrategyCompletionCallback completionCallback) {
 
         try {
-            // Fetch order histories to get actual prices and validate status
             List<Order> callOrderHistory = unifiedTradingService.getOrderHistory(callOrderId);
             List<Order> putOrderHistory = unifiedTradingService.getOrderHistory(putOrderId);
 
-            if (callOrderHistory.isEmpty() || putOrderHistory.isEmpty()) {
-                log.error("Unable to fetch order history for callOrderId: {} or putOrderId: {}",
-                         callOrderId, putOrderId);
+            if (!validateOrderHistories(callOrderHistory, putOrderHistory, callOrderId, putOrderId)) {
                 return;
             }
 
-            // Get the latest order status
-            Order latestCallOrder = callOrderHistory.get(callOrderHistory.size() - 1);
-            Order latestPutOrder = putOrderHistory.get(putOrderHistory.size() - 1);
+            Order latestCallOrder = getLatestOrder(callOrderHistory);
+            Order latestPutOrder = getLatestOrder(putOrderHistory);
 
-            // Check if both orders are COMPLETE
-            if (!"COMPLETE".equals(latestCallOrder.status)) {
-                log.warn("Call order {} is not COMPLETE. Status: {}. Monitoring will not start.",
-                        callOrderId, latestCallOrder.status);
+            if (!validateOrderCompletion(latestCallOrder, latestPutOrder, callOrderId, putOrderId)) {
                 return;
             }
 
-            if (!"COMPLETE".equals(latestPutOrder.status)) {
-                log.warn("Put order {} is not COMPLETE. Status: {}. Monitoring will not start.",
-                        putOrderId, latestPutOrder.status);
-                return;
-            }
-
-            // Fetch actual entry prices from orders
             double callEntryPrice = getOrderPrice(callOrderId);
             double putEntryPrice = getOrderPrice(putOrderId);
 
-            if (callEntryPrice == 0.0 || putEntryPrice == 0.0) {
-                log.error("Unable to fetch valid entry prices. Call: {}, Put: {}. Monitoring will not start.",
-                         callEntryPrice, putEntryPrice);
+            if (!validateEntryPrices(callEntryPrice, putEntryPrice)) {
                 return;
             }
 
             log.info("Orders validated - Call: {} (Price: {}), Put: {} (Price: {})",
                     latestCallOrder.status, callEntryPrice, latestPutOrder.status, putEntryPrice);
 
-            // Create position monitor with configurable SL and target
-            PositionMonitor monitor = new PositionMonitor(executionId, stopLossPoints, targetPoints);
+            PositionMonitor monitor = createPositionMonitor(executionId, stopLossPoints, targetPoints,
+                    callOrderId, putOrderId, callInstrument, putInstrument,
+                    callEntryPrice, putEntryPrice, quantity, completionCallback);
 
-            // Add Call leg
-            monitor.addLeg(callOrderId, callInstrument.tradingsymbol, callInstrument.instrument_token,
-                          callEntryPrice, quantity, "CE");
-
-            // Add Put leg
-            monitor.addLeg(putOrderId, putInstrument.tradingsymbol, putInstrument.instrument_token,
-                          putEntryPrice, quantity, "PE");
-
-            // Set exit callback to square off both legs
-            monitor.setExitCallback(reason -> {
-                log.warn("Exit triggered for execution {}: {}", executionId, reason);
-                exitAllLegs(executionId, callOrderId, putOrderId, callInstrument.tradingsymbol,
-                           putInstrument.tradingsymbol, quantity, reason, completionCallback);
-            });
-
-            // Ensure WebSocket is connected
-            if (!webSocketService.isConnected()) {
-                webSocketService.connect();
-            }
-
-            // Start monitoring
-            webSocketService.startMonitoring(executionId, monitor);
-
-            log.info("Position monitoring started for execution: {} with Call price: {}, Put price: {}",
-                    executionId, callEntryPrice, putEntryPrice);
+            startWebSocketMonitoring(executionId, monitor, callEntryPrice, putEntryPrice);
 
         } catch (Exception | KiteException e) {
             log.error("Error setting up monitoring for execution {}: {}", executionId, e.getMessage(), e);
         }
     }
 
+    private boolean validateOrderHistories(List<Order> callOrderHistory, List<Order> putOrderHistory,
+                                           String callOrderId, String putOrderId) {
+        if (callOrderHistory.isEmpty() || putOrderHistory.isEmpty()) {
+            log.error(StrategyConstants.ERROR_ORDER_HISTORY_FETCH, callOrderId, putOrderId);
+            return false;
+        }
+        return true;
+    }
+
+    private Order getLatestOrder(List<Order> orderHistory) {
+        return orderHistory.get(orderHistory.size() - 1);
+    }
+
+    private boolean validateOrderCompletion(Order latestCallOrder, Order latestPutOrder,
+                                            String callOrderId, String putOrderId) {
+        if (!StrategyConstants.ORDER_STATUS_COMPLETE.equals(latestCallOrder.status)) {
+            log.warn(StrategyConstants.LOG_ORDER_NOT_COMPLETE, "Call", callOrderId, latestCallOrder.status);
+            return false;
+        }
+
+        if (!StrategyConstants.ORDER_STATUS_COMPLETE.equals(latestPutOrder.status)) {
+            log.warn(StrategyConstants.LOG_ORDER_NOT_COMPLETE, "Put", putOrderId, latestPutOrder.status);
+            return false;
+        }
+
+        return true;
+    }
+
+    private boolean validateEntryPrices(double callEntryPrice, double putEntryPrice) {
+        if (callEntryPrice == 0.0 || putEntryPrice == 0.0) {
+            log.error(StrategyConstants.ERROR_INVALID_ENTRY_PRICE, callEntryPrice, putEntryPrice);
+            return false;
+        }
+        return true;
+    }
+
+    private PositionMonitor createPositionMonitor(String executionId, double stopLossPoints, double targetPoints,
+                                                  String callOrderId, String putOrderId,
+                                                  Instrument callInstrument, Instrument putInstrument,
+                                                  double callEntryPrice, double putEntryPrice,
+                                                  int quantity, StrategyCompletionCallback completionCallback) {
+        PositionMonitor monitor = new PositionMonitor(executionId, stopLossPoints, targetPoints);
+
+        monitor.addLeg(callOrderId, callInstrument.tradingsymbol, callInstrument.instrument_token,
+                callEntryPrice, quantity, StrategyConstants.OPTION_TYPE_CALL);
+
+        monitor.addLeg(putOrderId, putInstrument.tradingsymbol, putInstrument.instrument_token,
+                putEntryPrice, quantity, StrategyConstants.OPTION_TYPE_PUT);
+
+        monitor.setExitCallback(reason -> {
+            log.warn("Exit triggered for execution {}: {}", executionId, reason);
+            exitAllLegs(executionId, callOrderId, putOrderId, callInstrument.tradingsymbol,
+                    putInstrument.tradingsymbol, quantity, reason, completionCallback);
+        });
+
+        return monitor;
+    }
+
+    private void startWebSocketMonitoring(String executionId, PositionMonitor monitor,
+                                          double callEntryPrice, double putEntryPrice) {
+        if (!webSocketService.isConnected()) {
+            webSocketService.connect();
+        }
+
+        webSocketService.startMonitoring(executionId, monitor);
+
+        log.info("Position monitoring started for execution: {} with Call price: {}, Put price: {}",
+                executionId, callEntryPrice, putEntryPrice);
+    }
+
     /**
      * Exit all legs when SL or Target is hit
      */
     private void exitAllLegs(String executionId, String callOrderId, String putOrderId,
-                            String callSymbol, String putSymbol, int quantity, String reason,
-                            StrategyCompletionCallback completionCallback) {
+                             String callSymbol, String putSymbol, int quantity, String reason,
+                             StrategyCompletionCallback completionCallback) {
         try {
-            String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
-            log.info("[{} MODE] Exiting all legs for execution {}: {}", tradingMode, executionId, reason);
+            String tradingMode = getTradingMode();
+            log.info(StrategyConstants.LOG_EXITING_LEGS, tradingMode, executionId, reason);
 
-            // Place sell orders for both legs using UnifiedTradingService
-            OrderRequest callExitOrder = createOrderRequest(callSymbol, "SELL", quantity, "MARKET", null);
-            OrderResponse callExitResponse = unifiedTradingService.placeOrder(callExitOrder);
+            exitLeg(callSymbol, quantity, "Call", tradingMode);
+            exitLeg(putSymbol, quantity, "Put", tradingMode);
 
-            if ("SUCCESS".equals(callExitResponse.getStatus())) {
-                log.info("[{} MODE] Call leg exited successfully: {}", tradingMode, callExitResponse.getOrderId());
-            } else {
-                log.error("Failed to exit Call leg: {}", callExitResponse.getMessage());
-            }
-
-            OrderRequest putExitOrder = createOrderRequest(putSymbol, "SELL", quantity, "MARKET", null);
-            OrderResponse putExitResponse = unifiedTradingService.placeOrder(putExitOrder);
-
-            if ("SUCCESS".equals(putExitResponse.getStatus())) {
-                log.info("[{} MODE] Put leg exited successfully: {}", tradingMode, putExitResponse.getOrderId());
-            } else {
-                log.error("Failed to exit Put leg: {}", putExitResponse.getMessage());
-            }
-
-            // Stop monitoring
             webSocketService.stopMonitoring(executionId);
 
-            // Notify completion via callback
             if (completionCallback != null) {
                 completionCallback.onStrategyCompleted(executionId, reason);
             }
 
-            log.info("[{} MODE] Successfully exited all legs for execution {}", tradingMode, executionId);
+            log.info(StrategyConstants.LOG_ALL_LEGS_EXITED, tradingMode, executionId);
 
         } catch (Exception | KiteException e) {
             log.error("Error exiting legs for execution {}: {}", executionId, e.getMessage(), e);
+        }
+    }
+
+    private void exitLeg(String symbol, int quantity, String legName, String tradingMode)
+            throws KiteException, IOException {
+        OrderRequest exitOrder = createOrderRequest(symbol, StrategyConstants.TRANSACTION_SELL,
+                quantity, StrategyConstants.ORDER_TYPE_MARKET, null);
+        OrderResponse exitResponse = unifiedTradingService.placeOrder(exitOrder);
+
+        if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(exitResponse.getStatus())) {
+            log.info(StrategyConstants.LOG_LEG_EXITED, tradingMode, legName, exitResponse.getOrderId());
+        } else {
+            log.error("Failed to exit {} leg: {}", legName, exitResponse.getMessage());
         }
     }
 
@@ -309,7 +373,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
     @Override
     public String getStrategyDescription() {
         return String.format("Buy ATM Call + Buy ATM Put (Non-directional strategy with SL=%.1fpts, Target=%.1fpts) - Supports Paper & Live Trading",
-                           strategyConfig.getDefaultStopLossPoints(),
-                           strategyConfig.getDefaultTargetPoints());
+                strategyConfig.getDefaultStopLossPoints(),
+                strategyConfig.getDefaultTargetPoints());
     }
 }

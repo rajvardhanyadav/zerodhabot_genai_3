@@ -363,7 +363,9 @@ public class PaperTradingService {
             int totalBuyQty = (position.getBuyQuantity() != null ? position.getBuyQuantity() : 0) + order.getQuantity();
             double totalBuyValue = (position.getBuyValue() != null ? position.getBuyValue() : 0.0) +
                                   (executionPrice * order.getQuantity());
-
+            log.info("[PAPER TRADING] Updating BUY position: PrevQty={}, NewQty={}, PrevValue={}, NewValue={}",
+                     position.getBuyQuantity(), totalBuyQty,
+                     position.getBuyValue(), totalBuyValue);
             position.setBuyQuantity(totalBuyQty);
             position.setBuyValue(totalBuyValue);
             position.setBuyPrice(totalBuyValue / totalBuyQty);
@@ -386,7 +388,9 @@ public class PaperTradingService {
             int totalSellQty = (position.getSellQuantity() != null ? position.getSellQuantity() : 0) + order.getQuantity();
             double totalSellValue = (position.getSellValue() != null ? position.getSellValue() : 0.0) +
                                    (executionPrice * order.getQuantity());
-
+            log.info("[PAPER TRADING] Updating SELL position: PrevQty={}, NewQty={}, PrevValue={}, NewValue={}",
+                     position.getSellQuantity(), totalSellQty,
+                     position.getSellValue(), totalSellValue);
             position.setSellQuantity(totalSellQty);
             position.setSellValue(totalSellValue);
             position.setSellPrice(totalSellValue / totalSellQty);
