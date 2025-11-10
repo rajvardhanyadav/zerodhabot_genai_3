@@ -11,6 +11,7 @@ import com.tradingbot.service.strategy.monitoring.PositionMonitor;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Instrument;
+import com.zerodhatech.models.Order;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -147,10 +148,11 @@ public class ATMStraddleStrategy extends BaseStrategy {
             "COMPLETED"
         ));
 
+        log.info("[{} MODE] Both legs placed successfully. Call Price: {}, Put Price: {}", tradingMode, callPrice, putPrice);
         double totalPremium = (callPrice + putPrice) * quantity;
 
         // Setup position monitoring with SL and Target
-        setupMonitoring(executionId, atmCall, atmPut, callPrice, putPrice,
+        setupMonitoring(executionId, atmCall, atmPut,
                        callOrderResponse.getOrderId(), putOrderResponse.getOrderId(),
                        quantity, orderDetails, stopLossPoints, targetPoints, completionCallback);
 
@@ -172,41 +174,87 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
     /**
      * Setup real-time monitoring with stop loss and target
+     * Fetches entry prices from orders and validates order completion before starting monitoring
      */
     private void setupMonitoring(String executionId, Instrument callInstrument, Instrument putInstrument,
-                                 double callEntryPrice, double putEntryPrice,
                                  String callOrderId, String putOrderId,
                                  int quantity, List<StrategyExecutionResponse.OrderDetail> orderDetails,
                                  double stopLossPoints, double targetPoints,
                                  StrategyCompletionCallback completionCallback) {
 
-        // Create position monitor with configurable SL and target
-        PositionMonitor monitor = new PositionMonitor(executionId, stopLossPoints, targetPoints);
+        try {
+            // Fetch order histories to get actual prices and validate status
+            List<Order> callOrderHistory = unifiedTradingService.getOrderHistory(callOrderId);
+            List<Order> putOrderHistory = unifiedTradingService.getOrderHistory(putOrderId);
 
-        // Add Call leg
-        monitor.addLeg(callOrderId, callInstrument.tradingsymbol, callInstrument.instrument_token,
-                      callEntryPrice, quantity, "CE");
+            if (callOrderHistory.isEmpty() || putOrderHistory.isEmpty()) {
+                log.error("Unable to fetch order history for callOrderId: {} or putOrderId: {}",
+                         callOrderId, putOrderId);
+                return;
+            }
 
-        // Add Put leg
-        monitor.addLeg(putOrderId, putInstrument.tradingsymbol, putInstrument.instrument_token,
-                      putEntryPrice, quantity, "PE");
+            // Get the latest order status
+            Order latestCallOrder = callOrderHistory.get(callOrderHistory.size() - 1);
+            Order latestPutOrder = putOrderHistory.get(putOrderHistory.size() - 1);
 
-        // Set exit callback to square off both legs
-        monitor.setExitCallback(reason -> {
-            log.warn("Exit triggered for execution {}: {}", executionId, reason);
-            exitAllLegs(executionId, callOrderId, putOrderId, callInstrument.tradingsymbol,
-                       putInstrument.tradingsymbol, quantity, reason, completionCallback);
-        });
+            // Check if both orders are COMPLETE
+            if (!"COMPLETE".equals(latestCallOrder.status)) {
+                log.warn("Call order {} is not COMPLETE. Status: {}. Monitoring will not start.",
+                        callOrderId, latestCallOrder.status);
+                return;
+            }
 
-        // Ensure WebSocket is connected
-        if (!webSocketService.isConnected()) {
-            webSocketService.connect();
+            if (!"COMPLETE".equals(latestPutOrder.status)) {
+                log.warn("Put order {} is not COMPLETE. Status: {}. Monitoring will not start.",
+                        putOrderId, latestPutOrder.status);
+                return;
+            }
+
+            // Fetch actual entry prices from orders
+            double callEntryPrice = getOrderPrice(callOrderId);
+            double putEntryPrice = getOrderPrice(putOrderId);
+
+            if (callEntryPrice == 0.0 || putEntryPrice == 0.0) {
+                log.error("Unable to fetch valid entry prices. Call: {}, Put: {}. Monitoring will not start.",
+                         callEntryPrice, putEntryPrice);
+                return;
+            }
+
+            log.info("Orders validated - Call: {} (Price: {}), Put: {} (Price: {})",
+                    latestCallOrder.status, callEntryPrice, latestPutOrder.status, putEntryPrice);
+
+            // Create position monitor with configurable SL and target
+            PositionMonitor monitor = new PositionMonitor(executionId, stopLossPoints, targetPoints);
+
+            // Add Call leg
+            monitor.addLeg(callOrderId, callInstrument.tradingsymbol, callInstrument.instrument_token,
+                          callEntryPrice, quantity, "CE");
+
+            // Add Put leg
+            monitor.addLeg(putOrderId, putInstrument.tradingsymbol, putInstrument.instrument_token,
+                          putEntryPrice, quantity, "PE");
+
+            // Set exit callback to square off both legs
+            monitor.setExitCallback(reason -> {
+                log.warn("Exit triggered for execution {}: {}", executionId, reason);
+                exitAllLegs(executionId, callOrderId, putOrderId, callInstrument.tradingsymbol,
+                           putInstrument.tradingsymbol, quantity, reason, completionCallback);
+            });
+
+            // Ensure WebSocket is connected
+            if (!webSocketService.isConnected()) {
+                webSocketService.connect();
+            }
+
+            // Start monitoring
+            webSocketService.startMonitoring(executionId, monitor);
+
+            log.info("Position monitoring started for execution: {} with Call price: {}, Put price: {}",
+                    executionId, callEntryPrice, putEntryPrice);
+
+        } catch (Exception | KiteException e) {
+            log.error("Error setting up monitoring for execution {}: {}", executionId, e.getMessage(), e);
         }
-
-        // Start monitoring
-        webSocketService.startMonitoring(executionId, monitor);
-
-        log.info("Position monitoring started for execution: {}", executionId);
     }
 
     /**

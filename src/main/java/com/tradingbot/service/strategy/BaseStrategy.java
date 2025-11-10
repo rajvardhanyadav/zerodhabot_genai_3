@@ -260,9 +260,10 @@ public abstract class BaseStrategy implements TradingStrategy {
      */
     protected double getOrderPrice(String orderId) throws KiteException, IOException {
         List<Order> orderHistory = unifiedTradingService.getOrderHistory(orderId);
+        log.info("Fetched order history for orderId {}: {} entries", orderId, orderHistory.size());
         if (!orderHistory.isEmpty()) {
             Order lastOrder = orderHistory.get(orderHistory.size() - 1);
-
+            log.info("Last order status: {}, price: {}, averagePrice: {}", lastOrder.status, lastOrder.price, lastOrder.averagePrice);
             if (lastOrder.averagePrice != null && !lastOrder.averagePrice.isEmpty()) {
                 try {
                     return Double.parseDouble(lastOrder.averagePrice);

@@ -118,7 +118,7 @@ public class PaperTradingService {
      * Execute order with simulated delay
      */
     private void executeOrderAsync(PaperOrder order, PaperAccount account, Double currentPrice) {
-        new Thread(() -> {
+        //new Thread(() -> {
             try {
                 // Simulate exchange delay
                 if (config.isEnableExecutionDelay()) {
@@ -149,7 +149,7 @@ public class PaperTradingService {
                 log.error("[PAPER TRADING] Unexpected error executing order: {}", e.getMessage(), e);
                 rejectOrder(order, "Execution error: " + e.getMessage());
             }
-        }).start();
+        //}).start();
     }
 
     /**
