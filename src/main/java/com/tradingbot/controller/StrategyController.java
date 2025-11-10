@@ -158,7 +158,7 @@ public class StrategyController {
         }
     }
 
-    @DeleteMapping("/stop-all")
+    @PostMapping("/stop-all")
     @Operation(summary = "Stop all active strategies by closing all legs at market price")
     public ResponseEntity<ApiResponse<Map<String, Object>>> stopAllStrategies() {
         try {
