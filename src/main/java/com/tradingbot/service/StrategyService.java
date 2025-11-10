@@ -7,6 +7,7 @@ import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.service.strategy.StrategyFactory;
 import com.tradingbot.service.strategy.TradingStrategy;
+import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Instrument;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +28,7 @@ public class StrategyService {
     private final TradingService tradingService;
     private final UnifiedTradingService unifiedTradingService;
     private final StrategyFactory strategyFactory;
+    private final WebSocketService webSocketService;
     private final Map<String, StrategyExecution> activeStrategies = new ConcurrentHashMap<>();
     private final Map<String, Integer> lotSizeCache = new ConcurrentHashMap<>();
 
@@ -298,27 +300,12 @@ public class StrategyService {
     }
 
     /**
-     * Stop a specific strategy by closing all legs at market price
+     * Common method to exit all legs for any strategy
+     * This is used when manually stopping strategies or when SL/Target is hit
      */
-    public Map<String, Object> stopStrategy(String executionId) throws KiteException, IOException {
-        log.info("Stopping strategy: {}", executionId);
-
-        StrategyExecution execution = activeStrategies.get(executionId);
-        if (execution == null) {
-            throw new IllegalArgumentException("Strategy not found: " + executionId);
-        }
-
-        if (!"ACTIVE".equals(execution.getStatus())) {
-            throw new IllegalStateException("Strategy is not active. Current status: " + execution.getStatus());
-        }
-
-        List<StrategyExecution.OrderLeg> orderLegs = execution.getOrderLegs();
-        if (orderLegs == null || orderLegs.isEmpty()) {
-            throw new IllegalStateException("No order legs found for strategy: " + executionId);
-        }
-
+    private Map<String, Object> exitAllLegs(String executionId, List<StrategyExecution.OrderLeg> orderLegs) throws KiteException, IOException {
         String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
-        log.info("[{} MODE] Closing {} legs for strategy {}", tradingMode, orderLegs.size(), executionId);
+        log.info("[{} MODE] Exiting all legs for execution {}: {} legs", tradingMode, executionId, orderLegs.size());
 
         List<Map<String, String>> exitOrders = new ArrayList<>();
         int successCount = 0;
@@ -368,9 +355,13 @@ public class StrategyService {
             }
         }
 
-        // Update strategy status
-        execution.setStatus("COMPLETED");
-        execution.setMessage(String.format("Strategy stopped manually - %d legs closed successfully, %d failed", successCount, failureCount));
+        // Stop monitoring for this execution
+        try {
+            webSocketService.stopMonitoring(executionId);
+            log.info("[{} MODE] Stopped monitoring for execution {}", tradingMode, executionId);
+        } catch (Exception e) {
+            log.error("Error stopping monitoring for execution {}: {}", executionId, e.getMessage());
+        }
 
         Map<String, Object> result = new HashMap<>();
         result.put("executionId", executionId);
@@ -380,6 +371,42 @@ public class StrategyService {
         result.put("exitOrders", exitOrders);
         result.put("status", failureCount == 0 ? "SUCCESS" : "PARTIAL");
 
+        log.info("[{} MODE] Exited all legs for execution {} - {} closed successfully, {} failed",
+                 tradingMode, executionId, successCount, failureCount);
+
+        return result;
+    }
+
+    /**
+     * Stop a specific strategy by closing all legs at market price and disconnecting monitoring
+     */
+    public Map<String, Object> stopStrategy(String executionId) throws KiteException, IOException {
+        log.info("Stopping strategy: {}", executionId);
+
+        StrategyExecution execution = activeStrategies.get(executionId);
+        if (execution == null) {
+            throw new IllegalArgumentException("Strategy not found: " + executionId);
+        }
+
+        if (!"ACTIVE".equals(execution.getStatus())) {
+            throw new IllegalStateException("Strategy is not active. Current status: " + execution.getStatus());
+        }
+
+        List<StrategyExecution.OrderLeg> orderLegs = execution.getOrderLegs();
+        if (orderLegs == null || orderLegs.isEmpty()) {
+            throw new IllegalStateException("No order legs found for strategy: " + executionId);
+        }
+
+        // Use common exit method to close all legs and disconnect monitoring
+        Map<String, Object> result = exitAllLegs(executionId, orderLegs);
+
+        // Update strategy status
+        int successCount = (Integer) result.get("successCount");
+        int failureCount = (Integer) result.get("failureCount");
+        execution.setStatus("COMPLETED");
+        execution.setMessage(String.format("Strategy stopped manually - %d legs closed successfully, %d failed", successCount, failureCount));
+
+        String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
         log.info("[{} MODE] Strategy {} stopped - {} legs closed successfully, {} failed",
                  tradingMode, executionId, successCount, failureCount);
 
@@ -387,7 +414,6 @@ public class StrategyService {
     }
 
     /**
-     * Stop all active strategies by closing all legs at market price
      */
     public Map<String, Object> stopAllActiveStrategies() throws KiteException, IOException {
         log.info("Stopping all active strategies");
@@ -413,14 +439,15 @@ public class StrategyService {
 
         for (StrategyExecution execution : activeList) {
             try {
-                Map<String, Object> stopResult = stopStrategy(execution.getExecutionId());
+                Map<String, Object> stopResult = exitAllLegs(execution.getExecutionId(),execution.getOrderLegs());
                 results.add(stopResult);
 
                 int successCount = (Integer) stopResult.get("successCount");
                 int failureCount = (Integer) stopResult.get("failureCount");
                 totalSuccess += successCount;
                 totalFailures += failureCount;
-
+                execution.setStatus("COMPLETED");
+                execution.setMessage(String.format("Strategy stopped manually - %d legs closed successfully, %d failed", successCount, failureCount));
             } catch (Exception e) {
                 log.error("Error stopping strategy {}: {}", execution.getExecutionId(), e.getMessage());
                 Map<String, Object> errorResult = new HashMap<>();
