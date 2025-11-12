@@ -9,11 +9,8 @@ import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.json.JSONArray;
 import org.json.JSONObject;
-import org.springframework.http.*;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -29,7 +26,6 @@ public class TradingService {
 
     private final KiteConnect kiteConnect;
     private final KiteConfig kiteConfig;
-    private final RestTemplate restTemplate;
 
     /**
      * Generate login URL for Kite Connect authentication
@@ -275,7 +271,8 @@ public class TradingService {
 
     /**
      * Get order charges for orders placed today
-     * This calls the Kite API to get actual charges breakdown for executed orders
+     * This uses the Kite Connect SDK's getVirtualContractNote method to get actual charges breakdown for executed orders
+     * Reference: https://kite.trade/docs/connect/v3/margins/#virtual-contract-note
      *
      * @return List of OrderChargesResponse with detailed charge breakdown for each order
      * @throws KiteException if Kite API returns an error
@@ -290,99 +287,100 @@ public class TradingService {
                 log.info("No orders found for today");
                 return new ArrayList<>();
             }
+            log.info("Total orders fetched for today: {}", orders.size());
 
             // Filter only executed/completed orders
             List<Order> executedOrders = orders.stream()
                     .filter(order -> "COMPLETE".equals(order.status))
-                    .collect(Collectors.toList());
+                    .toList();
 
             if (executedOrders.isEmpty()) {
                 log.info("No executed orders found for today");
                 return new ArrayList<>();
             }
+            log.info("Executed orders count: {}", executedOrders.size());
 
-            // Build request payload
-            JSONArray requestArray = new JSONArray();
+            // Build ContractNoteParams list for KiteConnect SDK method
+            List<ContractNoteParams> contractNoteParamsList = new ArrayList<>();
             for (Order order : executedOrders) {
-                JSONObject orderJson = new JSONObject();
-                orderJson.put("order_id", order.orderId);
-                orderJson.put("exchange", order.exchange);
-                orderJson.put("tradingsymbol", order.tradingSymbol);
-                orderJson.put("transaction_type", order.transactionType);
-                orderJson.put("variety", order.orderVariety);
-                orderJson.put("product", order.product);
-                orderJson.put("order_type", order.orderType);
-                orderJson.put("quantity", order.filledQuantity);
-                orderJson.put("average_price", order.averagePrice);
-                requestArray.put(orderJson);
+                ContractNoteParams params = new ContractNoteParams();
+                params.orderID = order.orderId;
+                params.exchange = order.exchange;
+                params.tradingSymbol = order.tradingSymbol;
+                params.transactionType = order.transactionType;
+                params.variety = order.orderVariety != null ? order.orderVariety : "regular";
+                params.product = order.product;
+                params.orderType = order.orderType;
+                // Parse String to int/double - Order model has these as Strings
+                params.quantity = Integer.parseInt(order.filledQuantity);
+                params.averagePrice = Double.parseDouble(order.averagePrice);
+                contractNoteParamsList.add(params);
+            }
+            log.info("Built ContractNoteParams for {} executed orders", executedOrders.size());
+
+            // Call KiteConnect SDK's getVirtualContractNote method
+            log.info("Calling KiteConnect.getVirtualContractNote() with {} orders", executedOrders.size());
+            List<ContractNote> contractNotes = kiteConnect.getVirtualContractNote(contractNoteParamsList);
+
+            if (contractNotes == null || contractNotes.isEmpty()) {
+                log.warn("No contract notes returned from Kite API");
+                return new ArrayList<>();
             }
 
-            // Make HTTP POST request to Kite charges API
-            String url = "https://kite.zerodha.com/oms/charges/orders";
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("Authorization", "token " + kiteConfig.getApiKey() + ":" + kiteConnect.getAccessToken());
-            headers.set("Content-Type", "application/json");
-            headers.set("X-Kite-Version", "3");
-
-            HttpEntity<String> entity = new HttpEntity<>(requestArray.toString(), headers);
-
-            log.info("Calling Kite charges API with {} orders", executedOrders.size());
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
-
-            // Parse response
-            JSONObject responseJson = new JSONObject(response.getBody());
-
-            if (!"success".equals(responseJson.getString("status"))) {
-                throw new KiteException("Failed to fetch order charges", 500);
-            }
-
-            JSONArray dataArray = responseJson.getJSONArray("data");
+            // Convert ContractNote objects to OrderChargesResponse
             List<OrderChargesResponse> chargesResponses = new ArrayList<>();
+            for (ContractNote contractNote : contractNotes) {
 
-            for (int i = 0; i < dataArray.length(); i++) {
-                JSONObject orderData = dataArray.getJSONObject(i);
-                JSONObject chargesJson = orderData.getJSONObject("charges");
-                JSONObject gstJson = chargesJson.getJSONObject("gst");
-
+                // Build GST breakdown - ContractNote.charges.gst fields are primitives
                 OrderChargesResponse.GstBreakdown gst = OrderChargesResponse.GstBreakdown.builder()
-                        .igst(gstJson.getDouble("igst"))
-                        .cgst(gstJson.getDouble("cgst"))
-                        .sgst(gstJson.getDouble("sgst"))
-                        .total(gstJson.getDouble("total"))
+                        .igst(contractNote.charges.gst.IGST)
+                        .cgst(contractNote.charges.gst.CGST)
+                        .sgst(contractNote.charges.gst.SGST)
+                        .total(contractNote.charges.gst.total)
                         .build();
 
+                // Build charges breakdown - all fields are primitives (double)
                 OrderChargesResponse.Charges charges = OrderChargesResponse.Charges.builder()
-                        .transactionTax(chargesJson.getDouble("transaction_tax"))
-                        .transactionTaxType(chargesJson.getString("transaction_tax_type"))
-                        .exchangeTurnoverCharge(chargesJson.getDouble("exchange_turnover_charge"))
-                        .sebiTurnoverCharge(chargesJson.getDouble("sebi_turnover_charge"))
-                        .brokerage(chargesJson.getDouble("brokerage"))
-                        .stampDuty(chargesJson.getDouble("stamp_duty"))
+                        .transactionTax(contractNote.charges.transactionTax)
+                        .transactionTaxType(contractNote.charges.transactionTaxType != null ? contractNote.charges.transactionTaxType : "stt")
+                        .exchangeTurnoverCharge(contractNote.charges.exchangeTurnoverCharge)
+                        .sebiTurnoverCharge(0.0)  // SEBI charge field not available in ContractNote SDK model
+                        .brokerage(contractNote.charges.brokerage)
+                        .stampDuty(contractNote.charges.stampDuty)
                         .gst(gst)
-                        .total(chargesJson.getDouble("total"))
+                        .total(contractNote.charges.total)
                         .build();
 
+                // Build order charges response
                 OrderChargesResponse orderCharges = OrderChargesResponse.builder()
-                        .transactionType(orderData.getString("transaction_type"))
-                        .tradingsymbol(orderData.getString("tradingsymbol"))
-                        .exchange(orderData.getString("exchange"))
-                        .variety(orderData.getString("variety"))
-                        .product(orderData.getString("product"))
-                        .orderType(orderData.getString("order_type"))
-                        .quantity(orderData.getInt("quantity"))
-                        .price(orderData.getDouble("price"))
+                        .transactionType(contractNote.transactionType != null ? contractNote.transactionType : "")
+                        .tradingsymbol(contractNote.tradingSymbol != null ? contractNote.tradingSymbol : "")
+                        .exchange(contractNote.exchange != null ? contractNote.exchange : "")
+                        .variety(contractNote.variety != null ? contractNote.variety : "regular")
+                        .product(contractNote.product != null ? contractNote.product : "")
+                        .orderType(contractNote.orderType != null ? contractNote.orderType : "")
+                        .quantity(contractNote.quantity)
+                        .price(contractNote.price)
                         .charges(charges)
                         .build();
 
                 chargesResponses.add(orderCharges);
             }
 
-            log.info("Successfully fetched charges for {} orders", chargesResponses.size());
+            double totalCharges = chargesResponses.stream()
+                    .mapToDouble(c -> c.getCharges().getTotal())
+                    .sum();
+
+            log.info("Successfully fetched charges for {} orders. Total charges: ₹{}",
+                    chargesResponses.size(), String.format("%.2f", totalCharges));
+
             return chargesResponses;
 
+        } catch (KiteException e) {
+            log.error("KiteException in getOrderCharges: {}", e.getMessage(), e);
+            throw e;
         } catch (Exception e) {
-            log.error("Error fetching order charges: {}", e.getMessage(), e);
+            log.error("Unexpected error fetching order charges: {}", e.getMessage(), e);
             throw new KiteException("Failed to fetch order charges: " + e.getMessage(), 500);
         }
     }
