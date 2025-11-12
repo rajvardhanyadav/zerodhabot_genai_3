@@ -1,6 +1,7 @@
 package com.tradingbot.service;
 
 import com.tradingbot.config.PaperTradingConfig;
+import com.tradingbot.dto.DayPnLResponse;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.paper.PaperAccount;
@@ -191,6 +192,50 @@ public class UnifiedTradingService {
             return liveTradingService.convertPosition(tradingSymbol, exchange, transactionType,
                     positionType, oldProduct, newProduct, quantity);
         }
+    }
+
+    /**
+     * Get total day P&L from all positions
+     * Calculates realized and unrealized P&L based on Kite API positions data
+     */
+    public DayPnLResponse getDayPnL() throws KiteException, IOException {
+        Map<String, List<Position>> positions = getPositions();
+
+        double totalRealised = 0.0;
+        double totalUnrealised = 0.0;
+        double totalM2M = 0.0;
+        int positionCount = 0;
+
+        // Calculate P&L from net positions
+        if (positions.containsKey("net") && positions.get("net") != null) {
+            List<Position> netPositions = positions.get("net");
+            positionCount = netPositions.size();
+
+            for (Position position : netPositions) {
+                totalRealised += (position.realised != null && position.realised != 0.0) ? position.realised : 0.0;
+                totalUnrealised += (position.unrealised != null && position.unrealised != 0.0) ? position.unrealised : 0.0;
+                totalM2M += (position.m2m != null && position.m2m != 0.0) ? position.m2m : 0.0;
+            }
+        }
+
+        double totalDayPnL = totalRealised + totalUnrealised;
+        String tradingMode = config.isPaperTradingEnabled() ? "PAPER" : "LIVE";
+
+        log.info("{} [{}] Day P&L - Realised: {}, Unrealised: {}, Total: {}",
+                 tradingMode.equals("PAPER") ? "🎯" : "💰",
+                 tradingMode,
+                 totalRealised,
+                 totalUnrealised,
+                 totalDayPnL);
+
+        return new DayPnLResponse(
+            totalRealised,
+            totalUnrealised,
+            totalM2M,
+            totalDayPnL,
+            positionCount,
+            tradingMode
+        );
     }
 
     // Helper methods for conversion

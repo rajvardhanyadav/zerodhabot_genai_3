@@ -222,7 +222,8 @@ public class WebSocketService {
                 for (String executionId : executions) {
                     PositionMonitor monitor = activeMonitors.get(executionId);
                     if (monitor != null && monitor.isActive()) {
-                        monitor.updatePrice(token, ltp);
+                        //monitor.updatePrice(token, ltp);
+                        monitor.updatePriceWithPnLDiffCheck(token,ltp);
                     }
                 }
             }

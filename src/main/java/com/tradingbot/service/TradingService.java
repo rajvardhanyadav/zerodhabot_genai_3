@@ -77,6 +77,7 @@ public class TradingService {
             // Check if order was placed successfully
             if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
                 log.info("Order placed successfully: {}", order.orderId);
+                log.info(order.orderId + " " + order.status + " " + order.tradingSymbol + " " + order.transactionType + " " + order.quantity + " " + order.price + " " + order.orderType + " " + order.product + " " + order.exchange + " " + order.validity + " " + order.triggerPrice + " " + order.disclosedQuantity + " " + order.orderTimestamp + " " + order.exchangeTimestamp + " " + order.averagePrice + " " + order.filledQuantity + " " + order.pendingQuantity + " " + order.meta + " " + order.tag);
                 return new OrderResponse(order.orderId, "SUCCESS", "Order placed successfully");
             } else {
                 log.error("Order placement failed - no order ID returned");
@@ -180,8 +181,8 @@ public class TradingService {
      * Convert position
      */
     public JSONObject convertPosition(String tradingSymbol, String exchange, String transactionType,
-                                     String positionType, String oldProduct, String newProduct,
-                                     int quantity) throws KiteException, IOException {
+                                      String positionType, String oldProduct, String newProduct,
+                                      int quantity) throws KiteException, IOException {
         return kiteConnect.convertPosition(tradingSymbol, exchange, transactionType,
                 positionType, oldProduct, newProduct, quantity);
     }
@@ -211,7 +212,7 @@ public class TradingService {
      * Get historical data
      */
     public HistoricalData getHistoricalData(Date fromDate, Date toDate, String instrumentToken,
-                                                    String interval, boolean continuous, boolean oi)
+                                            String interval, boolean continuous, boolean oi)
             throws KiteException, IOException {
         return kiteConnect.getHistoricalData(fromDate, toDate, instrumentToken, interval, continuous, oi);
     }

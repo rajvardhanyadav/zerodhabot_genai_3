@@ -1,6 +1,5 @@
 package com.tradingbot.service.strategy.monitoring;
 
-import com.zerodhatech.models.Tick;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 
@@ -52,8 +51,7 @@ public class PositionMonitor {
         for (LegMonitor leg : legs.values()) {
             if (leg.instrumentToken == instrumentToken) {
                 leg.currentPrice = ltp;
-                double pnl = calculateLegPnL(leg);
-                leg.pnl = pnl;
+                leg.pnl = calculateLegPnL(leg);
 
                 // Check stop loss
                 double loss = leg.entryPrice - ltp;
@@ -73,8 +71,72 @@ public class PositionMonitor {
                     return;
                 }
 
-                log.debug("Price update for {}: {} (P&L: {})", leg.symbol, ltp, pnl);
+                log.debug("Price update for {}: {} (P&L: {})", leg.symbol, ltp, leg.pnl);
             }
+        }
+    }
+
+    /**
+     * Alternate update price method that also checks cross-legged P&L difference
+     * Triggers exit when (total CE PnL - total PE PnL) >= 300 or <= -300.
+     * Keeps the same per-leg stop loss / target behavior as the original.
+     */
+    public void updatePriceWithPnLDiffCheck(long instrumentToken, double ltp) {
+        if (!active) {
+            return;
+        }
+
+        // First, update the matching leg's price and pnl (same logic as updatePrice)
+        /*for (LegMonitor leg : legs.values()) {
+            if (leg.instrumentToken == instrumentToken) {
+                leg.currentPrice = ltp;
+                leg.pnl = calculateLegPnL(leg);
+
+                // Individual leg stop loss check
+                double loss = leg.entryPrice - ltp;
+                if (loss >= stopLossPoints) {
+                    log.warn("Stop loss hit for {}: Entry={}, Current={}, Loss={} points",
+                             leg.symbol, leg.entryPrice, ltp, loss);
+                    triggerExit("STOP_LOSS", leg.symbol);
+                    return;
+                }
+
+                // Individual leg target check
+                double profit = ltp - leg.entryPrice;
+                if (profit >= targetPoints) {
+                    log.info("Target hit for {}: Entry={}, Current={}, Profit={} points",
+                             leg.symbol, leg.entryPrice, ltp, profit);
+                    triggerExit("TARGET", leg.symbol);
+                    return;
+                }
+
+                break; // updated the matching leg; exit loop to compute cross-legged pnl
+            }
+        }*/
+
+        // Compute aggregate CE and PE PnL using current pnl fields (which are updated above)
+        double totalCePnl = 0.0;
+        double totalPePnl = 0.0;
+        for (LegMonitor l : legs.values()) {
+            double legPnl = l.pnl; // pnl is volatile and should reflect latest known value
+            if (l.type != null && l.type.equalsIgnoreCase("CE")) {
+                totalCePnl += legPnl;
+            } else if (l.type != null && l.type.equalsIgnoreCase("PE")) {
+                totalPePnl += legPnl;
+            }
+        }
+
+        double diff = totalCePnl - totalPePnl; // positive => CE more profitable
+        log.debug("Cross P&L check - CE: {}, PE: {}, Diff: {}", totalCePnl, totalPePnl, diff);
+
+        if (diff >= 300.0 || diff <= -300.0) {
+            log.warn("P&L difference threshold hit (diff={}): CE PnL={}, PE PnL={}", diff, totalCePnl, totalPePnl);
+            triggerExit("PNL_DIFF", "CE/PE");
+        }
+
+        // For tracing, log per-leg pnls at debug
+        for (LegMonitor l : legs.values()) {
+            log.debug("Leg {} pnl={} currentPrice={}", l.symbol, l.pnl, l.currentPrice);
         }
     }
 
@@ -161,4 +223,3 @@ public class PositionMonitor {
         }
     }
 }
-

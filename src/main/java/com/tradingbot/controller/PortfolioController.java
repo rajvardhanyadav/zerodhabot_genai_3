@@ -1,6 +1,7 @@
 package com.tradingbot.controller;
 
 import com.tradingbot.dto.ApiResponse;
+import com.tradingbot.dto.DayPnLResponse;
 import com.tradingbot.service.UnifiedTradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Holding;
@@ -83,6 +84,19 @@ public class PortfolioController {
             return ResponseEntity.ok(ApiResponse.success("Position converted successfully", result));
         } catch (KiteException | IOException e) {
             log.error("Error converting position", e);
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    @GetMapping("/pnl/day")
+    @Operation(summary = "Get total day P&L",
+               description = "Returns total realized and unrealized P&L for the day from all positions. Works with both Paper and Live trading modes.")
+    public ResponseEntity<ApiResponse<DayPnLResponse>> getDayPnL() {
+        try {
+            DayPnLResponse dayPnL = unifiedTradingService.getDayPnL();
+            return ResponseEntity.ok(ApiResponse.success(dayPnL));
+        } catch (KiteException | IOException e) {
+            log.error("Error fetching day P&L", e);
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
         }
     }

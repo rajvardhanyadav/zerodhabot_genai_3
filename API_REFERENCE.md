@@ -1,8 +1,8 @@
 # Zerodha Trading Bot - Complete API Reference
 
-**Version:** 2.0.0  
+**Version:** 2.1.0  
 **Base URL:** `http://localhost:8080` (Development) | `https://your-app.onrender.com` (Production)  
-**Last Updated:** November 9, 2025
+**Last Updated:** November 12, 2025
 
 ---
 
@@ -486,6 +486,56 @@ PUT /api/portfolio/positions/convert?tradingSymbol=INFY&exchange=NSE&transaction
     "result": true
   }
 }
+```
+
+---
+
+### 5. Get Total Day P&L
+
+Get the total Profit & Loss for the current trading day across all positions.
+
+**Endpoint:** `GET /api/portfolio/pnl/day`
+
+**Description:** 
+This endpoint calculates and returns the total day P&L by aggregating realized and unrealized profits/losses from all positions. It works with both Paper Trading and Live Trading modes.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "totalRealised": 1250.50,
+    "totalUnrealised": 847.25,
+    "totalM2M": 847.25,
+    "totalDayPnL": 2097.75,
+    "positionCount": 5,
+    "tradingMode": "LIVE"
+  }
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| totalRealised | Double | Total realized P&L from closed positions for the day |
+| totalUnrealised | Double | Total unrealized P&L from open positions |
+| totalM2M | Double | Total Mark-to-Market P&L |
+| totalDayPnL | Double | Total day P&L (realized + unrealized) |
+| positionCount | Integer | Number of positions contributing to P&L |
+| tradingMode | String | Current trading mode (PAPER or LIVE) |
+
+**Implementation Details:**
+- Based on Kite Connect API's positions endpoint
+- Calculates P&L from the `realised`, `unrealised`, and `m2m` fields of each position
+- Supports both Paper Trading and Live Trading modes
+- Returns cumulative P&L across all positions in the portfolio
+
+**Usage Example:**
+```bash
+curl -X GET "http://localhost:8080/api/portfolio/pnl/day" \
+     -H "Content-Type: application/json"
 ```
 
 ---
@@ -1707,6 +1757,10 @@ ws.onmessage = (event) => {
 - New Position Monitoring APIs
 - Dynamic lot size fetching for strategies
 - Bug fixes and performance improvements
+
+**Version 2.1.0** (November 12, 2025)
+- Added Get Total Day P&L API in Portfolio APIs
+- Minor bug fixes and documentation updates
 
 ---
 

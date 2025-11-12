@@ -88,7 +88,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
         setupMonitoring(executionId, atmCall, atmPut,
                 orderDetails.get(0).getOrderId(), orderDetails.get(1).getOrderId(),
-                quantity, orderDetails, stopLossPoints, targetPoints, completionCallback);
+                quantity, stopLossPoints, targetPoints, completionCallback);
 
         return buildSuccessResponse(executionId, orderDetails, totalPremium, stopLossPoints, targetPoints, tradingMode);
     }
@@ -216,7 +216,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
      */
     private void setupMonitoring(String executionId, Instrument callInstrument, Instrument putInstrument,
                                  String callOrderId, String putOrderId,
-                                 int quantity, List<StrategyExecutionResponse.OrderDetail> orderDetails,
+                                 int quantity,
                                  double stopLossPoints, double targetPoints,
                                  StrategyCompletionCallback completionCallback) {
 
@@ -246,8 +246,8 @@ public class ATMStraddleStrategy extends BaseStrategy {
                     latestCallOrder.status, callEntryPrice, latestPutOrder.status, putEntryPrice);
 
             PositionMonitor monitor = createPositionMonitor(executionId, stopLossPoints, targetPoints,
-                    callOrderId, putOrderId, callInstrument, putInstrument,
-                    callEntryPrice, putEntryPrice, quantity, completionCallback);
+                                                            callOrderId, putOrderId, callInstrument, putInstrument,
+                                                            callEntryPrice, putEntryPrice, quantity, completionCallback);
 
             startWebSocketMonitoring(executionId, monitor, callEntryPrice, putEntryPrice);
 

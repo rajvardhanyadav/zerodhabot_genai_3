@@ -35,7 +35,7 @@ public class StrategyConstants {
     public static final String ERROR_NO_RESPONSE = "No response received";
     public static final String ERROR_ATM_OPTIONS_NOT_FOUND = "ATM options not found for strike: ";
     public static final String ERROR_ORDER_PLACEMENT_FAILED = "order placement failed: ";
-    public static final String ERROR_INVALID_ENTRY_PRICE = "Unable to fetch valid entry prices. Call: %s, Put: %s. Monitoring will not start.";
+    public static final String ERROR_INVALID_ENTRY_PRICE = "Unable to fetch valid entry prices. Call: {}, Put: {}. Monitoring will not start.";
     public static final String ERROR_ORDER_HISTORY_FETCH = "Unable to fetch order history for callOrderId: {} or putOrderId: {}";
 
     // Log messages
@@ -55,4 +55,3 @@ public class StrategyConstants {
         // Prevent instantiation
     }
 }
-
