@@ -223,7 +223,8 @@ public class WebSocketService {
                     PositionMonitor monitor = activeMonitors.get(executionId);
                     if (monitor != null && monitor.isActive()) {
                         //monitor.updatePrice(token, ltp);
-                        monitor.updatePriceWithPnLDiffCheck(token,ltp);
+//                        monitor.updatePriceWithPnLDiffCheck(token,ltp);
+                        monitor.updatePriceWithDifferenceCheck(ticks);
                     }
                 }
             }

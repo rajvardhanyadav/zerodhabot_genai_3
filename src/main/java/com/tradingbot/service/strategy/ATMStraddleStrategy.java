@@ -18,6 +18,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
@@ -65,11 +66,20 @@ public class ATMStraddleStrategy extends BaseStrategy {
         double spotPrice = getCurrentSpotPrice(request.getInstrumentType());
         log.info("Current spot price: {}", spotPrice);
 
-        double atmStrike = getATMStrike(spotPrice, request.getInstrumentType());
-        log.info("ATM Strike: {}", atmStrike);
-
+        // Get option instruments first (needed for delta calculation)
         List<Instrument> instruments = getOptionInstruments(request.getInstrumentType(), request.getExpiry());
         log.info("Found {} option instruments for {}", instruments.size(), request.getInstrumentType());
+
+        // Get expiry date from instruments for delta calculation
+        Date expiryDate = instruments.isEmpty() ? null : instruments.get(0).expiry;
+        log.info("Using expiry date: {}", expiryDate);
+
+        // Calculate ATM strike using delta-based selection (nearest to ±0.5)
+        double atmStrike = expiryDate != null
+                ? getATMStrikeByDelta(spotPrice, request.getInstrumentType(), instruments, expiryDate)
+                : getATMStrike(spotPrice, request.getInstrumentType());
+
+        log.info("ATM Strike (Delta-based): {}", atmStrike);
 
         Instrument atmCall = findOptionInstrument(instruments, atmStrike, StrategyConstants.OPTION_TYPE_CALL);
         Instrument atmPut = findOptionInstrument(instruments, atmStrike, StrategyConstants.OPTION_TYPE_PUT);
@@ -305,10 +315,18 @@ public class ATMStraddleStrategy extends BaseStrategy {
         monitor.addLeg(putOrderId, putInstrument.tradingsymbol, putInstrument.instrument_token,
                 putEntryPrice, quantity, StrategyConstants.OPTION_TYPE_PUT);
 
+        // Set callback for exiting ALL legs (for stop loss, target, P&L diff, or 4+ profit)
         monitor.setExitCallback(reason -> {
             log.warn("Exit triggered for execution {}: {}", executionId, reason);
             exitAllLegs(executionId, callOrderId, putOrderId, callInstrument.tradingsymbol,
                     putInstrument.tradingsymbol, quantity, reason, completionCallback);
+        });
+
+        // Set callback for exiting INDIVIDUAL legs (for -2 or worse loss)
+        monitor.setIndividualLegExitCallback((legSymbol, reason) -> {
+            log.warn("Individual leg exit triggered for execution {}: Leg={}, Reason={}",
+                     executionId, legSymbol, reason);
+            exitIndividualLeg(executionId, legSymbol, quantity, reason, monitor, completionCallback);
         });
 
         return monitor;
@@ -349,6 +367,47 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
         } catch (Exception | KiteException e) {
             log.error("Error exiting legs for execution {}: {}", executionId, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Exit individual leg when price difference threshold is hit
+     * This method only exits the specific leg that hit the threshold
+     * If all legs are closed, it will stop monitoring and notify completion
+     */
+    private void exitIndividualLeg(String executionId, String legSymbol, int quantity,
+                                   String reason, PositionMonitor monitor,
+                                   StrategyCompletionCallback completionCallback) {
+        try {
+            String tradingMode = getTradingMode();
+            String legType = legSymbol.contains("CE") ? "Call" : "Put";
+
+            log.info("[{}] Exiting individual {} leg for execution {}: Symbol={}, Reason={}",
+                     tradingMode, legType, executionId, legSymbol, reason);
+
+            exitLeg(legSymbol, quantity, legType, tradingMode);
+
+            log.info("[{}] Individual {} leg exited successfully for execution {}",
+                     tradingMode, legType, executionId);
+
+            // Check if all legs are now closed
+            if (monitor.getLegs().isEmpty()) {
+                log.info("All legs have been closed individually for execution {}, stopping monitoring",
+                         executionId);
+                webSocketService.stopMonitoring(executionId);
+
+                if (completionCallback != null) {
+                    completionCallback.onStrategyCompleted(executionId,
+                                                          "All legs closed individually - " + reason);
+                }
+            } else {
+                log.info("Remaining legs still being monitored for execution {}: {}",
+                         executionId, monitor.getLegs().size());
+            }
+
+        } catch (Exception | KiteException e) {
+            log.error("Error exiting individual leg {} for execution {}: {}",
+                     legSymbol, executionId, e.getMessage(), e);
         }
     }
 
