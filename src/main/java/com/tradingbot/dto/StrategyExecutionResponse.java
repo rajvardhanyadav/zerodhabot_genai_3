@@ -1,6 +1,7 @@
 package com.tradingbot.dto;
 
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -9,6 +10,7 @@ import java.util.List;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+@Builder
 public class StrategyExecutionResponse {
     private String executionId;
     private String status;
@@ -22,6 +24,7 @@ public class StrategyExecutionResponse {
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
+    @Builder
     public static class OrderDetail {
         private String orderId;
         private String tradingSymbol;
@@ -32,4 +35,3 @@ public class StrategyExecutionResponse {
         private String status;
     }
 }
-

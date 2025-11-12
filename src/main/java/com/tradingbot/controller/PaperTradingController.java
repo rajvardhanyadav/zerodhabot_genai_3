@@ -110,7 +110,7 @@ public class PaperTradingController {
         if (isPaperMode) {
             PaperAccount account = unifiedTradingService.getPaperAccount();
             if (account != null) {
-                info.put("account", buildAccountInfoMap(account));
+                info.put("account", buildStatisticsMap(account));
             }
         }
 
@@ -118,7 +118,7 @@ public class PaperTradingController {
     }
 
     /**
-     * Build statistics map from paper account
+     * Build comprehensive statistics map from paper account
      */
     private Map<String, Object> buildStatisticsMap(PaperAccount account) {
         double winRate = account.getTotalTrades() > 0
@@ -130,6 +130,10 @@ public class PaperTradingController {
             - account.getTotalTaxes();
 
         Map<String, Object> stats = new HashMap<>();
+        stats.put("userId", account.getUserId());
+        stats.put("totalBalance", account.getTotalBalance());
+        stats.put("availableBalance", account.getAvailableBalance());
+        stats.put("usedMargin", account.getUsedMargin());
         stats.put("totalTrades", account.getTotalTrades());
         stats.put("winningTrades", account.getWinningTrades());
         stats.put("losingTrades", account.getLosingTrades());
@@ -140,27 +144,7 @@ public class PaperTradingController {
         stats.put("totalBrokerage", account.getTotalBrokerage());
         stats.put("totalTaxes", account.getTotalTaxes());
         stats.put("netPnL", netPnL);
-        stats.put("availableBalance", account.getAvailableBalance());
-        stats.put("usedMargin", account.getUsedMargin());
-        stats.put("totalBalance", account.getTotalBalance());
 
         return stats;
-    }
-
-    /**
-     * Build account info map for comprehensive info endpoint
-     */
-    private Map<String, Object> buildAccountInfoMap(PaperAccount account) {
-        return Map.of(
-            "userId", account.getUserId(),
-            "totalBalance", account.getTotalBalance(),
-            "availableBalance", account.getAvailableBalance(),
-            "usedMargin", account.getUsedMargin(),
-            "totalRealisedPnL", account.getTotalRealisedPnL(),
-            "totalUnrealisedPnL", account.getTotalUnrealisedPnL(),
-            "totalTrades", account.getTotalTrades(),
-            "winningTrades", account.getWinningTrades(),
-            "losingTrades", account.getLosingTrades()
-        );
     }
 }

@@ -1,8 +1,10 @@
 package com.tradingbot.controller;
 
 import com.tradingbot.dto.ApiResponse;
+import com.tradingbot.dto.InstrumentInfo;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
+import com.tradingbot.dto.StrategyTypeInfo;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyType;
 import com.tradingbot.service.StrategyService;
@@ -141,9 +143,4 @@ public class StrategyController {
     private boolean isImplemented(StrategyType type) {
         return type == StrategyType.ATM_STRADDLE || type == StrategyType.ATM_STRANGLE;
     }
-
-    // DTOs for response
-    public record StrategyTypeInfo(String name, String description, boolean implemented) {}
-
-    public record InstrumentInfo(String code, String name, int lotSize, double strikeInterval) {}
 }
