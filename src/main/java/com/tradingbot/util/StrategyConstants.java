@@ -2,43 +2,54 @@ package com.tradingbot.util;
 
 /**
  * Constants for trading strategies
+ * Centralizes all constant values used across the trading bot application
  */
-public class StrategyConstants {
+public final class StrategyConstants {
 
-    // Trading modes
+    // ==================== Trading Modes ====================
     public static final String TRADING_MODE_PAPER = "PAPER";
     public static final String TRADING_MODE_LIVE = "LIVE";
 
-    // Order statuses
+    // ==================== Order Statuses ====================
+    /**
+     * Order status returned by order placement API
+     */
     public static final String ORDER_STATUS_SUCCESS = "SUCCESS";
+
+    /**
+     * Order status when order is fully executed (from Kite API)
+     */
     public static final String ORDER_STATUS_COMPLETE = "COMPLETE";
-    public static final String ORDER_STATUS_COMPLETED = "COMPLETED";
 
-    // Order types
+    // ==================== Order Types ====================
     public static final String ORDER_TYPE_MARKET = "MARKET";
-    public static final String ORDER_TYPE_LIMIT = "LIMIT";
 
-    // Transaction types
+    // ==================== Transaction Types ====================
     public static final String TRANSACTION_BUY = "BUY";
     public static final String TRANSACTION_SELL = "SELL";
 
-    // Option types
+    // ==================== Option Types ====================
+    /**
+     * Call option type (CE = Call European)
+     */
     public static final String OPTION_TYPE_CALL = "CE";
+
+    /**
+     * Put option type (PE = Put European)
+     */
     public static final String OPTION_TYPE_PUT = "PE";
 
-    // Strategy statuses
+    // ==================== Strategy Statuses ====================
     public static final String STRATEGY_STATUS_ACTIVE = "ACTIVE";
-    public static final String STRATEGY_STATUS_COMPLETED = "COMPLETED";
-    public static final String STRATEGY_STATUS_FAILED = "FAILED";
 
-    // Error messages
+    // ==================== Error Messages ====================
     public static final String ERROR_NO_RESPONSE = "No response received";
     public static final String ERROR_ATM_OPTIONS_NOT_FOUND = "ATM options not found for strike: ";
     public static final String ERROR_ORDER_PLACEMENT_FAILED = "order placement failed: ";
     public static final String ERROR_INVALID_ENTRY_PRICE = "Unable to fetch valid entry prices. Call: {}, Put: {}. Monitoring will not start.";
     public static final String ERROR_ORDER_HISTORY_FETCH = "Unable to fetch order history for callOrderId: {} or putOrderId: {}";
 
-    // Log messages
+    // ==================== Log Messages ====================
     public static final String LOG_EXECUTING_STRATEGY = "[{} MODE] Executing ATM Straddle for {} with SL={}pts, Target={}pts";
     public static final String LOG_PLACING_ORDER = "[{} MODE] Placing {} order for {}";
     public static final String LOG_BOTH_LEGS_PLACED = "[{} MODE] Both legs placed successfully. Call Price: {}, Put Price: {}";
@@ -48,10 +59,13 @@ public class StrategyConstants {
     public static final String LOG_LEG_EXITED = "[{} MODE] {} leg exited successfully: {}";
     public static final String LOG_ALL_LEGS_EXITED = "[{} MODE] Successfully exited all legs for execution {}";
 
-    // Success messages
+    // ==================== Success Messages ====================
     public static final String MSG_STRATEGY_SUCCESS = "[%s MODE] ATM Straddle executed successfully. Monitoring with SL=%.1fpts, Target=%.1fpts";
 
+    /**
+     * Private constructor to prevent instantiation
+     */
     private StrategyConstants() {
-        // Prevent instantiation
+        throw new AssertionError("Cannot instantiate constants class");
     }
 }

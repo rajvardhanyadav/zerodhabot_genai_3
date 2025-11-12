@@ -181,11 +181,11 @@ public class ATMStraddleStrategy extends BaseStrategy {
         return new StrategyExecutionResponse.OrderDetail(
                 orderId,
                 instrument.tradingsymbol,
-                instrument.instrument_type.equals("CE") ? StrategyConstants.OPTION_TYPE_CALL : StrategyConstants.OPTION_TYPE_PUT,
+                instrument.instrument_type.equals(StrategyConstants.OPTION_TYPE_CALL) ? StrategyConstants.OPTION_TYPE_CALL : StrategyConstants.OPTION_TYPE_PUT,
                 Double.valueOf(instrument.strike),
                 quantity,
                 price,
-                StrategyConstants.ORDER_STATUS_COMPLETED
+                StrategyConstants.ORDER_STATUS_COMPLETE
         );
     }
 
@@ -376,7 +376,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
                                    StrategyCompletionCallback completionCallback) {
         try {
             String tradingMode = getTradingMode();
-            String legType = legSymbol.contains("CE") ? "Call" : "Put";
+            String legType = legSymbol.contains(StrategyConstants.OPTION_TYPE_CALL) ? "Call" : "Put";
 
             log.info("[{}] Exiting individual {} leg for execution {}: Symbol={}, Reason={}",
                      tradingMode, legType, executionId, legSymbol, reason);

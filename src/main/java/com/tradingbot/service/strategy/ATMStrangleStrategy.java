@@ -9,6 +9,7 @@ import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.service.strategy.monitoring.PositionMonitor;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
+import com.tradingbot.util.StrategyConstants;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Instrument;
 import lombok.extern.slf4j.Slf4j;
@@ -62,7 +63,7 @@ public class ATMStrangleStrategy extends BaseStrategy {
             ? request.getTargetPoints()
             : strategyConfig.getDefaultTargetPoints();
 
-        String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
+        String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? StrategyConstants.TRADING_MODE_PAPER : StrategyConstants.TRADING_MODE_LIVE;
         log.info("[{} MODE] Executing ATM Strangle for {} with SL={}pts, Target={}pts",
                  tradingMode, request.getInstrumentType(), stopLossPoints, targetPoints);
 
@@ -89,8 +90,8 @@ public class ATMStrangleStrategy extends BaseStrategy {
         );
 
         // Find OTM Call and Put
-        Instrument otmCall = findOptionInstrument(instruments, callStrike, "CE");
-        Instrument otmPut = findOptionInstrument(instruments, putStrike, "PE");
+        Instrument otmCall = findOptionInstrument(instruments, callStrike, StrategyConstants.OPTION_TYPE_CALL);
+        Instrument otmPut = findOptionInstrument(instruments, putStrike, StrategyConstants.OPTION_TYPE_PUT);
 
         if (otmCall == null || otmPut == null) {
             throw new RuntimeException("OTM options not found for strikes: " + callStrike + ", " + putStrike);
@@ -101,17 +102,17 @@ public class ATMStrangleStrategy extends BaseStrategy {
         // Calculate actual quantity using centralized method from BaseStrategy
         int quantity = calculateOrderQuantity(request);
 
-        String orderType = request.getOrderType() != null ? request.getOrderType() : "MARKET";
+        String orderType = request.getOrderType() != null ? request.getOrderType() : StrategyConstants.ORDER_TYPE_MARKET;
 
         // Place Call order using UnifiedTradingService (supports paper trading)
         log.info("[{} MODE] Placing OTM CALL order for {}", tradingMode, otmCall.tradingsymbol);
-        OrderRequest callOrder = createOrderRequest(otmCall.tradingsymbol, "BUY", quantity, orderType);
+        OrderRequest callOrder = createOrderRequest(otmCall.tradingsymbol, StrategyConstants.TRANSACTION_BUY, quantity, orderType);
         var callOrderResponse = unifiedTradingService.placeOrder(callOrder);
 
         // Validate Call order response
         if (callOrderResponse == null || callOrderResponse.getOrderId() == null ||
-            !"SUCCESS".equals(callOrderResponse.getStatus())) {
-            String errorMsg = callOrderResponse != null ? callOrderResponse.getMessage() : "No response received";
+            !StrategyConstants.ORDER_STATUS_SUCCESS.equals(callOrderResponse.getStatus())) {
+            String errorMsg = callOrderResponse != null ? callOrderResponse.getMessage() : StrategyConstants.ERROR_NO_RESPONSE;
             log.error("Call order placement failed: {}", errorMsg);
             throw new RuntimeException("Call order placement failed: " + errorMsg);
         }
@@ -120,22 +121,22 @@ public class ATMStrangleStrategy extends BaseStrategy {
         orderDetails.add(new StrategyExecutionResponse.OrderDetail(
             callOrderResponse.getOrderId(),
             otmCall.tradingsymbol,
-            "CE",
+            StrategyConstants.OPTION_TYPE_CALL,
             callStrike,
             quantity,
             callPrice,
-            "COMPLETED"
+            StrategyConstants.ORDER_STATUS_COMPLETE
         ));
 
         // Place Put order using UnifiedTradingService (supports paper trading)
         log.info("[{} MODE] Placing OTM PUT order for {}", tradingMode, otmPut.tradingsymbol);
-        OrderRequest putOrder = createOrderRequest(otmPut.tradingsymbol, "BUY", quantity, orderType);
+        OrderRequest putOrder = createOrderRequest(otmPut.tradingsymbol, StrategyConstants.TRANSACTION_BUY, quantity, orderType);
         var putOrderResponse = unifiedTradingService.placeOrder(putOrder);
 
         // Validate Put order response
         if (putOrderResponse == null || putOrderResponse.getOrderId() == null ||
-            !"SUCCESS".equals(putOrderResponse.getStatus())) {
-            String errorMsg = putOrderResponse != null ? putOrderResponse.getMessage() : "No response received";
+            !StrategyConstants.ORDER_STATUS_SUCCESS.equals(putOrderResponse.getStatus())) {
+            String errorMsg = putOrderResponse != null ? putOrderResponse.getMessage() : StrategyConstants.ERROR_NO_RESPONSE;
             log.error("Put order placement failed: {}", errorMsg);
             throw new RuntimeException("Put order placement failed: " + errorMsg);
         }
@@ -144,11 +145,11 @@ public class ATMStrangleStrategy extends BaseStrategy {
         orderDetails.add(new StrategyExecutionResponse.OrderDetail(
             putOrderResponse.getOrderId(),
             otmPut.tradingsymbol,
-            "PE",
+            StrategyConstants.OPTION_TYPE_PUT,
             putStrike,
             quantity,
             putPrice,
-            "COMPLETED"
+            StrategyConstants.ORDER_STATUS_COMPLETE
         ));
 
         double totalPremium = (callPrice + putPrice) * quantity;
@@ -160,7 +161,7 @@ public class ATMStrangleStrategy extends BaseStrategy {
 
         StrategyExecutionResponse response = new StrategyExecutionResponse();
         response.setExecutionId(executionId);
-        response.setStatus("ACTIVE");
+        response.setStatus(StrategyConstants.STRATEGY_STATUS_ACTIVE);
         response.setMessage(String.format("[%s MODE] ATM Strangle executed successfully. Monitoring with SL=%.1fpts, Target=%.1fpts",
                            tradingMode, stopLossPoints, targetPoints));
         response.setOrders(orderDetails);
@@ -189,11 +190,11 @@ public class ATMStrangleStrategy extends BaseStrategy {
 
         // Add Call leg
         monitor.addLeg(callOrderId, callInstrument.tradingsymbol, callInstrument.instrument_token,
-                      callEntryPrice, quantity, "CE");
+                      callEntryPrice, quantity, StrategyConstants.OPTION_TYPE_CALL);
 
         // Add Put leg
         monitor.addLeg(putOrderId, putInstrument.tradingsymbol, putInstrument.instrument_token,
-                      putEntryPrice, quantity, "PE");
+                      putEntryPrice, quantity, StrategyConstants.OPTION_TYPE_PUT);
 
         // Set exit callback to square off both legs
         monitor.setExitCallback(reason -> {
@@ -219,23 +220,23 @@ public class ATMStrangleStrategy extends BaseStrategy {
     private void exitAllLegs(String executionId, String callSymbol, String putSymbol,
                             int quantity, String reason, StrategyCompletionCallback completionCallback) {
         try {
-            String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
+            String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? StrategyConstants.TRADING_MODE_PAPER : StrategyConstants.TRADING_MODE_LIVE;
             log.info("[{} MODE] Exiting all legs for execution {}: {}", tradingMode, executionId, reason);
 
             // Place sell orders for both legs using UnifiedTradingService
-            OrderRequest callExitOrder = createOrderRequest(callSymbol, "SELL", quantity, "MARKET");
+            OrderRequest callExitOrder = createOrderRequest(callSymbol, StrategyConstants.TRANSACTION_SELL, quantity, StrategyConstants.ORDER_TYPE_MARKET);
             OrderResponse callExitResponse = unifiedTradingService.placeOrder(callExitOrder);
 
-            if ("SUCCESS".equals(callExitResponse.getStatus())) {
+            if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(callExitResponse.getStatus())) {
                 log.info("[{} MODE] Call leg exited successfully: {}", tradingMode, callExitResponse.getOrderId());
             } else {
                 log.error("Failed to exit Call leg: {}", callExitResponse.getMessage());
             }
 
-            OrderRequest putExitOrder = createOrderRequest(putSymbol, "SELL", quantity, "MARKET");
+            OrderRequest putExitOrder = createOrderRequest(putSymbol, StrategyConstants.TRANSACTION_SELL, quantity, StrategyConstants.ORDER_TYPE_MARKET);
             OrderResponse putExitResponse = unifiedTradingService.placeOrder(putExitOrder);
 
-            if ("SUCCESS".equals(putExitResponse.getStatus())) {
+            if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(putExitResponse.getStatus())) {
                 log.info("[{} MODE] Put leg exited successfully: {}", tradingMode, putExitResponse.getOrderId());
             } else {
                 log.error("Failed to exit Put leg: {}", putExitResponse.getMessage());
