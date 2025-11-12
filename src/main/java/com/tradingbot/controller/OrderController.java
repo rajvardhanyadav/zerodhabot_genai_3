@@ -3,7 +3,9 @@ package com.tradingbot.controller;
 import com.tradingbot.dto.ApiResponse;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
+import com.tradingbot.dto.OrderChargesResponse;
 import com.tradingbot.service.UnifiedTradingService;
+import com.tradingbot.service.TradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Order;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,6 +27,7 @@ import java.util.List;
 public class OrderController {
 
     private final UnifiedTradingService unifiedTradingService;
+    private final TradingService tradingService;
 
     @PostMapping
     @Operation(summary = "Place a new order",
@@ -85,6 +88,20 @@ public class OrderController {
             return ResponseEntity.ok(ApiResponse.success(orderHistory));
         } catch (KiteException | IOException e) {
             log.error("Error fetching order history", e);
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    @GetMapping("/charges")
+    @Operation(summary = "Get charges for all executed orders today",
+               description = "Fetches detailed charge breakdown from Kite API for all completed orders placed today. " +
+                           "Includes brokerage, STT, exchange charges, GST, SEBI charges, and stamp duty.")
+    public ResponseEntity<ApiResponse<List<OrderChargesResponse>>> getOrderCharges() {
+        try {
+            List<OrderChargesResponse> charges = tradingService.getOrderCharges();
+            return ResponseEntity.ok(ApiResponse.success("Order charges fetched successfully", charges));
+        } catch (KiteException | IOException e) {
+            log.error("Error fetching order charges", e);
             return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
         }
     }

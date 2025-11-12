@@ -1,6 +1,7 @@
 package com.tradingbot.service;
 
 import com.tradingbot.config.KiteConfig;
+import com.tradingbot.dto.OrderChargesResponse;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
 import com.zerodhatech.kiteconnect.KiteConnect;
@@ -8,13 +9,18 @@ import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.json.JSONArray;
 import org.json.JSONObject;
+import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -23,6 +29,7 @@ public class TradingService {
 
     private final KiteConnect kiteConnect;
     private final KiteConfig kiteConfig;
+    private final RestTemplate restTemplate;
 
     /**
      * Generate login URL for Kite Connect authentication
@@ -264,5 +271,119 @@ public class TradingService {
      */
     public GTT cancelGTT(int triggerId) throws KiteException, IOException {
         return kiteConnect.cancelGTT(triggerId);
+    }
+
+    /**
+     * Get order charges for orders placed today
+     * This calls the Kite API to get actual charges breakdown for executed orders
+     *
+     * @return List of OrderChargesResponse with detailed charge breakdown for each order
+     * @throws KiteException if Kite API returns an error
+     * @throws IOException if network error occurs
+     */
+    public List<OrderChargesResponse> getOrderCharges() throws KiteException, IOException {
+        try {
+            // Get all orders for the day
+            List<Order> orders = kiteConnect.getOrders();
+
+            if (orders == null || orders.isEmpty()) {
+                log.info("No orders found for today");
+                return new ArrayList<>();
+            }
+
+            // Filter only executed/completed orders
+            List<Order> executedOrders = orders.stream()
+                    .filter(order -> "COMPLETE".equals(order.status))
+                    .collect(Collectors.toList());
+
+            if (executedOrders.isEmpty()) {
+                log.info("No executed orders found for today");
+                return new ArrayList<>();
+            }
+
+            // Build request payload
+            JSONArray requestArray = new JSONArray();
+            for (Order order : executedOrders) {
+                JSONObject orderJson = new JSONObject();
+                orderJson.put("order_id", order.orderId);
+                orderJson.put("exchange", order.exchange);
+                orderJson.put("tradingsymbol", order.tradingSymbol);
+                orderJson.put("transaction_type", order.transactionType);
+                orderJson.put("variety", order.orderVariety);
+                orderJson.put("product", order.product);
+                orderJson.put("order_type", order.orderType);
+                orderJson.put("quantity", order.filledQuantity);
+                orderJson.put("average_price", order.averagePrice);
+                requestArray.put(orderJson);
+            }
+
+            // Make HTTP POST request to Kite charges API
+            String url = "https://kite.zerodha.com/oms/charges/orders";
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("Authorization", "token " + kiteConfig.getApiKey() + ":" + kiteConnect.getAccessToken());
+            headers.set("Content-Type", "application/json");
+            headers.set("X-Kite-Version", "3");
+
+            HttpEntity<String> entity = new HttpEntity<>(requestArray.toString(), headers);
+
+            log.info("Calling Kite charges API with {} orders", executedOrders.size());
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+
+            // Parse response
+            JSONObject responseJson = new JSONObject(response.getBody());
+
+            if (!"success".equals(responseJson.getString("status"))) {
+                throw new KiteException("Failed to fetch order charges", 500);
+            }
+
+            JSONArray dataArray = responseJson.getJSONArray("data");
+            List<OrderChargesResponse> chargesResponses = new ArrayList<>();
+
+            for (int i = 0; i < dataArray.length(); i++) {
+                JSONObject orderData = dataArray.getJSONObject(i);
+                JSONObject chargesJson = orderData.getJSONObject("charges");
+                JSONObject gstJson = chargesJson.getJSONObject("gst");
+
+                OrderChargesResponse.GstBreakdown gst = OrderChargesResponse.GstBreakdown.builder()
+                        .igst(gstJson.getDouble("igst"))
+                        .cgst(gstJson.getDouble("cgst"))
+                        .sgst(gstJson.getDouble("sgst"))
+                        .total(gstJson.getDouble("total"))
+                        .build();
+
+                OrderChargesResponse.Charges charges = OrderChargesResponse.Charges.builder()
+                        .transactionTax(chargesJson.getDouble("transaction_tax"))
+                        .transactionTaxType(chargesJson.getString("transaction_tax_type"))
+                        .exchangeTurnoverCharge(chargesJson.getDouble("exchange_turnover_charge"))
+                        .sebiTurnoverCharge(chargesJson.getDouble("sebi_turnover_charge"))
+                        .brokerage(chargesJson.getDouble("brokerage"))
+                        .stampDuty(chargesJson.getDouble("stamp_duty"))
+                        .gst(gst)
+                        .total(chargesJson.getDouble("total"))
+                        .build();
+
+                OrderChargesResponse orderCharges = OrderChargesResponse.builder()
+                        .transactionType(orderData.getString("transaction_type"))
+                        .tradingsymbol(orderData.getString("tradingsymbol"))
+                        .exchange(orderData.getString("exchange"))
+                        .variety(orderData.getString("variety"))
+                        .product(orderData.getString("product"))
+                        .orderType(orderData.getString("order_type"))
+                        .quantity(orderData.getInt("quantity"))
+                        .price(orderData.getDouble("price"))
+                        .charges(charges)
+                        .build();
+
+                chargesResponses.add(orderCharges);
+            }
+
+            log.info("Successfully fetched charges for {} orders", chargesResponses.size());
+            return chargesResponses;
+
+        } catch (Exception e) {
+            log.error("Error fetching order charges: {}", e.getMessage(), e);
+            throw new KiteException("Failed to fetch order charges: " + e.getMessage(), 500);
+        }
     }
 }

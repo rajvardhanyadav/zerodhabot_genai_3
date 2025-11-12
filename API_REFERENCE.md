@@ -337,6 +337,124 @@ Get the history/trail of a specific order.
 
 ---
 
+### 6. Get Order Charges (NEW)
+
+Get detailed charge breakdown for all executed orders placed today. This endpoint fetches actual charges from Kite API including brokerage, STT, exchange charges, GST, SEBI charges, and stamp duty.
+
+**Endpoint:** `GET /api/orders/charges`
+
+**Headers:**
+```
+Content-Type: application/json
+```
+
+**Description:** 
+Automatically fetches all completed orders from today and returns the detailed charge breakdown for each order. No request body needed - the system retrieves executed orders and calculates charges via Kite's official charges API.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Order charges fetched successfully",
+  "data": [
+    {
+      "transactionType": "BUY",
+      "tradingsymbol": "NIFTY25NOV25850PE",
+      "exchange": "NFO",
+      "variety": "regular",
+      "product": "MIS",
+      "orderType": "MARKET",
+      "quantity": 75,
+      "price": 164.65,
+      "charges": {
+        "transactionTax": 0.0,
+        "transactionTaxType": "stt",
+        "exchangeTurnoverCharge": 4.387510875,
+        "sebiTurnoverCharge": 0.01234875,
+        "brokerage": 20.0,
+        "stampDuty": 0.0,
+        "gst": {
+          "igst": 4.3919747325,
+          "cgst": 0.0,
+          "sgst": 0.0,
+          "total": 4.3919747325
+        },
+        "total": 28.7918343575
+      }
+    },
+    {
+      "transactionType": "SELL",
+      "tradingsymbol": "NIFTY25NOV25850PE",
+      "exchange": "NFO",
+      "variety": "regular",
+      "product": "MIS",
+      "orderType": "MARKET",
+      "quantity": 75,
+      "price": 170.05,
+      "charges": {
+        "transactionTax": 12.75375,
+        "transactionTaxType": "stt",
+        "exchangeTurnoverCharge": 4.531407375,
+        "sebiTurnoverCharge": 0.01275375,
+        "brokerage": 20.0,
+        "stampDuty": 0.0,
+        "gst": {
+          "igst": 4.4179490025,
+          "cgst": 0.0,
+          "sgst": 0.0,
+          "total": 4.4179490025
+        },
+        "total": 41.71586012750001
+      }
+    }
+  ]
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `transactionType` | String | BUY or SELL |
+| `tradingsymbol` | String | Trading symbol (e.g., NIFTY25NOV25850PE) |
+| `exchange` | String | Exchange (NFO, NSE, BSE, etc.) |
+| `variety` | String | Order variety (regular, amo, co, iceberg) |
+| `product` | String | Product type (MIS, NRML, CNC) |
+| `orderType` | String | MARKET or LIMIT |
+| `quantity` | Integer | Number of units executed |
+| `price` | Double | Average execution price |
+| `charges.transactionTax` | Double | STT (Securities Transaction Tax) |
+| `charges.transactionTaxType` | String | Type of tax (always "stt") |
+| `charges.exchangeTurnoverCharge` | Double | Exchange transaction charges |
+| `charges.sebiTurnoverCharge` | Double | SEBI regulatory charges |
+| `charges.brokerage` | Double | Brokerage charged (₹20 flat for F&O/Intraday) |
+| `charges.stampDuty` | Double | Stamp duty (on buy orders) |
+| `charges.gst.igst` | Double | Integrated GST (18% on brokerage + exchange charges) |
+| `charges.gst.cgst` | Double | Central GST |
+| `charges.gst.sgst` | Double | State GST |
+| `charges.gst.total` | Double | Total GST amount |
+| `charges.total` | Double | **Total charges for this order** |
+
+**Use Cases:**
+- Daily P&L calculation with accurate charges
+- Cost analysis and optimization
+- Tax reporting (STT, GST breakdown)
+- Trading strategy profitability analysis
+
+**Notes:**
+- Only returns charges for orders with status "COMPLETE"
+- Data is for current trading day only
+- Charges are actual amounts from Kite API, not estimates
+- Empty array returned if no executed orders found
+
+**Example Usage:**
+```bash
+curl -X GET http://localhost:8080/api/orders/charges \
+  -H "Content-Type: application/json"
+```
+
+---
+
 ## Portfolio APIs
 
 ### 1. Get Positions
