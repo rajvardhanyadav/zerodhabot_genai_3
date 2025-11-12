@@ -8,6 +8,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestTemplate;
 
+/**
+ * Kite Connect Configuration
+ * Configures Zerodha Kite API credentials and connection
+ */
 @Configuration
 @ConfigurationProperties(prefix = "kite")
 @Getter
@@ -17,12 +21,10 @@ public class KiteConfig {
     private String apiKey;
     private String apiSecret;
     private String accessToken;
-    private String loginUrl;
 
     @Bean
     public KiteConnect kiteConnect() {
         KiteConnect kiteConnect = new KiteConnect(apiKey);
-        kiteConnect.setUserId("user_id");
 
         // Set access token if available
         if (accessToken != null && !accessToken.isEmpty()) {

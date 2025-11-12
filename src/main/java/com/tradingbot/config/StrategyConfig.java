@@ -13,26 +13,11 @@ import org.springframework.context.annotation.Configuration;
 @Data
 public class StrategyConfig {
 
-    /**
-     * Default stop loss in points (not percentage)
-     * Can be overridden per strategy execution via API request
-     */
+    // Default strategy parameters (can be overridden per execution)
     private double defaultStopLossPoints = 10.0;
-
-    /**
-     * Default target in points (not percentage)
-     * Can be overridden per strategy execution via API request
-     */
     private double defaultTargetPoints = 15.0;
 
-    /**
-     * Enable/disable auto square off at end of day
-     */
+    // Auto square-off configuration
     private boolean autoSquareOffEnabled = false;
-
-    /**
-     * Auto square off time (HH:mm format)
-     */
-    private String autoSquareOffTime = "15:15";
+    private String autoSquareOffTime = "15:15"; // HH:mm format
 }
-
