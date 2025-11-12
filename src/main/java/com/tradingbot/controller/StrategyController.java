@@ -37,8 +37,9 @@ public class StrategyController {
                description = "Execute a configured trading strategy (ATM Straddle, ATM Strangle, etc.)")
     public ResponseEntity<ApiResponse<StrategyExecutionResponse>> executeStrategy(
             @Valid @RequestBody StrategyRequest request) throws KiteException, IOException {
-        log.info("Executing strategy: {} for {}", request.getStrategyType(), request.getInstrumentType());
+        log.info("API Request - Execute strategy: {} for instrument: {}", request.getStrategyType(), request.getInstrumentType());
         StrategyExecutionResponse response = strategyService.executeStrategy(request);
+        log.info("API Response - Strategy execution completed: {} with status: {}", response.getExecutionId(), response.getStatus());
         return ResponseEntity.ok(ApiResponse.success("Strategy executed successfully", response));
     }
 
@@ -46,7 +47,9 @@ public class StrategyController {
     @Operation(summary = "Get all active strategies",
                description = "Fetch all currently active strategy executions being monitored")
     public ResponseEntity<ApiResponse<List<StrategyExecution>>> getActiveStrategies() {
+        log.debug("API Request - Get all active strategies");
         List<StrategyExecution> strategies = strategyService.getActiveStrategies();
+        log.debug("API Response - Found {} active strategies", strategies.size());
         return ResponseEntity.ok(ApiResponse.success(strategies));
     }
 
@@ -54,10 +57,13 @@ public class StrategyController {
     @Operation(summary = "Get strategy execution details by ID",
                description = "Fetch specific strategy execution details including current P&L and status")
     public ResponseEntity<ApiResponse<StrategyExecution>> getStrategy(@PathVariable String executionId) {
+        log.debug("API Request - Get strategy details for executionId: {}", executionId);
         StrategyExecution strategy = strategyService.getStrategy(executionId);
         if (strategy == null) {
+            log.warn("API Response - Strategy not found: {}", executionId);
             return ResponseEntity.notFound().build();
         }
+        log.debug("API Response - Strategy found: {} with status: {}", executionId, strategy.getStatus());
         return ResponseEntity.ok(ApiResponse.success(strategy));
     }
 
@@ -65,6 +71,7 @@ public class StrategyController {
     @Operation(summary = "Get available strategy types",
                description = "List all supported strategy types with their implementation status")
     public ResponseEntity<ApiResponse<List<StrategyTypeInfo>>> getStrategyTypes() {
+        log.debug("API Request - Get available strategy types");
         List<StrategyTypeInfo> types = Arrays.stream(StrategyType.values())
             .map(type -> new StrategyTypeInfo(
                 type.name(),
@@ -73,6 +80,7 @@ public class StrategyController {
             ))
             .collect(Collectors.toList());
 
+        log.debug("API Response - Returning {} strategy types", types.size());
         return ResponseEntity.ok(ApiResponse.success(types));
     }
 
@@ -80,6 +88,7 @@ public class StrategyController {
     @Operation(summary = "Get available instruments",
                description = "Fetch available instruments with their lot sizes and strike intervals")
     public ResponseEntity<ApiResponse<List<InstrumentInfo>>> getInstruments() throws KiteException, IOException {
+        log.debug("API Request - Get available instruments");
         List<StrategyService.InstrumentDetail> instrumentDetails = strategyService.getAvailableInstruments();
 
         List<InstrumentInfo> instruments = instrumentDetails.stream()
@@ -91,6 +100,7 @@ public class StrategyController {
             ))
             .collect(Collectors.toList());
 
+        log.debug("API Response - Returning {} instruments", instruments.size());
         return ResponseEntity.ok(ApiResponse.success(instruments));
     }
 
@@ -99,8 +109,9 @@ public class StrategyController {
                description = "Fetch weekly and monthly expiry dates for specified instrument")
     public ResponseEntity<ApiResponse<List<String>>> getExpiries(@PathVariable String instrumentType)
             throws KiteException, IOException {
-        log.info("Fetching expiries for instrument: {}", instrumentType);
+        log.debug("API Request - Get expiries for instrument: {}", instrumentType);
         List<String> expiries = strategyService.getAvailableExpiries(instrumentType);
+        log.debug("API Response - Found {} expiries for {}", expiries.size(), instrumentType);
         return ResponseEntity.ok(ApiResponse.success(expiries));
     }
 

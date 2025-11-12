@@ -32,7 +32,11 @@ public class PortfolioController {
     @Operation(summary = "Get all positions",
                description = "Returns open positions from Paper Trading or Live Trading based on configuration")
     public ResponseEntity<ApiResponse<Map<String, List<Position>>>> getPositions() throws KiteException, IOException {
+        log.debug("API Request - Get all positions");
         Map<String, List<Position>> positions = unifiedTradingService.getPositions();
+        log.debug("API Response - Returning {} net positions, {} day positions",
+            positions.get("net") != null ? positions.get("net").size() : 0,
+            positions.get("day") != null ? positions.get("day").size() : 0);
         return ResponseEntity.ok(ApiResponse.success(positions));
     }
 
@@ -40,7 +44,9 @@ public class PortfolioController {
     @Operation(summary = "Get all holdings",
                description = "Returns long-term holdings (only available in Live Trading mode)")
     public ResponseEntity<ApiResponse<List<Holding>>> getHoldings() throws KiteException, IOException {
+        log.debug("API Request - Get all holdings");
         List<Holding> holdings = unifiedTradingService.getHoldings();
+        log.debug("API Response - Returning {} holdings", holdings.size());
         return ResponseEntity.ok(ApiResponse.success(holdings));
     }
 
@@ -48,7 +54,9 @@ public class PortfolioController {
     @Operation(summary = "Get all trades for the day",
                description = "Returns completed trades from Paper Trading or Live Trading based on configuration")
     public ResponseEntity<ApiResponse<List<Trade>>> getTrades() throws KiteException, IOException {
+        log.debug("API Request - Get all trades");
         List<Trade> trades = unifiedTradingService.getTrades();
+        log.debug("API Response - Returning {} trades", trades.size());
         return ResponseEntity.ok(ApiResponse.success(trades));
     }
 
@@ -63,8 +71,10 @@ public class PortfolioController {
             @RequestParam String oldProduct,
             @RequestParam String newProduct,
             @RequestParam int quantity) throws KiteException, IOException {
+        log.info("API Request - Convert position: {} from {} to {}", tradingSymbol, oldProduct, newProduct);
         JSONObject result = unifiedTradingService.convertPosition(tradingSymbol, exchange, transactionType,
                 positionType, oldProduct, newProduct, quantity);
+        log.info("API Response - Position converted successfully: {}", tradingSymbol);
         return ResponseEntity.ok(ApiResponse.success("Position converted successfully", result));
     }
 
@@ -72,7 +82,10 @@ public class PortfolioController {
     @Operation(summary = "Get total day P&L",
                description = "Returns total realized and unrealized profit/loss for the day from all positions. Works with both Paper and Live trading modes.")
     public ResponseEntity<ApiResponse<DayPnLResponse>> getDayPnL() throws KiteException, IOException {
+        log.debug("API Request - Get day P&L");
         DayPnLResponse dayPnL = unifiedTradingService.getDayPnL();
+        log.debug("API Response - Day P&L: Total={}, Realised={}, Unrealised={}",
+            dayPnL.getTotalDayPnL(), dayPnL.getTotalRealised(), dayPnL.getTotalUnrealised());
         return ResponseEntity.ok(ApiResponse.success(dayPnL));
     }
 }

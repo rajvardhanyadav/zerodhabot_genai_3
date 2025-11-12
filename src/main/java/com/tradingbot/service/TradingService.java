@@ -32,13 +32,17 @@ public class TradingService {
      * Generate login URL for Kite Connect authentication
      */
     public String getLoginUrl() {
-        return kiteConnect.getLoginURL();
+        log.debug("Generating Kite Connect login URL");
+        String loginUrl = kiteConnect.getLoginURL();
+        log.debug("Login URL generated: {}", loginUrl);
+        return loginUrl;
     }
 
     /**
      * Generate session using request token
      */
     public User generateSession(String requestToken) throws KiteException, IOException {
+        log.info("Generating session with request token");
         User user = kiteConnect.generateSession(requestToken, kiteConfig.getApiSecret());
         kiteConnect.setAccessToken(user.accessToken);
         log.info("Session generated successfully for user: {}", user.userId);
@@ -49,20 +53,28 @@ public class TradingService {
      * Get user profile
      */
     public Profile getUserProfile() throws KiteException, IOException {
-        return kiteConnect.getProfile();
+        log.debug("Fetching user profile");
+        Profile profile = kiteConnect.getProfile();
+        log.debug("User profile fetched for user: {}", profile.userName);
+        return profile;
     }
 
     /**
      * Get account margins
      */
     public Margin getMargins(String segment) throws KiteException, IOException {
-        return kiteConnect.getMargins(segment);
+        log.debug("Fetching margins for segment: {}", segment);
+        Margin margin = kiteConnect.getMargins(segment);
+        log.debug("Margins fetched - Available: {}, Used: {}", margin.available.cash, margin.utilised.debits);
+        return margin;
     }
 
     /**
      * Place a new order
      */
     public OrderResponse placeOrder(OrderRequest orderRequest) throws KiteException, IOException {
+        log.info("Placing order - Symbol: {}, Type: {}, Qty: {}",
+            orderRequest.getTradingSymbol(), orderRequest.getTransactionType(), orderRequest.getQuantity());
         try {
             OrderParams orderParams = buildOrderParams(orderRequest);
             Order order = kiteConnect.placeOrder(orderParams, "regular");
@@ -93,6 +105,7 @@ public class TradingService {
      * Modify an existing order
      */
     public OrderResponse modifyOrder(String orderId, OrderRequest orderRequest) throws KiteException, IOException {
+        log.info("Modifying order: {} - New params: {}", orderId, orderRequest);
         OrderParams orderParams = buildModifyOrderParams(orderRequest);
         Order order = kiteConnect.modifyOrder(orderId, orderParams, "regular");
         log.info("Order modified successfully: {}", orderId);
@@ -104,6 +117,7 @@ public class TradingService {
      * Cancel an order
      */
     public OrderResponse cancelOrder(String orderId) {
+        log.info("Cancelling order: {}", orderId);
         try {
             Order order = kiteConnect.cancelOrder(orderId, "regular");
 
@@ -132,35 +146,52 @@ public class TradingService {
      * Get all orders for the day
      */
     public List<Order> getOrders() throws KiteException, IOException {
-        return kiteConnect.getOrders();
+        log.debug("Fetching all orders for the day");
+        List<Order> orders = kiteConnect.getOrders();
+        log.debug("Fetched {} orders", orders != null ? orders.size() : 0);
+        return orders;
     }
 
     /**
      * Get order history
      */
     public List<Order> getOrderHistory(String orderId) throws KiteException, IOException {
-        return kiteConnect.getOrderHistory(orderId);
+        log.debug("Fetching order history for order: {}", orderId);
+        List<Order> history = kiteConnect.getOrderHistory(orderId);
+        log.debug("Fetched {} order history records for order: {}", history != null ? history.size() : 0, orderId);
+        return history;
     }
 
     /**
      * Get all trades for the day
      */
     public List<Trade> getTrades() throws KiteException, IOException {
-        return kiteConnect.getTrades();
+        log.debug("Fetching all trades for the day");
+        List<Trade> trades = kiteConnect.getTrades();
+        log.debug("Fetched {} trades", trades != null ? trades.size() : 0);
+        return trades;
     }
 
     /**
      * Get all positions
      */
     public Map<String, List<Position>> getPositions() throws KiteException, IOException {
-        return kiteConnect.getPositions();
+        log.debug("Fetching all positions");
+        Map<String, List<Position>> positions = kiteConnect.getPositions();
+        log.debug("Fetched positions - Net: {}, Day: {}",
+            positions.get("net") != null ? positions.get("net").size() : 0,
+            positions.get("day") != null ? positions.get("day").size() : 0);
+        return positions;
     }
 
     /**
      * Get holdings
      */
     public List<Holding> getHoldings() throws KiteException, IOException {
-        return kiteConnect.getHoldings();
+        log.debug("Fetching holdings");
+        List<Holding> holdings = kiteConnect.getHoldings();
+        log.debug("Fetched {} holdings", holdings != null ? holdings.size() : 0);
+        return holdings;
     }
 
     /**
@@ -169,29 +200,42 @@ public class TradingService {
     public JSONObject convertPosition(String tradingSymbol, String exchange, String transactionType,
                                       String positionType, String oldProduct, String newProduct,
                                       int quantity) throws KiteException, IOException {
-        return kiteConnect.convertPosition(tradingSymbol, exchange, transactionType,
+        log.info("Converting position - Symbol: {}, Exchange: {}, Type: {}, Qty: {}, From: {} To: {}",
+            tradingSymbol, exchange, transactionType, quantity, oldProduct, newProduct);
+        JSONObject result = kiteConnect.convertPosition(tradingSymbol, exchange, transactionType,
                 positionType, oldProduct, newProduct, quantity);
+        log.info("Position conversion completed for symbol: {}", tradingSymbol);
+        return result;
     }
 
     /**
      * Get quote for instruments
      */
     public Map<String, Quote> getQuote(String[] instruments) throws KiteException, IOException {
-        return kiteConnect.getQuote(instruments);
+        log.debug("Fetching quotes for {} instruments", instruments.length);
+        Map<String, Quote> quotes = kiteConnect.getQuote(instruments);
+        log.debug("Fetched quotes for {} instruments", quotes != null ? quotes.size() : 0);
+        return quotes;
     }
 
     /**
      * Get OHLC data
      */
     public Map<String, OHLCQuote> getOHLC(String[] instruments) throws KiteException, IOException {
-        return kiteConnect.getOHLC(instruments);
+        log.debug("Fetching OHLC data for {} instruments", instruments.length);
+        Map<String, OHLCQuote> ohlc = kiteConnect.getOHLC(instruments);
+        log.debug("Fetched OHLC data for {} instruments", ohlc != null ? ohlc.size() : 0);
+        return ohlc;
     }
 
     /**
      * Get LTP (Last Traded Price)
      */
     public Map<String, LTPQuote> getLTP(String[] instruments) throws KiteException, IOException {
-        return kiteConnect.getLTP(instruments);
+        log.debug("Fetching LTP for {} instruments", instruments.length);
+        Map<String, LTPQuote> ltp = kiteConnect.getLTP(instruments);
+        log.debug("Fetched LTP for {} instruments", ltp != null ? ltp.size() : 0);
+        return ltp;
     }
 
     /**
@@ -200,56 +244,81 @@ public class TradingService {
     public HistoricalData getHistoricalData(Date fromDate, Date toDate, String instrumentToken,
                                             String interval, boolean continuous, boolean oi)
             throws KiteException, IOException {
-        return kiteConnect.getHistoricalData(fromDate, toDate, instrumentToken, interval, continuous, oi);
+        log.debug("Fetching historical data - Token: {}, Interval: {}, From: {}, To: {}",
+            instrumentToken, interval, fromDate, toDate);
+        HistoricalData data = kiteConnect.getHistoricalData(fromDate, toDate, instrumentToken, interval, continuous, oi);
+        log.debug("Fetched {} candles of historical data", data != null && data.dataArrayList != null ? data.dataArrayList.size() : 0);
+        return data;
     }
 
     /**
      * Get all instruments
      */
     public List<Instrument> getInstruments() throws KiteException, IOException {
-        return kiteConnect.getInstruments();
+        log.debug("Fetching all instruments");
+        List<Instrument> instruments = kiteConnect.getInstruments();
+        log.debug("Fetched {} instruments", instruments != null ? instruments.size() : 0);
+        return instruments;
     }
 
     /**
      * Get instruments for specific exchange
      */
     public List<Instrument> getInstruments(String exchange) throws KiteException, IOException {
-        return kiteConnect.getInstruments(exchange);
+        log.debug("Fetching instruments for exchange: {}", exchange);
+        List<Instrument> instruments = kiteConnect.getInstruments(exchange);
+        log.debug("Fetched {} instruments for exchange: {}", instruments != null ? instruments.size() : 0, exchange);
+        return instruments;
     }
 
     /**
      * Get GTT (Good Till Triggered) orders
      */
     public List<GTT> getGTTs() throws KiteException, IOException {
-        return kiteConnect.getGTTs();
+        log.debug("Fetching GTT orders");
+        List<GTT> gtts = kiteConnect.getGTTs();
+        log.debug("Fetched {} GTT orders", gtts != null ? gtts.size() : 0);
+        return gtts;
     }
 
     /**
      * Place GTT order
      */
     public GTT placeGTT(GTTParams gttParams) throws KiteException, IOException {
-        return kiteConnect.placeGTT(gttParams);
+        log.info("Placing GTT order - Type: {}, Symbol: {}", gttParams.triggerType, gttParams.tradingsymbol);
+        GTT gtt = kiteConnect.placeGTT(gttParams);
+        log.info("GTT order placed successfully - ID: {}", gtt.id);
+        return gtt;
     }
 
     /**
      * Get GTT order by ID
      */
     public GTT getGTT(int triggerId) throws KiteException, IOException {
-        return kiteConnect.getGTT(triggerId);
+        log.debug("Fetching GTT order: {}", triggerId);
+        GTT gtt = kiteConnect.getGTT(triggerId);
+        log.debug("Fetched GTT order: {} - Status: {}", triggerId, gtt.status);
+        return gtt;
     }
 
     /**
      * Modify GTT order
      */
     public GTT modifyGTT(int triggerId, GTTParams gttParams) throws KiteException, IOException {
-        return kiteConnect.modifyGTT(triggerId, gttParams);
+        log.info("Modifying GTT order: {}", triggerId);
+        GTT gtt = kiteConnect.modifyGTT(triggerId, gttParams);
+        log.info("GTT order modified successfully: {}", triggerId);
+        return gtt;
     }
 
     /**
      * Cancel GTT order
      */
     public GTT cancelGTT(int triggerId) throws KiteException, IOException {
-        return kiteConnect.cancelGTT(triggerId);
+        log.info("Cancelling GTT order: {}", triggerId);
+        GTT gtt = kiteConnect.cancelGTT(triggerId);
+        log.info("GTT order cancelled successfully: {}", triggerId);
+        return gtt;
     }
 
     /**

@@ -28,7 +28,9 @@ public class AuthController {
     @Operation(summary = "Get Kite Connect login URL",
                description = "Generate login URL for Kite Connect authentication flow")
     public ResponseEntity<ApiResponse<String>> getLoginUrl() {
+        log.debug("API Request - Get Kite Connect login URL");
         String loginUrl = tradingService.getLoginUrl();
+        log.debug("API Response - Login URL generated successfully");
         return ResponseEntity.ok(ApiResponse.success("Login URL generated", loginUrl));
     }
 
@@ -37,8 +39,9 @@ public class AuthController {
                description = "Exchange request token for access token and create user session")
     public ResponseEntity<ApiResponse<User>> generateSession(@RequestBody LoginRequest loginRequest)
             throws KiteException, IOException {
+        log.info("API Request - Generate session with request token");
         User user = tradingService.generateSession(loginRequest.getRequestToken());
-        log.info("Session generated successfully for user: {}", user.userId);
+        log.info("API Response - Session generated successfully for user: {}", user.userId);
         return ResponseEntity.ok(ApiResponse.success("Session generated successfully", user));
     }
 
@@ -46,7 +49,9 @@ public class AuthController {
     @Operation(summary = "Get user profile",
                description = "Fetch authenticated user's profile information")
     public ResponseEntity<ApiResponse<Profile>> getUserProfile() throws KiteException, IOException {
+        log.debug("API Request - Get user profile");
         Profile profile = tradingService.getUserProfile();
+        log.debug("API Response - Profile fetched for user: {}", profile.userName);
         return ResponseEntity.ok(ApiResponse.success(profile));
     }
 }

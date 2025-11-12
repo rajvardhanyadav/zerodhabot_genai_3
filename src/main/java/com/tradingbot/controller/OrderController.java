@@ -34,7 +34,11 @@ public class OrderController {
                description = "Place order in Paper Trading or Live Trading mode based on configuration")
     public ResponseEntity<ApiResponse<OrderResponse>> placeOrder(@Valid @RequestBody OrderRequest orderRequest)
             throws KiteException, IOException {
+        log.info("API Request - Place order: {} {} {} @ {}",
+            orderRequest.getTransactionType(), orderRequest.getQuantity(),
+            orderRequest.getTradingSymbol(), orderRequest.getOrderType());
         OrderResponse response = unifiedTradingService.placeOrder(orderRequest);
+        log.info("API Response - Order placed: {} with status: {}", response.getOrderId(), response.getStatus());
         return ResponseEntity.ok(ApiResponse.success("Order placed successfully", response));
     }
 
@@ -44,7 +48,9 @@ public class OrderController {
     public ResponseEntity<ApiResponse<OrderResponse>> modifyOrder(
             @PathVariable String orderId,
             @Valid @RequestBody OrderRequest orderRequest) throws KiteException, IOException {
+        log.info("API Request - Modify order: {}", orderId);
         OrderResponse response = unifiedTradingService.modifyOrder(orderId, orderRequest);
+        log.info("API Response - Order modified: {} with status: {}", orderId, response.getStatus());
         return ResponseEntity.ok(ApiResponse.success("Order modified successfully", response));
     }
 
@@ -53,7 +59,9 @@ public class OrderController {
                description = "Cancel a pending order by order ID")
     public ResponseEntity<ApiResponse<OrderResponse>> cancelOrder(@PathVariable String orderId)
             throws KiteException, IOException {
+        log.info("API Request - Cancel order: {}", orderId);
         OrderResponse response = unifiedTradingService.cancelOrder(orderId);
+        log.info("API Response - Order cancelled: {} with status: {}", orderId, response.getStatus());
         return ResponseEntity.ok(ApiResponse.success("Order cancelled successfully", response));
     }
 
@@ -61,7 +69,9 @@ public class OrderController {
     @Operation(summary = "Get all orders for the day",
                description = "Fetch all orders placed today across all instruments")
     public ResponseEntity<ApiResponse<List<Order>>> getOrders() throws KiteException, IOException {
+        log.debug("API Request - Get all orders");
         List<Order> orders = unifiedTradingService.getOrders();
+        log.debug("API Response - Returning {} orders", orders.size());
         return ResponseEntity.ok(ApiResponse.success(orders));
     }
 
@@ -70,7 +80,9 @@ public class OrderController {
                description = "Fetch complete history of order state changes")
     public ResponseEntity<ApiResponse<List<Order>>> getOrderHistory(@PathVariable String orderId)
             throws KiteException, IOException {
+        log.debug("API Request - Get order history for: {}", orderId);
         List<Order> orderHistory = unifiedTradingService.getOrderHistory(orderId);
+        log.debug("API Response - Returning {} order history records for: {}", orderHistory.size(), orderId);
         return ResponseEntity.ok(ApiResponse.success(orderHistory));
     }
 
@@ -79,7 +91,9 @@ public class OrderController {
                description = "Fetches detailed charge breakdown from Kite API for all completed orders placed today. " +
                            "Includes brokerage, STT, exchange charges, GST, SEBI charges, and stamp duty.")
     public ResponseEntity<ApiResponse<List<OrderChargesResponse>>> getOrderCharges() throws KiteException, IOException {
+        log.info("API Request - Get order charges");
         List<OrderChargesResponse> charges = tradingService.getOrderCharges();
+        log.info("API Response - Returning charges for {} orders", charges.size());
         return ResponseEntity.ok(ApiResponse.success("Order charges fetched successfully", charges));
     }
 }
