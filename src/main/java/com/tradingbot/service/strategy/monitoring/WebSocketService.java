@@ -5,6 +5,7 @@ import com.zerodhatech.kiteconnect.KiteConnect;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.ticker.KiteTicker;
 import com.zerodhatech.models.Tick;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 @RequiredArgsConstructor
 @Slf4j
+@Getter
 public class WebSocketService {
 
     private final KiteConnect kiteConnect;
@@ -215,15 +217,12 @@ public class WebSocketService {
     private void processTicks(ArrayList<Tick> ticks) {
         for (Tick tick : ticks) {
             long token = tick.getInstrumentToken();
-            double ltp = tick.getLastTradedPrice();
 
             Set<String> executions = instrumentToExecutions.get(token);
             if (executions != null) {
                 for (String executionId : executions) {
                     PositionMonitor monitor = activeMonitors.get(executionId);
                     if (monitor != null && monitor.isActive()) {
-                        //monitor.updatePrice(token, ltp);
-//                        monitor.updatePriceWithPnLDiffCheck(token,ltp);
                         monitor.updatePriceWithDifferenceCheck(ticks);
                     }
                 }
@@ -254,13 +253,6 @@ public class WebSocketService {
                 log.error("Error disconnecting WebSocket: {}", e.getMessage(), e);
             }
         }
-    }
-
-    /**
-     * Check if WebSocket is connected
-     */
-    public boolean isConnected() {
-        return isConnected;
     }
 
     /**

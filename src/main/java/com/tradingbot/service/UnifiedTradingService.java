@@ -32,6 +32,12 @@ import java.util.stream.Collectors;
 @Slf4j
 public class UnifiedTradingService {
 
+    private static final String DEFAULT_PAPER_USER_ID = "PAPER_USER";
+    private static final String PAPER_MODE_EMOJI = "🎯";
+    private static final String LIVE_MODE_EMOJI = "💰";
+    private static final String PAPER_MODE = "PAPER";
+    private static final String LIVE_MODE = "LIVE";
+
     private final PaperTradingConfig config;
     private final TradingService liveTradingService;
     private final PaperTradingService paperTradingService;
@@ -40,12 +46,11 @@ public class UnifiedTradingService {
      * Place order - routes to paper or live trading based on config
      */
     public OrderResponse placeOrder(OrderRequest orderRequest) throws KiteException, IOException {
-        if (config.isPaperTradingEnabled()) {
-            log.info("[PAPER MODE] Placing paper order");
-            String userId = getUserId();
-            return paperTradingService.placeOrder(orderRequest, userId);
+        if (isPaperTradingEnabled()) {
+            logPaperMode("Placing paper order");
+            return paperTradingService.placeOrder(orderRequest, getUserId());
         } else {
-            log.info("💰 [LIVE MODE] Placing live order");
+            logLiveMode("Placing live order");
             return liveTradingService.placeOrder(orderRequest);
         }
     }
@@ -54,12 +59,11 @@ public class UnifiedTradingService {
      * Modify order
      */
     public OrderResponse modifyOrder(String orderId, OrderRequest orderRequest) throws KiteException, IOException {
-        if (config.isPaperTradingEnabled()) {
-            log.info("🎯 [PAPER MODE] Modifying paper order: {}", orderId);
-            String userId = getUserId();
-            return paperTradingService.modifyOrder(orderId, orderRequest, userId);
+        if (isPaperTradingEnabled()) {
+            logPaperMode("Modifying paper order: " + orderId);
+            return paperTradingService.modifyOrder(orderId, orderRequest, getUserId());
         } else {
-            log.info("💰 [LIVE MODE] Modifying live order: {}", orderId);
+            logLiveMode("Modifying live order: " + orderId);
             return liveTradingService.modifyOrder(orderId, orderRequest);
         }
     }
@@ -67,13 +71,12 @@ public class UnifiedTradingService {
     /**
      * Cancel order
      */
-    public OrderResponse cancelOrder(String orderId) throws KiteException, IOException {
-        if (config.isPaperTradingEnabled()) {
-            log.info("🎯 [PAPER MODE] Cancelling paper order: {}", orderId);
-            String userId = getUserId();
-            return paperTradingService.cancelOrder(orderId, userId);
+    public OrderResponse cancelOrder(String orderId) {
+        if (isPaperTradingEnabled()) {
+            logPaperMode("Cancelling paper order: " + orderId);
+            return paperTradingService.cancelOrder(orderId, getUserId());
         } else {
-            log.info("💰 [LIVE MODE] Cancelling live order: {}", orderId);
+            logLiveMode("Cancelling live order: " + orderId);
             return liveTradingService.cancelOrder(orderId);
         }
     }
@@ -82,13 +85,12 @@ public class UnifiedTradingService {
      * Get all orders
      */
     public List<Order> getOrders() throws KiteException, IOException {
-        if (config.isPaperTradingEnabled()) {
-            log.debug("🎯 [PAPER MODE] Fetching paper orders");
-            String userId = getUserId();
-            List<PaperOrder> paperOrders = paperTradingService.getAllOrders(userId);
+        if (isPaperTradingEnabled()) {
+            log.debug("{} [{}] Fetching paper orders", PAPER_MODE_EMOJI, PAPER_MODE);
+            List<PaperOrder> paperOrders = paperTradingService.getAllOrders(getUserId());
             return convertPaperOrdersToKiteOrders(paperOrders);
         } else {
-            log.debug("💰 [LIVE MODE] Fetching live orders");
+            log.debug("{} [{}] Fetching live orders", LIVE_MODE_EMOJI, LIVE_MODE);
             return liveTradingService.getOrders();
         }
     }
@@ -97,12 +99,12 @@ public class UnifiedTradingService {
      * Get order history
      */
     public List<Order> getOrderHistory(String orderId) throws KiteException, IOException {
-        if (config.isPaperTradingEnabled()) {
-            log.debug("🎯 [PAPER MODE] Fetching paper order history: {}", orderId);
+        if (isPaperTradingEnabled()) {
+            log.debug("{} [{}] Fetching paper order history: {}", PAPER_MODE_EMOJI, PAPER_MODE, orderId);
             List<PaperOrder> paperOrders = paperTradingService.getOrderHistory(orderId);
             return convertPaperOrdersToKiteOrders(paperOrders);
         } else {
-            log.debug("💰 [LIVE MODE] Fetching live order history: {}", orderId);
+            log.debug("{} [{}] Fetching live order history: {}", LIVE_MODE_EMOJI, LIVE_MODE, orderId);
             return liveTradingService.getOrderHistory(orderId);
         }
     }
@@ -111,13 +113,12 @@ public class UnifiedTradingService {
      * Get positions
      */
     public Map<String, List<Position>> getPositions() throws KiteException, IOException {
-        if (config.isPaperTradingEnabled()) {
-            log.debug("🎯 [PAPER MODE] Fetching paper positions");
-            String userId = getUserId();
-            List<PaperPosition> paperPositions = paperTradingService.getPositions(userId);
+        if (isPaperTradingEnabled()) {
+            log.debug("{} [{}] Fetching paper positions", PAPER_MODE_EMOJI, PAPER_MODE);
+            List<PaperPosition> paperPositions = paperTradingService.getPositions(getUserId());
             return convertPaperPositionsToKitePositions(paperPositions);
         } else {
-            log.debug("💰 [LIVE MODE] Fetching live positions");
+            log.debug("{} [{}] Fetching live positions", LIVE_MODE_EMOJI, LIVE_MODE);
             return liveTradingService.getPositions();
         }
     }
@@ -126,9 +127,8 @@ public class UnifiedTradingService {
      * Get paper trading account (only available in paper mode)
      */
     public PaperAccount getPaperAccount() {
-        if (config.isPaperTradingEnabled()) {
-            String userId = getUserId();
-            return paperTradingService.getAccount(userId);
+        if (isPaperTradingEnabled()) {
+            return paperTradingService.getAccount(getUserId());
         }
         return null;
     }
@@ -137,10 +137,9 @@ public class UnifiedTradingService {
      * Reset paper trading account
      */
     public void resetPaperAccount() {
-        if (config.isPaperTradingEnabled()) {
-            String userId = getUserId();
-            paperTradingService.resetAccount(userId);
-            log.info("🎯 [PAPER MODE] Account reset completed");
+        if (isPaperTradingEnabled()) {
+            paperTradingService.resetAccount(getUserId());
+            logPaperMode("Account reset completed");
         }
     }
 
@@ -155,11 +154,11 @@ public class UnifiedTradingService {
      * Get holdings (only available in live mode)
      */
     public List<Holding> getHoldings() throws KiteException, IOException {
-        if (config.isPaperTradingEnabled()) {
-            log.warn("🎯 [PAPER MODE] Holdings are not supported in paper trading mode");
+        if (isPaperTradingEnabled()) {
+            log.warn("{} [{}] Holdings are not supported in paper trading mode", PAPER_MODE_EMOJI, PAPER_MODE);
             throw new UnsupportedOperationException("Holdings are only available in live trading mode");
         } else {
-            log.debug("💰 [LIVE MODE] Fetching live holdings");
+            log.debug("{} [{}] Fetching live holdings", LIVE_MODE_EMOJI, LIVE_MODE);
             return liveTradingService.getHoldings();
         }
     }
@@ -168,12 +167,11 @@ public class UnifiedTradingService {
      * Get trades
      */
     public List<Trade> getTrades() throws KiteException, IOException {
-        if (config.isPaperTradingEnabled()) {
-            log.warn("🎯 [PAPER MODE] Trades endpoint not yet implemented in paper mode");
-            // TODO: Implement paper trading trades tracking
+        if (isPaperTradingEnabled()) {
+            log.warn("{} [{}] Trades endpoint not yet implemented in paper mode", PAPER_MODE_EMOJI, PAPER_MODE);
             throw new UnsupportedOperationException("Trades tracking not yet implemented in paper trading mode");
         } else {
-            log.debug("💰 [LIVE MODE] Fetching live trades");
+            log.debug("{} [{}] Fetching live trades", LIVE_MODE_EMOJI, LIVE_MODE);
             return liveTradingService.getTrades();
         }
     }
@@ -184,11 +182,11 @@ public class UnifiedTradingService {
     public JSONObject convertPosition(String tradingSymbol, String exchange, String transactionType,
                                      String positionType, String oldProduct, String newProduct,
                                      int quantity) throws KiteException, IOException {
-        if (config.isPaperTradingEnabled()) {
-            log.warn("🎯 [PAPER MODE] Position conversion not supported in paper trading mode");
+        if (isPaperTradingEnabled()) {
+            log.warn("{} [{}] Position conversion not supported in paper trading mode", PAPER_MODE_EMOJI, PAPER_MODE);
             throw new UnsupportedOperationException("Position conversion is only available in live trading mode");
         } else {
-            log.info("💰 [LIVE MODE] Converting position: {} from {} to {}", tradingSymbol, oldProduct, newProduct);
+            log.info("{} [{}] Converting position: {} from {} to {}", LIVE_MODE_EMOJI, LIVE_MODE, tradingSymbol, oldProduct, newProduct);
             return liveTradingService.convertPosition(tradingSymbol, exchange, transactionType,
                     positionType, oldProduct, newProduct, quantity);
         }
@@ -196,7 +194,6 @@ public class UnifiedTradingService {
 
     /**
      * Get total day P&L from all positions
-     * Calculates realized and unrealized P&L based on Kite API positions data
      */
     public DayPnLResponse getDayPnL() throws KiteException, IOException {
         Map<String, List<Position>> positions = getPositions();
@@ -212,21 +209,18 @@ public class UnifiedTradingService {
             positionCount = netPositions.size();
 
             for (Position position : netPositions) {
-                totalRealised += (position.realised != null && position.realised != 0.0) ? position.realised : 0.0;
-                totalUnrealised += (position.unrealised != null && position.unrealised != 0.0) ? position.unrealised : 0.0;
-                totalM2M += (position.m2m != null && position.m2m != 0.0) ? position.m2m : 0.0;
+                totalRealised += safeToDouble(position.realised);
+                totalUnrealised += safeToDouble(position.unrealised);
+                totalM2M += safeToDouble(position.m2m);
             }
         }
 
         double totalDayPnL = totalRealised + totalUnrealised;
-        String tradingMode = config.isPaperTradingEnabled() ? "PAPER" : "LIVE";
+        String tradingMode = isPaperTradingEnabled() ? PAPER_MODE : LIVE_MODE;
+        String emoji = isPaperTradingEnabled() ? PAPER_MODE_EMOJI : LIVE_MODE_EMOJI;
 
         log.info("{} [{}] Day P&L - Realised: {}, Unrealised: {}, Total: {}",
-                 tradingMode.equals("PAPER") ? "🎯" : "💰",
-                 tradingMode,
-                 totalRealised,
-                 totalUnrealised,
-                 totalDayPnL);
+                 emoji, tradingMode, totalRealised, totalUnrealised, totalDayPnL);
 
         return new DayPnLResponse(
             totalRealised,
@@ -256,13 +250,13 @@ public class UnifiedTradingService {
         order.transactionType = paperOrder.getTransactionType();
         order.orderType = paperOrder.getOrderType();
         order.product = paperOrder.getProduct();
-        order.quantity = paperOrder.getQuantity() != null ? paperOrder.getQuantity().toString() : "0";
-        order.price = paperOrder.getPrice() != null ? paperOrder.getPrice().toString() : "0";
-        order.triggerPrice = paperOrder.getTriggerPrice() != null ? paperOrder.getTriggerPrice().toString() : "0";
-        order.averagePrice = paperOrder.getAveragePrice() != null ? paperOrder.getAveragePrice().toString() : "0";
-        order.filledQuantity = paperOrder.getFilledQuantity() != null ? paperOrder.getFilledQuantity().toString() : "0";
-        order.pendingQuantity = paperOrder.getPendingQuantity() != null ? paperOrder.getPendingQuantity().toString() : "0";
-        order.disclosedQuantity = paperOrder.getDisclosedQuantity() != null ? paperOrder.getDisclosedQuantity().toString() : "0";
+        order.quantity = safeToString(paperOrder.getQuantity());
+        order.price = safeToString(paperOrder.getPrice());
+        order.triggerPrice = safeToString(paperOrder.getTriggerPrice());
+        order.averagePrice = safeToString(paperOrder.getAveragePrice());
+        order.filledQuantity = safeToString(paperOrder.getFilledQuantity());
+        order.pendingQuantity = safeToString(paperOrder.getPendingQuantity());
+        order.disclosedQuantity = safeToString(paperOrder.getDisclosedQuantity());
         order.validity = paperOrder.getValidity();
         order.orderTimestamp = paperOrder.getOrderTimestamp() != null ?
                               Date.from(paperOrder.getOrderTimestamp().atZone(ZoneId.systemDefault()).toInstant()) : null;
@@ -271,56 +265,75 @@ public class UnifiedTradingService {
         order.statusMessage = paperOrder.getStatusMessage();
         order.parentOrderId = paperOrder.getParentOrderId();
         order.tag = paperOrder.getTag();
-
         return order;
     }
 
     private Map<String, List<Position>> convertPaperPositionsToKitePositions(List<PaperPosition> paperPositions) {
+        List<Position> netPositions = paperPositions.stream()
+                .map(this::convertPaperPositionToKitePosition)
+                .collect(Collectors.toList());
+
         Map<String, List<Position>> positionsMap = new HashMap<>();
-
-        // Convert paper positions to Kite position format
-        List<Position> netPositions = new ArrayList<>();
-
-        for (PaperPosition pp : paperPositions) {
-            Position p = new Position();
-            p.tradingSymbol = pp.getTradingSymbol();
-            p.exchange = pp.getExchange();
-            p.product = pp.getProduct();
-            p.averagePrice = pp.getAveragePrice() != null ? pp.getAveragePrice() : 0.0;
-            p.closePrice = pp.getClosePrice() != null ? pp.getClosePrice() : 0.0;
-            p.lastPrice = pp.getLastPrice() != null ? pp.getLastPrice() : 0.0;
-            p.value = pp.getValue() != null ? pp.getValue() : 0.0;
-            p.pnl = pp.getPnl() != null ? pp.getPnl() : 0.0;
-            p.m2m = pp.getM2m() != null ? pp.getM2m() : 0.0;
-            p.unrealised = pp.getUnrealised() != null ? pp.getUnrealised() : 0.0;
-            p.realised = pp.getRealised() != null ? pp.getRealised() : 0.0;
-            p.buyQuantity = pp.getBuyQuantity() != null ? pp.getBuyQuantity() : 0;
-            p.buyPrice = pp.getBuyPrice() != null ? pp.getBuyPrice() : 0.0;
-            p.buyValue = pp.getBuyValue() != null ? pp.getBuyValue() : 0.0;
-            p.sellQuantity = pp.getSellQuantity() != null ? pp.getSellQuantity() : 0;
-            p.sellPrice = pp.getSellPrice() != null ? pp.getSellPrice() : 0.0;
-            p.sellValue = pp.getSellValue() != null ? pp.getSellValue() : 0.0;
-            p.dayBuyQuantity = pp.getDayBuyQuantity() != null ? pp.getDayBuyQuantity() : 0;
-            p.dayBuyPrice = pp.getDayBuyPrice() != null ? pp.getDayBuyPrice() : 0.0;
-            p.dayBuyValue = pp.getDayBuyValue() != null ? pp.getDayBuyValue() : 0.0;
-            p.daySellQuantity = pp.getDaySellQuantity() != null ? pp.getDaySellQuantity() : 0;
-            p.daySellPrice = pp.getDaySellPrice() != null ? pp.getDaySellPrice() : 0.0;
-            p.daySellValue = pp.getDaySellValue() != null ? pp.getDaySellValue() : 0.0;
-            p.overnightQuantity = pp.getOvernightQuantity() != null ? pp.getOvernightQuantity() : 0;
-            p.multiplier = pp.getMultiplier() != null ? pp.getMultiplier().doubleValue() : 1.0;
-
-            netPositions.add(p);
-        }
-
         positionsMap.put("net", netPositions);
-        positionsMap.put("day", new ArrayList<>()); // Empty for now
-
+        positionsMap.put("day", new ArrayList<>());
         return positionsMap;
+    }
+
+    private Position convertPaperPositionToKitePosition(PaperPosition pp) {
+        Position p = new Position();
+        p.tradingSymbol = pp.getTradingSymbol();
+        p.exchange = pp.getExchange();
+        p.product = pp.getProduct();
+        p.averagePrice = safeToDouble(pp.getAveragePrice());
+        p.closePrice = safeToDouble(pp.getClosePrice());
+        p.lastPrice = safeToDouble(pp.getLastPrice());
+        p.value = safeToDouble(pp.getValue());
+        p.pnl = safeToDouble(pp.getPnl());
+        p.m2m = safeToDouble(pp.getM2m());
+        p.unrealised = safeToDouble(pp.getUnrealised());
+        p.realised = safeToDouble(pp.getRealised());
+        p.buyQuantity = safeToInt(pp.getBuyQuantity());
+        p.buyPrice = safeToDouble(pp.getBuyPrice());
+        p.buyValue = safeToDouble(pp.getBuyValue());
+        p.sellQuantity = safeToInt(pp.getSellQuantity());
+        p.sellPrice = safeToDouble(pp.getSellPrice());
+        p.sellValue = safeToDouble(pp.getSellValue());
+        p.dayBuyQuantity = safeToInt(pp.getDayBuyQuantity());
+        p.dayBuyPrice = safeToDouble(pp.getDayBuyPrice());
+        p.dayBuyValue = safeToDouble(pp.getDayBuyValue());
+        p.daySellQuantity = safeToInt(pp.getDaySellQuantity());
+        p.daySellPrice = safeToDouble(pp.getDaySellPrice());
+        p.daySellValue = safeToDouble(pp.getDaySellValue());
+        p.overnightQuantity = safeToInt(pp.getOvernightQuantity());
+        p.multiplier = pp.getMultiplier() != null ? pp.getMultiplier().doubleValue() : 1.0;
+        return p;
+    }
+
+    // Utility methods for safe conversions and logging
+
+    private String safeToString(Object value) {
+        return value != null ? value.toString() : "0";
+    }
+
+    private double safeToDouble(Double value) {
+        return value != null ? value : 0.0;
+    }
+
+    private int safeToInt(Integer value) {
+        return value != null ? value : 0;
     }
 
     private String getUserId() {
         // Get user ID from session or authentication context
         // For now, using a default user ID
-        return "PAPER_USER";
+        return DEFAULT_PAPER_USER_ID;
+    }
+
+    private void logPaperMode(String message) {
+        log.info("{} [{}] {}", PAPER_MODE_EMOJI, PAPER_MODE, message);
+    }
+
+    private void logLiveMode(String message) {
+        log.info("{} [{}] {}", LIVE_MODE_EMOJI, LIVE_MODE, message);
     }
 }

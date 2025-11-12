@@ -16,6 +16,8 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import static com.tradingbot.service.TradingConstants.*;
+
 /**
  * Abstract base class for trading strategies with common utility methods
  * Now supports both Paper Trading and Live Trading through UnifiedTradingService
@@ -61,12 +63,10 @@ public abstract class BaseStrategy implements TradingStrategy {
      *
      * @param spotPrice Current spot price
      * @param instrumentType Type of instrument (NIFTY, BANKNIFTY, FINNIFTY)
-     * @param instruments List of option instruments to search from
      * @param expiry Expiry date of the options
      * @return Strike price with delta nearest to ±0.5
      */
-    protected double getATMStrikeByDelta(double spotPrice, String instrumentType,
-                                         List<Instrument> instruments, Date expiry) {
+    protected double getATMStrikeByDelta(double spotPrice, String instrumentType, Date expiry) {
         double strikeInterval = getStrikeInterval(instrumentType);
 
         // Get all unique strikes near ATM (±5 strikes)
@@ -90,8 +90,7 @@ public abstract class BaseStrategy implements TradingStrategy {
         double minDeltaDifference = Double.MAX_VALUE;
 
         for (Double strike : strikesToCheck) {
-            double callDelta = calculateCallDelta(spotPrice, strike, timeToExpiry,
-                    RISK_FREE_RATE, VOLATILITY);
+            double callDelta = calculateCallDelta(spotPrice, strike, timeToExpiry);
             double deltaDifference = Math.abs(callDelta - 0.5);
 
             log.debug("Strike: {}, Call Delta: {}, Delta Diff from 0.5: {}",
@@ -135,49 +134,25 @@ public abstract class BaseStrategy implements TradingStrategy {
      * @param spotPrice Current spot price
      * @param strikePrice Strike price
      * @param timeToExpiry Time to expiry in years
-     * @param riskFreeRate Risk-free interest rate
-     * @param volatility Implied volatility
      * @return Call option delta (0 to 1)
      */
-    private double calculateCallDelta(double spotPrice, double strikePrice,
-                                      double timeToExpiry, double riskFreeRate,
-                                      double volatility) {
-        if (timeToExpiry <= 0 || volatility <= 0) {
+    private double calculateCallDelta(double spotPrice, double strikePrice, double timeToExpiry) {
+        if (timeToExpiry <= 0) {
             return spotPrice >= strikePrice ? 1.0 : 0.0;
         }
 
-        double d1 = calculateD1(spotPrice, strikePrice, timeToExpiry, riskFreeRate, volatility);
+        double d1 = calculateD1(spotPrice, strikePrice, timeToExpiry);
         log.info("Calculating Call Delta - d1: {}", d1);
         return cumulativeNormalDistribution(d1);
     }
 
     /**
-     * Calculate Put option delta using Black-Scholes model
-     * Delta = N(d1) - 1
-     *
-     * @param spotPrice Current spot price
-     * @param strikePrice Strike price
-     * @param timeToExpiry Time to expiry in years
-     * @param riskFreeRate Risk-free interest rate
-     * @param volatility Implied volatility
-     * @return Put option delta (-1 to 0)
-     */
-    private double calculatePutDelta(double spotPrice, double strikePrice,
-                                     double timeToExpiry, double riskFreeRate,
-                                     double volatility) {
-        return calculateCallDelta(spotPrice, strikePrice, timeToExpiry,
-                riskFreeRate, volatility) - 1.0;
-    }
-
-    /**
      * Calculate d1 for Black-Scholes formula
      */
-    private double calculateD1(double spotPrice, double strikePrice,
-                               double timeToExpiry, double riskFreeRate,
-                               double volatility) {
+    private double calculateD1(double spotPrice, double strikePrice, double timeToExpiry) {
         double numerator = Math.log(spotPrice / strikePrice) +
-                (riskFreeRate + 0.5 * volatility * volatility) * timeToExpiry;
-        double denominator = volatility * Math.sqrt(timeToExpiry);
+                (RISK_FREE_RATE + 0.5 * VOLATILITY * VOLATILITY) * timeToExpiry;
+        double denominator = VOLATILITY * Math.sqrt(timeToExpiry);
 
         return numerator / denominator;
     }
@@ -230,7 +205,7 @@ public abstract class BaseStrategy implements TradingStrategy {
      * Get lot size for instrument by fetching from Kite API
      * Results are cached for the session to avoid repeated API calls
      */
-    protected int getLotSize(String instrumentType) throws KiteException, IOException {
+    protected int getLotSize(String instrumentType) throws KiteException {
         String instrumentKey = instrumentType.toUpperCase();
 
         // Check if lot size is already cached
@@ -243,13 +218,12 @@ public abstract class BaseStrategy implements TradingStrategy {
         log.info("Fetching lot size from Kite API for instrument: {}", instrumentKey);
 
         try {
-            String exchange = "NFO";
-            List<Instrument> allInstruments = tradingService.getInstruments(exchange);
+            List<Instrument> allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
 
             String instrumentName = switch (instrumentKey) {
-                case "NIFTY" -> "NIFTY";
-                case "BANKNIFTY" -> "BANKNIFTY";
-                case "FINNIFTY" -> "FINNIFTY";
+                case "NIFTY" -> INSTRUMENT_NIFTY;
+                case "BANKNIFTY" -> INSTRUMENT_BANKNIFTY;
+                case "FINNIFTY" -> INSTRUMENT_FINNIFTY;
                 default -> instrumentKey;
             };
 
@@ -298,9 +272,8 @@ public abstract class BaseStrategy implements TradingStrategy {
      * @param request Strategy request containing the number of lots (or null for default 1 lot)
      * @return Actual quantity to trade (numberOfLots * lotSize)
      * @throws KiteException if error fetching lot size from Kite API
-     * @throws IOException if network error occurs
      */
-    protected int calculateOrderQuantity(StrategyRequest request) throws KiteException, IOException {
+    protected int calculateOrderQuantity(StrategyRequest request) throws KiteException {
         int lotSize = getLotSize(request.getInstrumentType());
         int numberOfLots = request.getLots() != null ? request.getLots() : 1;
         int quantity = numberOfLots * lotSize;
@@ -317,19 +290,18 @@ public abstract class BaseStrategy implements TradingStrategy {
     protected List<Instrument> getOptionInstruments(String instrumentType, String expiry)
             throws KiteException, IOException {
 
-        String exchange = "NFO";
-        List<Instrument> allInstruments = tradingService.getInstruments(exchange);
+        List<Instrument> allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
 
         String namePrefix = switch (instrumentType.toUpperCase()) {
-            case "NIFTY" -> "NIFTY";
-            case "BANKNIFTY" -> "BANKNIFTY";
-            case "FINNIFTY" -> "FINNIFTY";
+            case "NIFTY" -> INSTRUMENT_NIFTY;
+            case "BANKNIFTY" -> INSTRUMENT_BANKNIFTY;
+            case "FINNIFTY" -> INSTRUMENT_FINNIFTY;
             default -> instrumentType.toUpperCase();
         };
 
         return allInstruments.stream()
                 .filter(i -> i.name.equals(namePrefix))
-                .filter(i -> i.instrument_type.equals("CE") || i.instrument_type.equals("PE"))
+                .filter(i -> OPTION_TYPE_CE.equals(i.instrument_type) || OPTION_TYPE_PE.equals(i.instrument_type))
                 .filter(i -> matchesExpiry(i, expiry))
                 .collect(Collectors.toList());
     }
@@ -405,16 +377,16 @@ public abstract class BaseStrategy implements TradingStrategy {
      * Create order request
      */
     protected OrderRequest createOrderRequest(String symbol, String transactionType, int quantity,
-                                             String orderType, Double price) {
+                                             String orderType) {
         OrderRequest request = new OrderRequest();
         request.setTradingSymbol(symbol);
-        request.setExchange("NFO");
+        request.setExchange(EXCHANGE_NFO);
         request.setTransactionType(transactionType);
         request.setQuantity(quantity);
-        request.setProduct("MIS");
+        request.setProduct(PRODUCT_MIS);
         request.setOrderType(orderType);
-        request.setPrice(price);
-        request.setValidity("DAY");
+        request.setPrice(null);
+        request.setValidity(VALIDITY_DAY);
         return request;
     }
 

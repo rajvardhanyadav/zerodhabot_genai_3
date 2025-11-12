@@ -105,7 +105,7 @@ public class ATMStrangleStrategy extends BaseStrategy {
 
         // Place Call order using UnifiedTradingService (supports paper trading)
         log.info("[{} MODE] Placing OTM CALL order for {}", tradingMode, otmCall.tradingsymbol);
-        OrderRequest callOrder = createOrderRequest(otmCall.tradingsymbol, "BUY", quantity, orderType, null);
+        OrderRequest callOrder = createOrderRequest(otmCall.tradingsymbol, "BUY", quantity, orderType);
         var callOrderResponse = unifiedTradingService.placeOrder(callOrder);
 
         // Validate Call order response
@@ -129,7 +129,7 @@ public class ATMStrangleStrategy extends BaseStrategy {
 
         // Place Put order using UnifiedTradingService (supports paper trading)
         log.info("[{} MODE] Placing OTM PUT order for {}", tradingMode, otmPut.tradingsymbol);
-        OrderRequest putOrder = createOrderRequest(otmPut.tradingsymbol, "BUY", quantity, orderType, null);
+        OrderRequest putOrder = createOrderRequest(otmPut.tradingsymbol, "BUY", quantity, orderType);
         var putOrderResponse = unifiedTradingService.placeOrder(putOrder);
 
         // Validate Put order response
@@ -156,7 +156,7 @@ public class ATMStrangleStrategy extends BaseStrategy {
         // Setup position monitoring with SL and Target
         setupMonitoring(executionId, otmCall, otmPut, callPrice, putPrice,
                        callOrderResponse.getOrderId(), putOrderResponse.getOrderId(),
-                       quantity, orderDetails, stopLossPoints, targetPoints, completionCallback);
+                       quantity, stopLossPoints, targetPoints, completionCallback);
 
         StrategyExecutionResponse response = new StrategyExecutionResponse();
         response.setExecutionId(executionId);
@@ -180,7 +180,7 @@ public class ATMStrangleStrategy extends BaseStrategy {
     private void setupMonitoring(String executionId, Instrument callInstrument, Instrument putInstrument,
                                  double callEntryPrice, double putEntryPrice,
                                  String callOrderId, String putOrderId,
-                                 int quantity, List<StrategyExecutionResponse.OrderDetail> orderDetails,
+                                 int quantity,
                                  double stopLossPoints, double targetPoints,
                                  StrategyCompletionCallback completionCallback) {
 
@@ -198,7 +198,7 @@ public class ATMStrangleStrategy extends BaseStrategy {
         // Set exit callback to square off both legs
         monitor.setExitCallback(reason -> {
             log.warn("Exit triggered for execution {}: {}", executionId, reason);
-            exitAllLegs(executionId, callOrderId, putOrderId, callInstrument.tradingsymbol,
+            exitAllLegs(executionId, callInstrument.tradingsymbol,
                        putInstrument.tradingsymbol, quantity, reason, completionCallback);
         });
 
@@ -216,15 +216,14 @@ public class ATMStrangleStrategy extends BaseStrategy {
     /**
      * Exit all legs when SL or Target is hit
      */
-    private void exitAllLegs(String executionId, String callOrderId, String putOrderId,
-                            String callSymbol, String putSymbol, int quantity, String reason,
-                            StrategyCompletionCallback completionCallback) {
+    private void exitAllLegs(String executionId, String callSymbol, String putSymbol,
+                            int quantity, String reason, StrategyCompletionCallback completionCallback) {
         try {
             String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
             log.info("[{} MODE] Exiting all legs for execution {}: {}", tradingMode, executionId, reason);
 
             // Place sell orders for both legs using UnifiedTradingService
-            OrderRequest callExitOrder = createOrderRequest(callSymbol, "SELL", quantity, "MARKET", null);
+            OrderRequest callExitOrder = createOrderRequest(callSymbol, "SELL", quantity, "MARKET");
             OrderResponse callExitResponse = unifiedTradingService.placeOrder(callExitOrder);
 
             if ("SUCCESS".equals(callExitResponse.getStatus())) {
@@ -233,7 +232,7 @@ public class ATMStrangleStrategy extends BaseStrategy {
                 log.error("Failed to exit Call leg: {}", callExitResponse.getMessage());
             }
 
-            OrderRequest putExitOrder = createOrderRequest(putSymbol, "SELL", quantity, "MARKET", null);
+            OrderRequest putExitOrder = createOrderRequest(putSymbol, "SELL", quantity, "MARKET");
             OrderResponse putExitResponse = unifiedTradingService.placeOrder(putExitOrder);
 
             if ("SUCCESS".equals(putExitResponse.getStatus())) {

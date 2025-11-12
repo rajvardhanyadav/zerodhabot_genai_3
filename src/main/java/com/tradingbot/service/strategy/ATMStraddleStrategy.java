@@ -76,7 +76,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
         // Calculate ATM strike using delta-based selection (nearest to ±0.5)
         double atmStrike = expiryDate != null
-                ? getATMStrikeByDelta(spotPrice, request.getInstrumentType(), instruments, expiryDate)
+                ? getATMStrikeByDelta(spotPrice, request.getInstrumentType(), expiryDate)
                 : getATMStrike(spotPrice, request.getInstrumentType());
 
         log.info("ATM Strike (Delta-based): {}", atmStrike);
@@ -143,7 +143,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
         log.info(StrategyConstants.LOG_PLACING_ORDER, tradingMode, StrategyConstants.OPTION_TYPE_CALL, atmCall.tradingsymbol);
 
         OrderRequest callOrder = createOrderRequest(atmCall.tradingsymbol, StrategyConstants.TRANSACTION_BUY,
-                quantity, orderType, null);
+                quantity, orderType);
         OrderResponse callOrderResponse = unifiedTradingService.placeOrder(callOrder);
 
         validateOrderResponse(callOrderResponse, "Call");
@@ -158,7 +158,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
         log.info(StrategyConstants.LOG_PLACING_ORDER, tradingMode, StrategyConstants.OPTION_TYPE_PUT, atmPut.tradingsymbol);
 
         OrderRequest putOrder = createOrderRequest(atmPut.tradingsymbol, StrategyConstants.TRANSACTION_BUY,
-                quantity, orderType, null);
+                quantity, orderType);
         OrderResponse putOrderResponse = unifiedTradingService.placeOrder(putOrder);
 
         validateOrderResponse(putOrderResponse, "Put");
@@ -316,18 +316,15 @@ public class ATMStraddleStrategy extends BaseStrategy {
                 putEntryPrice, quantity, StrategyConstants.OPTION_TYPE_PUT);
 
         // Set callback for exiting ALL legs (for stop loss, target, P&L diff, or 4+ profit)
-        monitor.setExitCallback(reason -> {
-            log.warn("Exit triggered for execution {}: {}", executionId, reason);
-            exitAllLegs(executionId, callOrderId, putOrderId, callInstrument.tradingsymbol,
-                    putInstrument.tradingsymbol, quantity, reason, completionCallback);
-        });
+        monitor.setExitCallback(reason ->
+            exitAllLegs(executionId, callInstrument.tradingsymbol, putInstrument.tradingsymbol,
+                       quantity, reason, completionCallback)
+        );
 
         // Set callback for exiting INDIVIDUAL legs (for -2 or worse loss)
-        monitor.setIndividualLegExitCallback((legSymbol, reason) -> {
-            log.warn("Individual leg exit triggered for execution {}: Leg={}, Reason={}",
-                     executionId, legSymbol, reason);
-            exitIndividualLeg(executionId, legSymbol, quantity, reason, monitor, completionCallback);
-        });
+        monitor.setIndividualLegExitCallback((legSymbol, reason) ->
+            exitIndividualLeg(executionId, legSymbol, quantity, reason, monitor, completionCallback)
+        );
 
         return monitor;
     }
@@ -347,9 +344,8 @@ public class ATMStraddleStrategy extends BaseStrategy {
     /**
      * Exit all legs when SL or Target is hit
      */
-    private void exitAllLegs(String executionId, String callOrderId, String putOrderId,
-                             String callSymbol, String putSymbol, int quantity, String reason,
-                             StrategyCompletionCallback completionCallback) {
+    private void exitAllLegs(String executionId, String callSymbol, String putSymbol,
+                             int quantity, String reason, StrategyCompletionCallback completionCallback) {
         try {
             String tradingMode = getTradingMode();
             log.info(StrategyConstants.LOG_EXITING_LEGS, tradingMode, executionId, reason);
@@ -414,7 +410,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
     private void exitLeg(String symbol, int quantity, String legName, String tradingMode)
             throws KiteException, IOException {
         OrderRequest exitOrder = createOrderRequest(symbol, StrategyConstants.TRANSACTION_SELL,
-                quantity, StrategyConstants.ORDER_TYPE_MARKET, null);
+                quantity, StrategyConstants.ORDER_TYPE_MARKET);
         OrderResponse exitResponse = unifiedTradingService.placeOrder(exitOrder);
 
         if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(exitResponse.getStatus())) {

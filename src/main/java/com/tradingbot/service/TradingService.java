@@ -17,7 +17,8 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
+
+import static com.tradingbot.service.TradingConstants.*;
 
 @Service
 @RequiredArgsConstructor
@@ -40,7 +41,7 @@ public class TradingService {
     public User generateSession(String requestToken) throws KiteException, IOException {
         User user = kiteConnect.generateSession(requestToken, kiteConfig.getApiSecret());
         kiteConnect.setAccessToken(user.accessToken);
-        log.error("Session generated successfully for user: {}", user.userId);
+        log.info("Session generated successfully for user: {}", user.userId);
         return user;
     }
 
@@ -63,24 +64,13 @@ public class TradingService {
      */
     public OrderResponse placeOrder(OrderRequest orderRequest) throws KiteException, IOException {
         try {
-            OrderParams orderParams = new OrderParams();
-            orderParams.tradingsymbol = orderRequest.getTradingSymbol();
-            orderParams.exchange = orderRequest.getExchange();
-            orderParams.transactionType = orderRequest.getTransactionType();
-            orderParams.quantity = orderRequest.getQuantity();
-            orderParams.product = orderRequest.getProduct();
-            orderParams.orderType = orderRequest.getOrderType();
-            orderParams.price = orderRequest.getPrice();
-            orderParams.triggerPrice = orderRequest.getTriggerPrice();
-            orderParams.validity = orderRequest.getValidity();
-            orderParams.disclosedQuantity = orderRequest.getDisclosedQuantity();
-
+            OrderParams orderParams = buildOrderParams(orderRequest);
             Order order = kiteConnect.placeOrder(orderParams, "regular");
 
             // Check if order was placed successfully
             if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
-                log.info("Order placed successfully: {}", order.orderId);
-                log.info(order.orderId + " " + order.status + " " + order.tradingSymbol + " " + order.transactionType + " " + order.quantity + " " + order.price + " " + order.orderType + " " + order.product + " " + order.exchange + " " + order.validity + " " + order.triggerPrice + " " + order.disclosedQuantity + " " + order.orderTimestamp + " " + order.exchangeTimestamp + " " + order.averagePrice + " " + order.filledQuantity + " " + order.pendingQuantity + " " + order.meta + " " + order.tag);
+                log.info("Order placed successfully: {} - {} {} {} @ {}",
+                    order.orderId, order.transactionType, order.quantity, order.tradingSymbol, order.orderType);
                 return new OrderResponse(order.orderId, "SUCCESS", "Order placed successfully");
             } else {
                 log.error("Order placement failed - no order ID returned");
@@ -103,16 +93,9 @@ public class TradingService {
      * Modify an existing order
      */
     public OrderResponse modifyOrder(String orderId, OrderRequest orderRequest) throws KiteException, IOException {
-        OrderParams orderParams = new OrderParams();
-        orderParams.quantity = orderRequest.getQuantity();
-        orderParams.price = orderRequest.getPrice();
-        orderParams.orderType = orderRequest.getOrderType();
-        orderParams.triggerPrice = orderRequest.getTriggerPrice();
-        orderParams.validity = orderRequest.getValidity();
-        orderParams.disclosedQuantity = orderRequest.getDisclosedQuantity();
-
+        OrderParams orderParams = buildModifyOrderParams(orderRequest);
         Order order = kiteConnect.modifyOrder(orderId, orderParams, "regular");
-        log.error("Order modified successfully: {}", orderId);
+        log.info("Order modified successfully: {}", orderId);
 
         return new OrderResponse(order.orderId, "SUCCESS", "Order modified successfully");
     }
@@ -120,7 +103,7 @@ public class TradingService {
     /**
      * Cancel an order
      */
-    public OrderResponse cancelOrder(String orderId) throws KiteException, IOException {
+    public OrderResponse cancelOrder(String orderId) {
         try {
             Order order = kiteConnect.cancelOrder(orderId, "regular");
 
@@ -272,13 +255,12 @@ public class TradingService {
     /**
      * Get order charges for orders placed today
      * This uses the Kite Connect SDK's getVirtualContractNote method to get actual charges breakdown for executed orders
-     * Reference: https://kite.trade/docs/connect/v3/margins/#virtual-contract-note
+     * <a href="https://kite.trade/docs/connect/v3/margins/#virtual-contract-note">API Reference</a>
      *
      * @return List of OrderChargesResponse with detailed charge breakdown for each order
      * @throws KiteException if Kite API returns an error
-     * @throws IOException if network error occurs
      */
-    public List<OrderChargesResponse> getOrderCharges() throws KiteException, IOException {
+    public List<OrderChargesResponse> getOrderCharges() throws KiteException {
         try {
             // Get all orders for the day
             List<Order> orders = kiteConnect.getOrders();
@@ -291,7 +273,7 @@ public class TradingService {
 
             // Filter only executed/completed orders
             List<Order> executedOrders = orders.stream()
-                    .filter(order -> "COMPLETE".equals(order.status))
+                    .filter(order -> STATUS_COMPLETE.equals(order.status))
                     .toList();
 
             if (executedOrders.isEmpty()) {
@@ -308,7 +290,7 @@ public class TradingService {
                 params.exchange = order.exchange;
                 params.tradingSymbol = order.tradingSymbol;
                 params.transactionType = order.transactionType;
-                params.variety = order.orderVariety != null ? order.orderVariety : "regular";
+                params.variety = order.orderVariety != null ? order.orderVariety : VARIETY_REGULAR;
                 params.product = order.product;
                 params.orderType = order.orderType;
                 // Parse String to int/double - Order model has these as Strings
@@ -383,5 +365,37 @@ public class TradingService {
             log.error("Unexpected error fetching order charges: {}", e.getMessage(), e);
             throw new KiteException("Failed to fetch order charges: " + e.getMessage(), 500);
         }
+    }
+
+    /**
+     * Build OrderParams from OrderRequest for placing new orders
+     */
+    private OrderParams buildOrderParams(OrderRequest orderRequest) {
+        OrderParams orderParams = new OrderParams();
+        orderParams.tradingsymbol = orderRequest.getTradingSymbol();
+        orderParams.exchange = orderRequest.getExchange();
+        orderParams.transactionType = orderRequest.getTransactionType();
+        orderParams.quantity = orderRequest.getQuantity();
+        orderParams.product = orderRequest.getProduct();
+        orderParams.orderType = orderRequest.getOrderType();
+        orderParams.price = orderRequest.getPrice();
+        orderParams.triggerPrice = orderRequest.getTriggerPrice();
+        orderParams.validity = orderRequest.getValidity();
+        orderParams.disclosedQuantity = orderRequest.getDisclosedQuantity();
+        return orderParams;
+    }
+
+    /**
+     * Build OrderParams from OrderRequest for modifying existing orders
+     */
+    private OrderParams buildModifyOrderParams(OrderRequest orderRequest) {
+        OrderParams orderParams = new OrderParams();
+        orderParams.quantity = orderRequest.getQuantity();
+        orderParams.price = orderRequest.getPrice();
+        orderParams.orderType = orderRequest.getOrderType();
+        orderParams.triggerPrice = orderRequest.getTriggerPrice();
+        orderParams.validity = orderRequest.getValidity();
+        orderParams.disclosedQuantity = orderRequest.getDisclosedQuantity();
+        return orderParams;
     }
 }

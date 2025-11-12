@@ -19,7 +19,8 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
+
+import static com.tradingbot.service.TradingConstants.*;
 
 @Service
 @RequiredArgsConstructor
@@ -31,7 +32,6 @@ public class StrategyService {
     private final StrategyFactory strategyFactory;
     private final WebSocketService webSocketService;
     private final Map<String, StrategyExecution> activeStrategies = new ConcurrentHashMap<>();
-    private final Map<String, Integer> lotSizeCache = new ConcurrentHashMap<>();
 
     /**
      * Execute a trading strategy
@@ -58,8 +58,6 @@ public class StrategyService {
             StrategyExecutionResponse response = strategy.execute(request, executionId, this::markStrategyAsCompleted);
 
             // Set execution status based on response status
-            // ACTIVE = positions are being monitored with SL/Target
-            // COMPLETED = all legs are closed, no monitoring required
             if ("ACTIVE".equalsIgnoreCase(response.getStatus())) {
                 execution.setStatus(StrategyStatus.ACTIVE);
                 execution.setMessage("Strategy active - positions being monitored");
@@ -75,7 +73,6 @@ public class StrategyService {
                 execution.setMessage("Strategy executed and completed successfully");
                 log.info("Strategy {} COMPLETED successfully", executionId);
             } else {
-                // Fallback for any other status
                 execution.setStatus(StrategyStatus.FAILED);
                 execution.setMessage(response.getMessage());
                 log.info("Strategy {} status: {}", executionId, response.getStatus());
@@ -107,7 +104,6 @@ public class StrategyService {
 
     /**
      * Update strategy status to COMPLETED when both legs are closed
-     * This should be called when SL/Target is hit and all positions are exited
      */
     public void markStrategyAsCompleted(String executionId, String reason) {
         StrategyExecution execution = activeStrategies.get(executionId);
@@ -126,16 +122,9 @@ public class StrategyService {
     public List<String> getAvailableExpiries(String instrumentType) throws KiteException, IOException {
         log.info("Fetching available expiries for instrument: {}", instrumentType);
 
-        String exchange = "NFO";
-        List<Instrument> allInstruments = tradingService.getInstruments(exchange);
+        List<Instrument> allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
 
-        String instrumentName = switch (instrumentType.toUpperCase()) {
-            case "NIFTY" -> "NIFTY";
-            case "BANKNIFTY" -> "BANKNIFTY";
-            case "FINNIFTY" -> "FINNIFTY";
-            default -> instrumentType.toUpperCase();
-        };
-
+        String instrumentName = getInstrumentName(instrumentType);
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
 
         List<String> expiries = allInstruments.stream()
@@ -145,7 +134,7 @@ public class StrategyService {
             .map(i -> sdf.format(i.expiry))
             .distinct()
             .sorted()
-            .collect(Collectors.toList());
+            .toList();
 
         log.info("Found {} expiry dates for {}: {}", expiries.size(), instrumentType, expiries);
 
@@ -157,10 +146,9 @@ public class StrategyService {
     }
 
     /**
-     * Get available instruments with their details from Kite API
-     * Returns instrument code, name, lot size, and strike interval
+     * Get available instruments with their details
      */
-    public List<InstrumentDetail> getAvailableInstruments() throws KiteException, IOException {
+    public List<InstrumentDetail> getAvailableInstruments() throws KiteException {
         log.info("Fetching available instruments from Kite API");
 
         List<InstrumentDetail> instrumentDetails = new ArrayList<>();
@@ -168,7 +156,7 @@ public class StrategyService {
 
         for (String instrumentCode : supportedInstruments) {
             try {
-                int lotSize = getLotSize(instrumentCode);
+                int lotSize = fetchLotSizeFromKite(instrumentCode);
                 double strikeInterval = getStrikeInterval(instrumentCode);
                 String displayName = getInstrumentDisplayName(instrumentCode);
 
@@ -191,53 +179,24 @@ public class StrategyService {
     }
 
     /**
-     * Get lot size for instrument by fetching from Kite API
-     * Results are cached for the session to avoid repeated API calls
+     * Fetch lot size from Kite API
      */
-    private int getLotSize(String instrumentType) throws KiteException, IOException {
-        String instrumentKey = instrumentType.toUpperCase();
+    private int fetchLotSizeFromKite(String instrumentType) throws KiteException, IOException {
+        List<Instrument> allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
+        String instrumentName = getInstrumentName(instrumentType);
 
-        if (lotSizeCache.containsKey(instrumentKey)) {
-            log.debug("Returning cached lot size for {}: {}", instrumentKey, lotSizeCache.get(instrumentKey));
-            return lotSizeCache.get(instrumentKey);
-        }
-
-        log.info("Fetching lot size from Kite API for instrument: {}", instrumentKey);
-
-        try {
-            String exchange = "NFO";
-            List<Instrument> allInstruments = tradingService.getInstruments(exchange);
-
-            String instrumentName = switch (instrumentKey) {
-                case "NIFTY" -> "NIFTY";
-                case "BANKNIFTY" -> "BANKNIFTY";
-                case "FINNIFTY" -> "FINNIFTY";
-                default -> instrumentKey;
-            };
-
-            Optional<Instrument> instrument = allInstruments.stream()
+        Optional<Instrument> instrument = allInstruments.stream()
                 .filter(i -> i.name != null && i.name.equals(instrumentName))
                 .filter(i -> i.lot_size > 0)
                 .findFirst();
 
-            if (instrument.isPresent()) {
-                int lotSize = instrument.get().lot_size;
-                log.info("Found lot size for {}: {}", instrumentKey, lotSize);
-                lotSizeCache.put(instrumentKey, lotSize);
-                return lotSize;
-            } else {
-                log.warn("Lot size not found in Kite API for {}, using fallback value", instrumentKey);
-                int fallbackLotSize = getFallbackLotSize(instrumentKey);
-                lotSizeCache.put(instrumentKey, fallbackLotSize);
-                return fallbackLotSize;
-            }
-
-        } catch (Exception e) {
-            log.error("Error fetching lot size from Kite API for {}: {}", instrumentKey, e.getMessage());
-            log.warn("Using fallback lot size for {}", instrumentKey);
-            int fallbackLotSize = getFallbackLotSize(instrumentKey);
-            lotSizeCache.put(instrumentKey, fallbackLotSize);
-            return fallbackLotSize;
+        if (instrument.isPresent()) {
+            int lotSize = instrument.get().lot_size;
+            log.info("Found lot size for {}: {}", instrumentType, lotSize);
+            return lotSize;
+        } else {
+            log.warn("Lot size not found in Kite API for {}, using fallback value", instrumentType);
+            return getFallbackLotSize(instrumentType);
         }
     }
 
@@ -278,8 +237,19 @@ public class StrategyService {
     }
 
     /**
+     * Get instrument name for Kite API
+     */
+    private String getInstrumentName(String instrumentType) {
+        return switch (instrumentType.toUpperCase()) {
+            case "NIFTY" -> "NIFTY";
+            case "BANKNIFTY" -> "BANKNIFTY";
+            case "FINNIFTY" -> "FINNIFTY";
+            default -> instrumentType.toUpperCase();
+        };
+    }
+
+    /**
      * Update order legs for a strategy execution
-     * This should be called after strategy execution to track orders for later stopping
      */
     public void updateOrderLegs(String executionId, List<StrategyExecutionResponse.OrderDetail> orderDetails) {
         StrategyExecution execution = activeStrategies.get(executionId);
@@ -292,7 +262,7 @@ public class StrategyService {
                     od.getQuantity(),
                     od.getPrice()
                 ))
-                .collect(Collectors.toList());
+                .toList();
             execution.setOrderLegs(orderLegs);
             log.info("Updated order legs for execution {}: {} legs", executionId, orderLegs.size());
         } else {
@@ -302,9 +272,8 @@ public class StrategyService {
 
     /**
      * Common method to exit all legs for any strategy
-     * This is used when manually stopping strategies or when SL/Target is hit
      */
-    private Map<String, Object> exitAllLegs(String executionId, List<StrategyExecution.OrderLeg> orderLegs) throws KiteException, IOException {
+    private Map<String, Object> exitAllLegs(String executionId, List<StrategyExecution.OrderLeg> orderLegs) throws KiteException {
         String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
         log.info("[{} MODE] Exiting all legs for execution {}: {} legs", tradingMode, executionId, orderLegs.size());
 
@@ -317,12 +286,12 @@ public class StrategyService {
             try {
                 OrderRequest exitOrder = new OrderRequest();
                 exitOrder.setTradingSymbol(leg.getTradingSymbol());
-                exitOrder.setExchange("NFO");
-                exitOrder.setTransactionType("SELL");
+                exitOrder.setExchange(EXCHANGE_NFO);
+                exitOrder.setTransactionType(TRANSACTION_SELL);
                 exitOrder.setQuantity(leg.getQuantity());
-                exitOrder.setProduct("MIS");
-                exitOrder.setOrderType("MARKET");
-                exitOrder.setValidity("DAY");
+                exitOrder.setProduct(PRODUCT_MIS);
+                exitOrder.setOrderType(ORDER_TYPE_MARKET);
+                exitOrder.setValidity(VALIDITY_DAY);
 
                 OrderResponse response = unifiedTradingService.placeOrder(exitOrder);
 
@@ -379,9 +348,9 @@ public class StrategyService {
     }
 
     /**
-     * Stop a specific strategy by closing all legs at market price and disconnecting monitoring
+     * Stop a specific strategy by closing all legs
      */
-    public Map<String, Object> stopStrategy(String executionId) throws KiteException, IOException {
+    public Map<String, Object> stopStrategy(String executionId) throws KiteException {
         log.info("Stopping strategy: {}", executionId);
 
         StrategyExecution execution = activeStrategies.get(executionId);
@@ -398,7 +367,6 @@ public class StrategyService {
             throw new IllegalStateException("No order legs found for strategy: " + executionId);
         }
 
-        // Use common exit method to close all legs and disconnect monitoring
         Map<String, Object> result = exitAllLegs(executionId, orderLegs);
 
         // Update strategy status
@@ -415,13 +383,14 @@ public class StrategyService {
     }
 
     /**
+     * Stop all active strategies
      */
-    public Map<String, Object> stopAllActiveStrategies() throws KiteException, IOException {
+    public Map<String, Object> stopAllActiveStrategies() throws KiteException {
         log.info("Stopping all active strategies");
 
         List<StrategyExecution> activeList = activeStrategies.values().stream()
             .filter(s -> s.getStatus() == StrategyStatus.ACTIVE)
-            .collect(Collectors.toList());
+            .toList();
 
         if (activeList.isEmpty()) {
             log.info("No active strategies found");
@@ -440,7 +409,7 @@ public class StrategyService {
 
         for (StrategyExecution execution : activeList) {
             try {
-                Map<String, Object> stopResult = exitAllLegs(execution.getExecutionId(),execution.getOrderLegs());
+                Map<String, Object> stopResult = exitAllLegs(execution.getExecutionId(), execution.getOrderLegs());
                 results.add(stopResult);
 
                 int successCount = (Integer) stopResult.get("successCount");
