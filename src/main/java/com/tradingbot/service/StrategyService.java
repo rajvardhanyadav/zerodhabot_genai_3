@@ -5,6 +5,7 @@ import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.StrategyExecution;
+import com.tradingbot.model.StrategyStatus;
 import com.tradingbot.service.strategy.StrategyFactory;
 import com.tradingbot.service.strategy.TradingStrategy;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
@@ -44,7 +45,7 @@ public class StrategyService {
         execution.setStrategyType(request.getStrategyType());
         execution.setInstrumentType(request.getInstrumentType());
         execution.setExpiry(request.getExpiry());
-        execution.setStatus("EXECUTING");
+        execution.setStatus(StrategyStatus.EXECUTING);
         execution.setTimestamp(System.currentTimeMillis());
 
         activeStrategies.put(executionId, execution);
@@ -60,7 +61,7 @@ public class StrategyService {
             // ACTIVE = positions are being monitored with SL/Target
             // COMPLETED = all legs are closed, no monitoring required
             if ("ACTIVE".equalsIgnoreCase(response.getStatus())) {
-                execution.setStatus("ACTIVE");
+                execution.setStatus(StrategyStatus.ACTIVE);
                 execution.setMessage("Strategy active - positions being monitored");
 
                 // Store order legs for later stopping
@@ -70,12 +71,12 @@ public class StrategyService {
 
                 log.info("Strategy {} is ACTIVE - positions being monitored", executionId);
             } else if ("COMPLETED".equalsIgnoreCase(response.getStatus())) {
-                execution.setStatus("COMPLETED");
+                execution.setStatus(StrategyStatus.COMPLETED);
                 execution.setMessage("Strategy executed and completed successfully");
                 log.info("Strategy {} COMPLETED successfully", executionId);
             } else {
                 // Fallback for any other status
-                execution.setStatus(response.getStatus());
+                execution.setStatus(StrategyStatus.FAILED);
                 execution.setMessage(response.getMessage());
                 log.info("Strategy {} status: {}", executionId, response.getStatus());
             }
@@ -83,7 +84,7 @@ public class StrategyService {
             return response;
 
         } catch (Exception e) {
-            execution.setStatus("FAILED");
+            execution.setStatus(StrategyStatus.FAILED);
             execution.setMessage("Strategy execution failed: " + e.getMessage());
             log.error("Strategy execution failed", e);
             throw e;
@@ -111,7 +112,7 @@ public class StrategyService {
     public void markStrategyAsCompleted(String executionId, String reason) {
         StrategyExecution execution = activeStrategies.get(executionId);
         if (execution != null) {
-            execution.setStatus("COMPLETED");
+            execution.setStatus(StrategyStatus.COMPLETED);
             execution.setMessage("Strategy completed - " + reason);
             log.info("Strategy {} marked as COMPLETED: {}", executionId, reason);
         } else {
@@ -388,7 +389,7 @@ public class StrategyService {
             throw new IllegalArgumentException("Strategy not found: " + executionId);
         }
 
-        if (!"ACTIVE".equals(execution.getStatus())) {
+        if (execution.getStatus() != StrategyStatus.ACTIVE) {
             throw new IllegalStateException("Strategy is not active. Current status: " + execution.getStatus());
         }
 
@@ -403,7 +404,7 @@ public class StrategyService {
         // Update strategy status
         int successCount = (Integer) result.get("successCount");
         int failureCount = (Integer) result.get("failureCount");
-        execution.setStatus("COMPLETED");
+        execution.setStatus(StrategyStatus.COMPLETED);
         execution.setMessage(String.format("Strategy stopped manually - %d legs closed successfully, %d failed", successCount, failureCount));
 
         String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
@@ -419,7 +420,7 @@ public class StrategyService {
         log.info("Stopping all active strategies");
 
         List<StrategyExecution> activeList = activeStrategies.values().stream()
-            .filter(s -> "ACTIVE".equals(s.getStatus()))
+            .filter(s -> s.getStatus() == StrategyStatus.ACTIVE)
             .collect(Collectors.toList());
 
         if (activeList.isEmpty()) {
@@ -446,7 +447,7 @@ public class StrategyService {
                 int failureCount = (Integer) stopResult.get("failureCount");
                 totalSuccess += successCount;
                 totalFailures += failureCount;
-                execution.setStatus("COMPLETED");
+                execution.setStatus(StrategyStatus.COMPLETED);
                 execution.setMessage(String.format("Strategy stopped manually - %d legs closed successfully, %d failed", successCount, failureCount));
             } catch (Exception e) {
                 log.error("Error stopping strategy {}: {}", execution.getExecutionId(), e.getMessage());
