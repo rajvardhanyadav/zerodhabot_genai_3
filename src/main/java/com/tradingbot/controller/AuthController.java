@@ -25,40 +25,28 @@ public class AuthController {
     private final TradingService tradingService;
 
     @GetMapping("/login-url")
-    @Operation(summary = "Get Kite Connect login URL")
+    @Operation(summary = "Get Kite Connect login URL",
+               description = "Generate login URL for Kite Connect authentication flow")
     public ResponseEntity<ApiResponse<String>> getLoginUrl() {
-        try {
-            String loginUrl = tradingService.getLoginUrl();
-            return ResponseEntity.ok(ApiResponse.success("Login URL generated", loginUrl));
-        } catch (Exception e) {
-            log.error("Error generating login URL", e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+        String loginUrl = tradingService.getLoginUrl();
+        return ResponseEntity.ok(ApiResponse.success("Login URL generated", loginUrl));
     }
 
     @PostMapping("/session")
-    @Operation(summary = "Generate session with request token")
-    public ResponseEntity<ApiResponse<User>> generateSession(@RequestBody LoginRequest loginRequest) {
-        try {
-            User user = tradingService.generateSession(loginRequest.getRequestToken());
-            log.info("Access Token: {}", user.accessToken);
-            return ResponseEntity.ok(ApiResponse.success("Session generated successfully", user));
-        } catch (KiteException | IOException e) {
-            log.error("Error generating session", e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+    @Operation(summary = "Generate session with request token",
+               description = "Exchange request token for access token and create user session")
+    public ResponseEntity<ApiResponse<User>> generateSession(@RequestBody LoginRequest loginRequest)
+            throws KiteException, IOException {
+        User user = tradingService.generateSession(loginRequest.getRequestToken());
+        log.info("Session generated successfully for user: {}", user.userId);
+        return ResponseEntity.ok(ApiResponse.success("Session generated successfully", user));
     }
 
     @GetMapping("/profile")
-    @Operation(summary = "Get user profile")
-    public ResponseEntity<ApiResponse<Profile>> getUserProfile() {
-        try {
-            Profile profile = tradingService.getUserProfile();
-            return ResponseEntity.ok(ApiResponse.success(profile));
-        } catch (KiteException | IOException e) {
-            log.error("Error fetching user profile", e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+    @Operation(summary = "Get user profile",
+               description = "Fetch authenticated user's profile information")
+    public ResponseEntity<ApiResponse<Profile>> getUserProfile() throws KiteException, IOException {
+        Profile profile = tradingService.getUserProfile();
+        return ResponseEntity.ok(ApiResponse.success(profile));
     }
 }
-

@@ -2,8 +2,6 @@ package com.tradingbot.controller;
 
 import com.tradingbot.dto.ApiResponse;
 import com.tradingbot.paper.PaperAccount;
-import com.tradingbot.paper.PaperOrder;
-import com.tradingbot.paper.PaperPosition;
 import com.tradingbot.service.UnifiedTradingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -13,7 +11,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -34,12 +31,13 @@ public class PaperTradingController {
                description = "Returns whether the application is running in paper trading mode or live mode")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getStatus() {
         boolean isPaperMode = unifiedTradingService.isPaperTradingEnabled();
-        Map<String, Object> status = new HashMap<>();
-        status.put("paperTradingEnabled", isPaperMode);
-        status.put("mode", isPaperMode ? "PAPER_TRADING" : "LIVE_TRADING");
-        status.put("description", isPaperMode ?
-            "Simulated trading with virtual money" :
-            "Real trading with actual money");
+        Map<String, Object> status = Map.of(
+            "paperTradingEnabled", isPaperMode,
+            "mode", isPaperMode ? "PAPER_TRADING" : "LIVE_TRADING",
+            "description", isPaperMode
+                ? "Simulated trading with virtual money"
+                : "Real trading with actual money"
+        );
 
         return ResponseEntity.ok(ApiResponse.success(status));
     }
@@ -92,22 +90,7 @@ public class PaperTradingController {
                 .body(ApiResponse.error("Paper account not found"));
         }
 
-        Map<String, Object> stats = new HashMap<>();
-        stats.put("totalTrades", account.getTotalTrades());
-        stats.put("winningTrades", account.getWinningTrades());
-        stats.put("losingTrades", account.getLosingTrades());
-        stats.put("winRate", account.getTotalTrades() > 0 ?
-            (account.getWinningTrades() * 100.0 / account.getTotalTrades()) : 0.0);
-        stats.put("totalRealisedPnL", account.getTotalRealisedPnL());
-        stats.put("totalUnrealisedPnL", account.getTotalUnrealisedPnL());
-        stats.put("todaysPnL", account.getTodaysPnL());
-        stats.put("totalBrokerage", account.getTotalBrokerage());
-        stats.put("totalTaxes", account.getTotalTaxes());
-        stats.put("netPnL", account.getTotalRealisedPnL() - account.getTotalBrokerage() - account.getTotalTaxes());
-        stats.put("availableBalance", account.getAvailableBalance());
-        stats.put("usedMargin", account.getUsedMargin());
-        stats.put("totalBalance", account.getTotalBalance());
-
+        Map<String, Object> stats = buildStatisticsMap(account);
         return ResponseEntity.ok(ApiResponse.success("Trading statistics", stats));
     }
 
@@ -115,35 +98,69 @@ public class PaperTradingController {
     @Operation(summary = "Get comprehensive paper trading information",
                description = "Returns all paper trading related information including mode, account, and configuration")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getInfo() {
-        Map<String, Object> info = new HashMap<>();
         boolean isPaperMode = unifiedTradingService.isPaperTradingEnabled();
+        Map<String, Object> info = new HashMap<>();
 
         info.put("mode", isPaperMode ? "PAPER_TRADING" : "LIVE_TRADING");
         info.put("paperTradingEnabled", isPaperMode);
+        info.put("description", isPaperMode
+            ? "📊 Paper Trading Mode: All orders are simulated using real-time market data from Kite API"
+            : "💰 Live Trading Mode: Orders are placed on actual exchange via Kite API");
 
         if (isPaperMode) {
             PaperAccount account = unifiedTradingService.getPaperAccount();
             if (account != null) {
-                Map<String, Object> accountInfo = new HashMap<>();
-                accountInfo.put("userId", account.getUserId());
-                accountInfo.put("totalBalance", account.getTotalBalance());
-                accountInfo.put("availableBalance", account.getAvailableBalance());
-                accountInfo.put("usedMargin", account.getUsedMargin());
-                accountInfo.put("totalRealisedPnL", account.getTotalRealisedPnL());
-                accountInfo.put("totalUnrealisedPnL", account.getTotalUnrealisedPnL());
-                accountInfo.put("totalTrades", account.getTotalTrades());
-                accountInfo.put("winningTrades", account.getWinningTrades());
-                accountInfo.put("losingTrades", account.getLosingTrades());
-
-                info.put("account", accountInfo);
+                info.put("account", buildAccountInfoMap(account));
             }
         }
 
-        info.put("description", isPaperMode ?
-            "📊 Paper Trading Mode: All orders are simulated using real-time market data from Kite API" :
-            "💰 Live Trading Mode: Orders are placed on actual exchange via Kite API");
-
         return ResponseEntity.ok(ApiResponse.success(info));
     }
-}
 
+    /**
+     * Build statistics map from paper account
+     */
+    private Map<String, Object> buildStatisticsMap(PaperAccount account) {
+        double winRate = account.getTotalTrades() > 0
+            ? (account.getWinningTrades() * 100.0 / account.getTotalTrades())
+            : 0.0;
+
+        double netPnL = account.getTotalRealisedPnL()
+            - account.getTotalBrokerage()
+            - account.getTotalTaxes();
+
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("totalTrades", account.getTotalTrades());
+        stats.put("winningTrades", account.getWinningTrades());
+        stats.put("losingTrades", account.getLosingTrades());
+        stats.put("winRate", winRate);
+        stats.put("totalRealisedPnL", account.getTotalRealisedPnL());
+        stats.put("totalUnrealisedPnL", account.getTotalUnrealisedPnL());
+        stats.put("todaysPnL", account.getTodaysPnL());
+        stats.put("totalBrokerage", account.getTotalBrokerage());
+        stats.put("totalTaxes", account.getTotalTaxes());
+        stats.put("netPnL", netPnL);
+        stats.put("availableBalance", account.getAvailableBalance());
+        stats.put("usedMargin", account.getUsedMargin());
+        stats.put("totalBalance", account.getTotalBalance());
+
+        return stats;
+    }
+
+    /**
+     * Build account info map for comprehensive info endpoint
+     */
+    private Map<String, Object> buildAccountInfoMap(PaperAccount account) {
+        return Map.of(
+            "userId", account.getUserId(),
+            "totalBalance", account.getTotalBalance(),
+            "availableBalance", account.getAvailableBalance(),
+            "usedMargin", account.getUsedMargin(),
+            "totalRealisedPnL", account.getTotalRealisedPnL(),
+            "totalUnrealisedPnL", account.getTotalUnrealisedPnL(),
+            "totalTrades", account.getTotalTrades(),
+            "winningTrades", account.getWinningTrades(),
+            "losingTrades", account.getLosingTrades()
+        );
+    }
+}

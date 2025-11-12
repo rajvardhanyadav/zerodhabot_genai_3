@@ -32,77 +32,54 @@ public class OrderController {
     @PostMapping
     @Operation(summary = "Place a new order",
                description = "Place order in Paper Trading or Live Trading mode based on configuration")
-    public ResponseEntity<ApiResponse<OrderResponse>> placeOrder(@Valid @RequestBody OrderRequest orderRequest) {
-        try {
-            OrderResponse response = unifiedTradingService.placeOrder(orderRequest);
-            return ResponseEntity.ok(ApiResponse.success("Order placed successfully", response));
-        } catch (KiteException | IOException e) {
-            log.error("Error placing order", e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+    public ResponseEntity<ApiResponse<OrderResponse>> placeOrder(@Valid @RequestBody OrderRequest orderRequest)
+            throws KiteException, IOException {
+        OrderResponse response = unifiedTradingService.placeOrder(orderRequest);
+        return ResponseEntity.ok(ApiResponse.success("Order placed successfully", response));
     }
 
     @PutMapping("/{orderId}")
-    @Operation(summary = "Modify an existing order")
+    @Operation(summary = "Modify an existing order",
+               description = "Modify order parameters like price, quantity, or order type")
     public ResponseEntity<ApiResponse<OrderResponse>> modifyOrder(
             @PathVariable String orderId,
-            @Valid @RequestBody OrderRequest orderRequest) {
-        try {
-            OrderResponse response = unifiedTradingService.modifyOrder(orderId, orderRequest);
-            return ResponseEntity.ok(ApiResponse.success("Order modified successfully", response));
-        } catch (KiteException | IOException e) {
-            log.error("Error modifying order", e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+            @Valid @RequestBody OrderRequest orderRequest) throws KiteException, IOException {
+        OrderResponse response = unifiedTradingService.modifyOrder(orderId, orderRequest);
+        return ResponseEntity.ok(ApiResponse.success("Order modified successfully", response));
     }
 
     @DeleteMapping("/{orderId}")
-    @Operation(summary = "Cancel an order")
-    public ResponseEntity<ApiResponse<OrderResponse>> cancelOrder(@PathVariable String orderId) {
-        try {
-            OrderResponse response = unifiedTradingService.cancelOrder(orderId);
-            return ResponseEntity.ok(ApiResponse.success("Order cancelled successfully", response));
-        } catch (KiteException | IOException e) {
-            log.error("Error cancelling order", e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+    @Operation(summary = "Cancel an order",
+               description = "Cancel a pending order by order ID")
+    public ResponseEntity<ApiResponse<OrderResponse>> cancelOrder(@PathVariable String orderId)
+            throws KiteException, IOException {
+        OrderResponse response = unifiedTradingService.cancelOrder(orderId);
+        return ResponseEntity.ok(ApiResponse.success("Order cancelled successfully", response));
     }
 
     @GetMapping
-    @Operation(summary = "Get all orders for the day")
-    public ResponseEntity<ApiResponse<List<Order>>> getOrders() {
-        try {
-            List<Order> orders = unifiedTradingService.getOrders();
-            return ResponseEntity.ok(ApiResponse.success(orders));
-        } catch (KiteException | IOException e) {
-            log.error("Error fetching orders", e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+    @Operation(summary = "Get all orders for the day",
+               description = "Fetch all orders placed today across all instruments")
+    public ResponseEntity<ApiResponse<List<Order>>> getOrders() throws KiteException, IOException {
+        List<Order> orders = unifiedTradingService.getOrders();
+        return ResponseEntity.ok(ApiResponse.success(orders));
     }
 
     @GetMapping("/{orderId}/history")
-    @Operation(summary = "Get order history")
-    public ResponseEntity<ApiResponse<List<Order>>> getOrderHistory(@PathVariable String orderId) {
-        try {
-            List<Order> orderHistory = unifiedTradingService.getOrderHistory(orderId);
-            return ResponseEntity.ok(ApiResponse.success(orderHistory));
-        } catch (KiteException | IOException e) {
-            log.error("Error fetching order history", e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+    @Operation(summary = "Get order history",
+               description = "Fetch complete history of order state changes")
+    public ResponseEntity<ApiResponse<List<Order>>> getOrderHistory(@PathVariable String orderId)
+            throws KiteException, IOException {
+        List<Order> orderHistory = unifiedTradingService.getOrderHistory(orderId);
+        return ResponseEntity.ok(ApiResponse.success(orderHistory));
     }
 
     @GetMapping("/charges")
     @Operation(summary = "Get charges for all executed orders today",
                description = "Fetches detailed charge breakdown from Kite API for all completed orders placed today. " +
                            "Includes brokerage, STT, exchange charges, GST, SEBI charges, and stamp duty.")
-    public ResponseEntity<ApiResponse<List<OrderChargesResponse>>> getOrderCharges() {
-        try {
-            List<OrderChargesResponse> charges = tradingService.getOrderCharges();
-            return ResponseEntity.ok(ApiResponse.success("Order charges fetched successfully", charges));
-        } catch (KiteException | IOException e) {
-            log.error("Error fetching order charges", e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+    public ResponseEntity<ApiResponse<List<OrderChargesResponse>>> getOrderCharges() throws KiteException, IOException {
+        List<OrderChargesResponse> charges = tradingService.getOrderCharges();
+        return ResponseEntity.ok(ApiResponse.success("Order charges fetched successfully", charges));
     }
 }

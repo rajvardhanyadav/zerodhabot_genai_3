@@ -1,7 +1,6 @@
 package com.tradingbot.controller;
 
 import com.tradingbot.dto.ApiResponse;
-import com.tradingbot.service.strategy.monitoring.PositionMonitor;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -10,8 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -27,54 +24,37 @@ public class MonitoringController {
     private final WebSocketService webSocketService;
 
     @GetMapping("/status")
-    @Operation(summary = "Get WebSocket connection status")
+    @Operation(summary = "Get WebSocket connection status",
+               description = "Check if WebSocket is connected and number of active monitors")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getStatus() {
-        try {
-            Map<String, Object> status = new HashMap<>();
-            status.put("connected", webSocketService.isConnected());
-            status.put("activeMonitors", webSocketService.getActiveMonitorsCount());
-
-            return ResponseEntity.ok(ApiResponse.success(status));
-        } catch (Exception e) {
-            log.error("Error getting monitoring status", e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+        Map<String, Object> status = Map.of(
+            "connected", webSocketService.isConnected(),
+            "activeMonitors", webSocketService.getActiveMonitorsCount()
+        );
+        return ResponseEntity.ok(ApiResponse.success(status));
     }
 
     @PostMapping("/connect")
-    @Operation(summary = "Connect WebSocket for real-time monitoring")
+    @Operation(summary = "Connect WebSocket for real-time monitoring",
+               description = "Establish WebSocket connection to receive real-time market ticks")
     public ResponseEntity<ApiResponse<String>> connect() {
-        try {
-            webSocketService.connect();
-            return ResponseEntity.ok(ApiResponse.success("WebSocket connection initiated"));
-        } catch (Exception e) {
-            log.error("Error connecting WebSocket", e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+        webSocketService.connect();
+        return ResponseEntity.ok(ApiResponse.success("WebSocket connection initiated"));
     }
 
     @PostMapping("/disconnect")
-    @Operation(summary = "Disconnect WebSocket")
+    @Operation(summary = "Disconnect WebSocket",
+               description = "Close WebSocket connection and stop receiving market ticks")
     public ResponseEntity<ApiResponse<String>> disconnect() {
-        try {
-            webSocketService.disconnect();
-            return ResponseEntity.ok(ApiResponse.success("WebSocket disconnected"));
-        } catch (Exception e) {
-            log.error("Error disconnecting WebSocket", e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+        webSocketService.disconnect();
+        return ResponseEntity.ok(ApiResponse.success("WebSocket disconnected"));
     }
 
     @DeleteMapping("/{executionId}")
-    @Operation(summary = "Stop monitoring a specific execution")
+    @Operation(summary = "Stop monitoring a specific execution",
+               description = "Stop monitoring a strategy execution without closing positions")
     public ResponseEntity<ApiResponse<String>> stopMonitoring(@PathVariable String executionId) {
-        try {
-            webSocketService.stopMonitoring(executionId);
-            return ResponseEntity.ok(ApiResponse.success("Monitoring stopped for execution: " + executionId));
-        } catch (Exception e) {
-            log.error("Error stopping monitoring for execution: {}", executionId, e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+        webSocketService.stopMonitoring(executionId);
+        return ResponseEntity.ok(ApiResponse.success("Monitoring stopped for execution: " + executionId));
     }
 }
-

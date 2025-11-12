@@ -24,14 +24,8 @@ public class AccountController {
 
     @GetMapping("/margins/{segment}")
     @Operation(summary = "Get account margins for a segment (equity or commodity)")
-    public ResponseEntity<ApiResponse<Margin>> getMargins(@PathVariable String segment) {
-        try {
-            Margin margins = tradingService.getMargins(segment);
-            return ResponseEntity.ok(ApiResponse.success(margins));
-        } catch (KiteException | IOException e) {
-            log.error("Error fetching margins for segment: {}", segment, e);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
-        }
+    public ResponseEntity<ApiResponse<Margin>> getMargins(@PathVariable String segment) throws KiteException, IOException {
+        Margin margins = tradingService.getMargins(segment);
+        return ResponseEntity.ok(ApiResponse.success(margins));
     }
 }
-
