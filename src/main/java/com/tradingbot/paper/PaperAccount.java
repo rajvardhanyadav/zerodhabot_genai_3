@@ -1,6 +1,7 @@
 package com.tradingbot.paper;
 
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -12,6 +13,7 @@ import java.time.LocalDateTime;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+@Builder
 public class PaperAccount {
 
     private String userId;
@@ -20,16 +22,24 @@ public class PaperAccount {
     private Double totalBalance;
 
     // P&L tracking
-    private Double totalRealisedPnL;
-    private Double totalUnrealisedPnL;
-    private Double todaysPnL;
+    @Builder.Default
+    private Double totalRealisedPnL = 0.0;
+    @Builder.Default
+    private Double totalUnrealisedPnL = 0.0;
+    @Builder.Default
+    private Double todaysPnL = 0.0;
 
     // Trading statistics
-    private Integer totalTrades;
-    private Integer winningTrades;
-    private Integer losingTrades;
-    private Double totalBrokerage;
-    private Double totalTaxes;
+    @Builder.Default
+    private Integer totalTrades = 0;
+    @Builder.Default
+    private Integer winningTrades = 0;
+    @Builder.Default
+    private Integer losingTrades = 0;
+    @Builder.Default
+    private Double totalBrokerage = 0.0;
+    @Builder.Default
+    private Double totalTaxes = 0.0;
 
     private LocalDateTime createdAt;
     private LocalDateTime lastUpdated;
@@ -38,22 +48,23 @@ public class PaperAccount {
      * Create new paper account with initial balance
      */
     public static PaperAccount createNew(String userId, Double initialBalance) {
-        PaperAccount account = new PaperAccount();
-        account.setUserId(userId);
-        account.setAvailableBalance(initialBalance);
-        account.setUsedMargin(0.0);
-        account.setTotalBalance(initialBalance);
-        account.setTotalRealisedPnL(0.0);
-        account.setTotalUnrealisedPnL(0.0);
-        account.setTodaysPnL(0.0);
-        account.setTotalTrades(0);
-        account.setWinningTrades(0);
-        account.setLosingTrades(0);
-        account.setTotalBrokerage(0.0);
-        account.setTotalTaxes(0.0);
-        account.setCreatedAt(LocalDateTime.now());
-        account.setLastUpdated(LocalDateTime.now());
-        return account;
+        LocalDateTime now = LocalDateTime.now();
+        return PaperAccount.builder()
+                .userId(userId)
+                .availableBalance(initialBalance)
+                .usedMargin(0.0)
+                .totalBalance(initialBalance)
+                .totalRealisedPnL(0.0)
+                .totalUnrealisedPnL(0.0)
+                .todaysPnL(0.0)
+                .totalTrades(0)
+                .winningTrades(0)
+                .losingTrades(0)
+                .totalBrokerage(0.0)
+                .totalTaxes(0.0)
+                .createdAt(now)
+                .lastUpdated(now)
+                .build();
     }
 
     /**
@@ -100,6 +111,19 @@ public class PaperAccount {
         this.totalTaxes += taxes;
         this.availableBalance -= (brokerage + taxes);
         this.totalBalance -= (brokerage + taxes);
+        this.lastUpdated = LocalDateTime.now();
+    }
+
+    /**
+     * Increment trade statistics
+     */
+    public void recordTrade(Double pnl) {
+        this.totalTrades++;
+        if (pnl > 0) {
+            this.winningTrades++;
+        } else if (pnl < 0) {
+            this.losingTrades++;
+        }
         this.lastUpdated = LocalDateTime.now();
     }
 }

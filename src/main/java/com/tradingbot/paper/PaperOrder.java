@@ -1,6 +1,7 @@
 package com.tradingbot.paper;
 
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -12,6 +13,7 @@ import java.time.LocalDateTime;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+@Builder
 public class PaperOrder {
 
     private String orderId;
@@ -55,33 +57,69 @@ public class PaperOrder {
                                                String product, String orderType, Double price,
                                                Double triggerPrice, String validity,
                                                Integer disclosedQuantity, Long instrumentToken) {
-        PaperOrder order = new PaperOrder();
-        order.setOrderId(orderId);
-        order.setExchangeOrderId("PAPER" + orderId);
-        order.setPlacedBy(userId);
-        order.setVariety("regular");
-        order.setStatus("PENDING");
-        order.setTradingSymbol(tradingSymbol);
-        order.setExchange(exchange);
-        order.setInstrumentToken(instrumentToken);
-        order.setTransactionType(transactionType);
-        order.setOrderType(orderType);
-        order.setProduct(product);
-        order.setQuantity(quantity);
-        order.setPrice(price != null ? price : 0.0);
-        order.setTriggerPrice(triggerPrice != null ? triggerPrice : 0.0);
-        order.setAveragePrice(0.0);
-        order.setFilledQuantity(0);
-        order.setPendingQuantity(quantity);
-        order.setCancelledQuantity(0);
-        order.setDisclosedQuantity(disclosedQuantity != null ? disclosedQuantity : 0);
-        order.setValidity(validity);
-        order.setOrderTimestamp(LocalDateTime.now());
-        order.setStatusMessage("Order placed");
-        order.setBrokerageCharges(0.0);
-        order.setTaxes(0.0);
-        order.setTotalCharges(0.0);
-        return order;
+        return PaperOrder.builder()
+                .orderId(orderId)
+                .exchangeOrderId("PAPER" + orderId)
+                .placedBy(userId)
+                .variety("regular")
+                .status("PENDING")
+                .tradingSymbol(tradingSymbol)
+                .exchange(exchange)
+                .instrumentToken(instrumentToken)
+                .transactionType(transactionType)
+                .orderType(orderType)
+                .product(product)
+                .quantity(quantity)
+                .price(price != null ? price : 0.0)
+                .triggerPrice(triggerPrice != null ? triggerPrice : 0.0)
+                .averagePrice(0.0)
+                .filledQuantity(0)
+                .pendingQuantity(quantity)
+                .cancelledQuantity(0)
+                .disclosedQuantity(disclosedQuantity != null ? disclosedQuantity : 0)
+                .validity(validity)
+                .orderTimestamp(LocalDateTime.now())
+                .statusMessage("Order placed")
+                .brokerageCharges(0.0)
+                .taxes(0.0)
+                .totalCharges(0.0)
+                .build();
+    }
+
+    /**
+     * Create a deep copy of this order
+     */
+    public PaperOrder copy() {
+        return PaperOrder.builder()
+                .orderId(this.orderId)
+                .exchangeOrderId(this.exchangeOrderId)
+                .placedBy(this.placedBy)
+                .variety(this.variety)
+                .status(this.status)
+                .tradingSymbol(this.tradingSymbol)
+                .exchange(this.exchange)
+                .instrumentToken(this.instrumentToken)
+                .transactionType(this.transactionType)
+                .orderType(this.orderType)
+                .product(this.product)
+                .quantity(this.quantity)
+                .price(this.price)
+                .triggerPrice(this.triggerPrice)
+                .averagePrice(this.averagePrice)
+                .filledQuantity(this.filledQuantity)
+                .pendingQuantity(this.pendingQuantity)
+                .cancelledQuantity(this.cancelledQuantity)
+                .disclosedQuantity(this.disclosedQuantity)
+                .validity(this.validity)
+                .orderTimestamp(this.orderTimestamp)
+                .exchangeTimestamp(this.exchangeTimestamp)
+                .statusMessage(this.statusMessage)
+                .parentOrderId(this.parentOrderId)
+                .tag(this.tag)
+                .executionPrice(this.executionPrice)
+                .brokerageCharges(this.brokerageCharges)
+                .taxes(this.taxes)
+                .totalCharges(this.totalCharges)
+                .build();
     }
 }
-

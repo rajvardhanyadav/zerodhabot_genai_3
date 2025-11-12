@@ -72,15 +72,9 @@ public class PaperTradingService {
         );
 
         // Validate order
-        String validationError = validateOrder(order, account, currentPrice);
+        String validationError = validateOrder(order);
         if (validationError != null) {
-            order.setStatus("REJECTED");
-            order.setStatusMessage(validationError);
-            orders.put(orderId, order);
-            addToHistory(orderId, order);
-
-            log.error("[PAPER TRADING] Order rejected: {}", validationError);
-            return new OrderResponse(orderId, "FAILED", validationError);
+            return rejectAndReturnOrder(order, orderId, validationError);
         }
 
         // Calculate required margin
@@ -89,14 +83,10 @@ public class PaperTradingService {
         // Block margin for buy orders
         if ("BUY".equals(order.getTransactionType())) {
             if (!account.hasSufficientBalance(requiredMargin)) {
-                order.setStatus("REJECTED");
-                order.setStatusMessage("Insufficient funds");
-                orders.put(orderId, order);
-                addToHistory(orderId, order);
-
-                log.error("[PAPER TRADING] Insufficient funds. Required: {}, Available: {}",
-                         requiredMargin, account.getAvailableBalance());
-                return new OrderResponse(orderId, "FAILED", "Insufficient funds");
+                String errorMsg = String.format("Insufficient funds. Required: %.2f, Available: %.2f",
+                                                requiredMargin, account.getAvailableBalance());
+                log.error("[PAPER TRADING] {}", errorMsg);
+                return rejectAndReturnOrder(order, orderId, errorMsg);
             }
             account.blockMargin(requiredMargin);
         }
@@ -107,49 +97,57 @@ public class PaperTradingService {
         orders.put(orderId, order);
         addToHistory(orderId, order);
 
-        // Execute order asynchronously (simulate exchange processing)
-        executeOrderAsync(order, account, currentPrice);
+        // Execute order synchronously (immediate execution for paper trading)
+        executeOrder(order, account, currentPrice);
 
         log.info("[PAPER TRADING] Order placed successfully: {}", orderId);
         return new OrderResponse(orderId, "SUCCESS", "Order placed successfully");
     }
 
     /**
-     * Execute order with simulated delay
+     * Reject order and return response
      */
-    private void executeOrderAsync(PaperOrder order, PaperAccount account, Double currentPrice) {
-        //new Thread(() -> {
-            try {
-                // Simulate exchange delay
-                if (config.isEnableExecutionDelay()) {
-                    Thread.sleep(config.getExecutionDelayMs());
-                }
+    private OrderResponse rejectAndReturnOrder(PaperOrder order, String orderId, String reason) {
+        order.setStatus("REJECTED");
+        order.setStatusMessage(reason);
+        orders.put(orderId, order);
+        addToHistory(orderId, order);
+        log.error("[PAPER TRADING] Order rejected: {}", reason);
+        return new OrderResponse(orderId, "FAILED", reason);
+    }
 
-                // Simulate order rejection
-                if (config.isEnableOrderRejection() &&
-                    Math.random() < config.getRejectionProbability()) {
-                    rejectOrder(order, "Random rejection for simulation");
-                    return;
-                }
-
-                // Execute based on order type
-                if ("MARKET".equals(order.getOrderType())) {
-                    executeMarketOrder(order, account, currentPrice);
-                } else if ("LIMIT".equals(order.getOrderType())) {
-                    executeLimitOrder(order, account, currentPrice);
-                } else if ("SL".equals(order.getOrderType()) || "SL-M".equals(order.getOrderType())) {
-                    executeStopLossOrder(order, account, currentPrice);
-                }
-
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                log.error("[PAPER TRADING] Thread interrupted: {}", e.getMessage(), e);
-                rejectOrder(order, "Execution interrupted: " + e.getMessage());
-            } catch (Exception e) {
-                log.error("[PAPER TRADING] Unexpected error executing order: {}", e.getMessage(), e);
-                rejectOrder(order, "Execution error: " + e.getMessage());
+    /**
+     * Execute order immediately
+     */
+    private void executeOrder(PaperOrder order, PaperAccount account, Double currentPrice) {
+        try {
+            // Simulate execution delay if enabled
+            if (config.isEnableExecutionDelay()) {
+                Thread.sleep(config.getExecutionDelayMs());
             }
-        //}).start();
+
+            // Simulate order rejection
+            if (config.isEnableOrderRejection() && Math.random() < config.getRejectionProbability()) {
+                rejectOrder(order, "Random rejection for simulation");
+                return;
+            }
+
+            // Execute based on order type
+            switch (order.getOrderType()) {
+                case "MARKET" -> executeMarketOrder(order, account, currentPrice);
+                case "LIMIT" -> executeLimitOrder(order, account, currentPrice);
+                case "SL", "SL-M" -> executeStopLossOrder(order, account, currentPrice);
+                default -> rejectOrder(order, "Unsupported order type: " + order.getOrderType());
+            }
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("[PAPER TRADING] Thread interrupted: {}", e.getMessage(), e);
+            rejectOrder(order, "Execution interrupted: " + e.getMessage());
+        } catch (Exception e) {
+            log.error("[PAPER TRADING] Unexpected error executing order: {}", e.getMessage(), e);
+            rejectOrder(order, "Execution error: " + e.getMessage());
+        }
     }
 
     /**
@@ -160,35 +158,8 @@ public class PaperTradingService {
             // Get fresh price
             Double executionPrice = getCurrentPrice(order.getTradingSymbol(), order.getExchange());
 
-            // Apply slippage
-            /*if (config.getSlippagePercentage() > 0) {
-                double slippage = executionPrice * (config.getSlippagePercentage() / 100.0);
-                executionPrice = "BUY".equals(order.getTransactionType()) ?
-                               executionPrice + slippage : executionPrice - slippage;
-            }*/
-
-            // Update order
-            order.setStatus("COMPLETE");
-            order.setAveragePrice(executionPrice);
-            order.setExecutionPrice(executionPrice);
-            order.setFilledQuantity(order.getQuantity());
-            order.setPendingQuantity(0);
-            order.setExchangeTimestamp(LocalDateTime.now());
-            order.setStatusMessage("Order completed");
-
-            // Calculate charges
-            calculateCharges(order, executionPrice);
-
-            // Update account
-            if (config.isApplyBrokerageCharges()) {
-                account.addCharges(order.getBrokerageCharges(), order.getTaxes());
-            }
-
-            // Update position
-            updatePosition(order, executionPrice, account);
-
-            // Update order history
-            addToHistory(order.getOrderId(), order);
+            // Complete order
+            completeOrder(order, executionPrice, account);
 
             log.info("[PAPER TRADING] Market order executed: {} @ {}", order.getOrderId(), executionPrice);
         } catch (KiteException | IOException e) {
@@ -201,47 +172,20 @@ public class PaperTradingService {
      * Execute limit order
      */
     private void executeLimitOrder(PaperOrder order, PaperAccount account, Double currentPrice) {
-        try {
-            Double limitPrice = order.getPrice();
+        Double limitPrice = order.getPrice();
 
-            // Check if limit price matches current price
-            boolean canExecute = false;
-            if ("BUY".equals(order.getTransactionType()) && currentPrice <= limitPrice) {
-                canExecute = true;
-            } else if ("SELL".equals(order.getTransactionType()) && currentPrice >= limitPrice) {
-                canExecute = true;
-            }
+        // Check if limit price matches current price
+        boolean canExecute = ("BUY".equals(order.getTransactionType()) && currentPrice <= limitPrice) ||
+                            ("SELL".equals(order.getTransactionType()) && currentPrice >= limitPrice);
 
-            if (canExecute) {
-                order.setStatus("COMPLETE");
-                order.setAveragePrice(limitPrice);
-                order.setExecutionPrice(limitPrice);
-                order.setFilledQuantity(order.getQuantity());
-                order.setPendingQuantity(0);
-                order.setExchangeTimestamp(LocalDateTime.now());
-                order.setStatusMessage("Order completed");
-
-                calculateCharges(order, limitPrice);
-
-                if (config.isApplyBrokerageCharges()) {
-                    account.addCharges(order.getBrokerageCharges(), order.getTaxes());
-                }
-
-                updatePosition(order, limitPrice, account);
-                addToHistory(order.getOrderId(), order);
-
-                log.info("[PAPER TRADING] Limit order executed: {} @ {}", order.getOrderId(), limitPrice);
-            } else {
-                order.setStatus("OPEN");
-                order.setStatusMessage("Order open - waiting for limit price");
-                addToHistory(order.getOrderId(), order);
-
-                log.info("[PAPER TRADING] Limit order open: {} waiting for price {}",
-                         order.getOrderId(), limitPrice);
-            }
-        } catch (Exception e) {
-            log.error("[PAPER TRADING] Failed to execute limit order: {}", e.getMessage());
-            rejectOrder(order, "Execution failed: " + e.getMessage());
+        if (canExecute) {
+            completeOrder(order, limitPrice, account);
+            log.info("[PAPER TRADING] Limit order executed: {} @ {}", order.getOrderId(), limitPrice);
+        } else {
+            order.setStatus("OPEN");
+            order.setStatusMessage("Order open - waiting for limit price");
+            addToHistory(order.getOrderId(), order);
+            log.info("[PAPER TRADING] Limit order open: {} waiting for price {}", order.getOrderId(), limitPrice);
         }
     }
 
@@ -249,37 +193,53 @@ public class PaperTradingService {
      * Execute stop loss order
      */
     private void executeStopLossOrder(PaperOrder order, PaperAccount account, Double currentPrice) {
-        try {
-            Double triggerPrice = order.getTriggerPrice();
+        Double triggerPrice = order.getTriggerPrice();
 
-            // Check if trigger price is hit
-            boolean triggered = false;
-            if ("BUY".equals(order.getTransactionType()) && currentPrice >= triggerPrice) {
-                triggered = true;
-            } else if ("SELL".equals(order.getTransactionType()) && currentPrice <= triggerPrice) {
-                triggered = true;
-            }
+        // Check if trigger price is hit
+        boolean triggered = ("BUY".equals(order.getTransactionType()) && currentPrice >= triggerPrice) ||
+                           ("SELL".equals(order.getTransactionType()) && currentPrice <= triggerPrice);
 
-            if (triggered) {
-                if ("SL-M".equals(order.getOrderType())) {
-                    // Stop loss market - execute at current price
-                    executeMarketOrder(order, account, currentPrice);
-                } else {
-                    // Stop loss limit - execute at limit price
-                    executeLimitOrder(order, account, currentPrice);
-                }
+        if (triggered) {
+            if ("SL-M".equals(order.getOrderType())) {
+                // Stop loss market - execute at current price
+                executeMarketOrder(order, account, currentPrice);
             } else {
-                order.setStatus("OPEN");
-                order.setStatusMessage("Trigger pending");
-                addToHistory(order.getOrderId(), order);
-
-                log.info("[PAPER TRADING] SL order open: {} waiting for trigger {}",
-                         order.getOrderId(), triggerPrice);
+                // Stop loss limit - execute at limit price
+                executeLimitOrder(order, account, currentPrice);
             }
-        } catch (Exception e) {
-            log.error("[PAPER TRADING] Failed to execute stop loss order: {}", e.getMessage());
-            rejectOrder(order, "Execution failed: " + e.getMessage());
+        } else {
+            order.setStatus("OPEN");
+            order.setStatusMessage("Trigger pending");
+            addToHistory(order.getOrderId(), order);
+            log.info("[PAPER TRADING] SL order open: {} waiting for trigger {}", order.getOrderId(), triggerPrice);
         }
+    }
+
+    /**
+     * Complete an order with execution price
+     */
+    private void completeOrder(PaperOrder order, Double executionPrice, PaperAccount account) {
+        order.setStatus("COMPLETE");
+        order.setAveragePrice(executionPrice);
+        order.setExecutionPrice(executionPrice);
+        order.setFilledQuantity(order.getQuantity());
+        order.setPendingQuantity(0);
+        order.setExchangeTimestamp(LocalDateTime.now());
+        order.setStatusMessage("Order completed");
+
+        // Calculate charges
+        calculateCharges(order, executionPrice);
+
+        // Apply charges to account
+        if (config.isApplyBrokerageCharges()) {
+            account.addCharges(order.getBrokerageCharges(), order.getTaxes());
+        }
+
+        // Update position
+        updatePosition(order, executionPrice, account);
+
+        // Update order history
+        addToHistory(order.getOrderId(), order);
     }
 
     /**
@@ -318,11 +278,9 @@ public class PaperTradingService {
         // Brokerage
         double brokerage = config.getBrokeragePerOrder();
 
-        // STT
-        double stt = 0.0;
-        if ("SELL".equals(order.getTransactionType())) {
-            stt = orderValue * (config.getSttPercentage() / 100.0);
-        }
+        // STT (only on sell)
+        double stt = "SELL".equals(order.getTransactionType()) ?
+                     orderValue * (config.getSttPercentage() / 100.0) : 0.0;
 
         // Transaction charges
         double transactionCharges = orderValue * (config.getTransactionCharges() / 100.0);
@@ -350,87 +308,90 @@ public class PaperTradingService {
     private void updatePosition(PaperOrder order, Double executionPrice, PaperAccount account) {
         String positionKey = order.getTradingSymbol() + "_" + order.getProduct();
 
-        PaperPosition position = positions.getOrDefault(positionKey, new PaperPosition());
-        position.setTradingSymbol(order.getTradingSymbol());
-        position.setExchange(order.getExchange());
-        position.setInstrumentToken(order.getInstrumentToken());
-        position.setProduct(order.getProduct());
-        position.setMultiplier(1);
+        PaperPosition position = positions.computeIfAbsent(positionKey, k -> PaperPosition.builder()
+                .tradingSymbol(order.getTradingSymbol())
+                .exchange(order.getExchange())
+                .instrumentToken(order.getInstrumentToken())
+                .product(order.getProduct())
+                .multiplier(1)
+                .build());
+
         position.setLastPrice(executionPrice);
+        position.setLastUpdated(LocalDateTime.now());
 
         if ("BUY".equals(order.getTransactionType())) {
-            // Update buy details
-            int totalBuyQty = (position.getBuyQuantity() != null ? position.getBuyQuantity() : 0) + order.getQuantity();
-            double totalBuyValue = (position.getBuyValue() != null ? position.getBuyValue() : 0.0) +
-                                  (executionPrice * order.getQuantity());
-            log.info("[PAPER TRADING] Updating BUY position: PrevQty={}, NewQty={}, PrevValue={}, NewValue={}",
-                     position.getBuyQuantity(), totalBuyQty,
-                     position.getBuyValue(), totalBuyValue);
-            position.setBuyQuantity(totalBuyQty);
-            position.setBuyValue(totalBuyValue);
-            position.setBuyPrice(totalBuyValue / totalBuyQty);
-
-            // Update day buy
-            position.setDayBuyQuantity(totalBuyQty);
-            position.setDayBuyValue(totalBuyValue);
-            position.setDayBuyPrice(position.getBuyPrice());
-
-            // Update net quantity
-            int netQty = totalBuyQty - (position.getSellQuantity() != null ? position.getSellQuantity() : 0);
-            position.setQuantity(netQty);
-
-            if (netQty > 0) {
-                position.setAveragePrice(totalBuyValue / totalBuyQty);
-            }
-
+            updateBuyPosition(position, order, executionPrice);
         } else {
-            // Update sell details
-            int totalSellQty = (position.getSellQuantity() != null ? position.getSellQuantity() : 0) + order.getQuantity();
-            double totalSellValue = (position.getSellValue() != null ? position.getSellValue() : 0.0) +
-                                   (executionPrice * order.getQuantity());
-            log.info("[PAPER TRADING] Updating SELL position: PrevQty={}, NewQty={}, PrevValue={}, NewValue={}",
-                     position.getSellQuantity(), totalSellQty,
-                     position.getSellValue(), totalSellValue);
-            position.setSellQuantity(totalSellQty);
-            position.setSellValue(totalSellValue);
-            position.setSellPrice(totalSellValue / totalSellQty);
-
-            // Update day sell
-            position.setDaySellQuantity(totalSellQty);
-            position.setDaySellValue(totalSellValue);
-            position.setDaySellPrice(position.getSellPrice());
-
-            // Update net quantity
-            int netQty = (position.getBuyQuantity() != null ? position.getBuyQuantity() : 0) - totalSellQty;
-            position.setQuantity(netQty);
-
-            // Calculate realised P&L
-            if (position.getBuyQuantity() != null && position.getBuyQuantity() > 0) {
-                double realisedPnL = (executionPrice - position.getBuyPrice()) * order.getQuantity();
-                position.setRealised((position.getRealised() != null ? position.getRealised() : 0.0) + realisedPnL);
-
-                // Release margin
-                double marginToRelease = calculateRequiredMargin(order, position.getBuyPrice());
-                account.releaseMargin(marginToRelease);
-
-                // Update account P&L
-                account.updatePnL(realisedPnL, 0.0);
-
-                // Update trade statistics
-                account.setTotalTrades(account.getTotalTrades() + 1);
-                if (realisedPnL > 0) {
-                    account.setWinningTrades(account.getWinningTrades() + 1);
-                } else if (realisedPnL < 0) {
-                    account.setLosingTrades(account.getLosingTrades() + 1);
-                }
-            }
+            updateSellPosition(position, order, executionPrice, account);
         }
 
-        position.setLastUpdated(LocalDateTime.now());
         positions.put(positionKey, position);
-
         log.debug("[PAPER TRADING] Position updated: {} - Qty: {}, Avg: {}",
                  positionKey, position.getQuantity(), position.getAveragePrice());
+    }
+
+    /**
+     * Update position for buy orders
+     */
+    private void updateBuyPosition(PaperPosition position, PaperOrder order, Double executionPrice) {
+        int totalBuyQty = position.getBuyQuantity() + order.getQuantity();
+        double totalBuyValue = position.getBuyValue() + (executionPrice * order.getQuantity());
+
+        log.info("[PAPER TRADING] Updating BUY position: PrevQty={}, NewQty={}, PrevValue={}, NewValue={}",
+                 position.getBuyQuantity(), totalBuyQty, position.getBuyValue(), totalBuyValue);
+
+        position.setBuyQuantity(totalBuyQty);
+        position.setBuyValue(totalBuyValue);
+        position.setBuyPrice(totalBuyValue / totalBuyQty);
+        position.setDayBuyQuantity(totalBuyQty);
+        position.setDayBuyValue(totalBuyValue);
+        position.setDayBuyPrice(position.getBuyPrice());
+
+        // Update net quantity
+        int netQty = totalBuyQty - position.getSellQuantity();
+        position.setQuantity(netQty);
+
+        if (netQty > 0) {
+            position.setAveragePrice(totalBuyValue / totalBuyQty);
+        }
+    }
+
+    /**
+     * Update position for sell orders
+     */
+    private void updateSellPosition(PaperPosition position, PaperOrder order, Double executionPrice, PaperAccount account) {
+        int totalSellQty = position.getSellQuantity() + order.getQuantity();
+        double totalSellValue = position.getSellValue() + (executionPrice * order.getQuantity());
+
+        log.info("[PAPER TRADING] Updating SELL position: PrevQty={}, NewQty={}, PrevValue={}, NewValue={}",
+                 position.getSellQuantity(), totalSellQty, position.getSellValue(), totalSellValue);
+
+        position.setSellQuantity(totalSellQty);
+        position.setSellValue(totalSellValue);
+        position.setSellPrice(totalSellValue / totalSellQty);
+        position.setDaySellQuantity(totalSellQty);
+        position.setDaySellValue(totalSellValue);
+        position.setDaySellPrice(position.getSellPrice());
+
+        // Update net quantity
+        int netQty = position.getBuyQuantity() - totalSellQty;
+        position.setQuantity(netQty);
+
+        // Calculate realised P&L
+        if (position.getBuyQuantity() > 0) {
+            double realisedPnL = (executionPrice - position.getBuyPrice()) * order.getQuantity();
+            position.setRealised(position.getRealised() + realisedPnL);
+
+            // Release margin
+            double marginToRelease = calculateRequiredMargin(order, position.getBuyPrice());
+            account.releaseMargin(marginToRelease);
+
+            // Update account P&L
+            account.updatePnL(realisedPnL, 0.0);
+
+            // Update trade statistics using new method
+            account.recordTrade(realisedPnL);
+        }
     }
 
     /**
@@ -452,6 +413,24 @@ public class PaperTradingService {
         }
 
         // Release margin if buy order
+        releasePendingMargin(order, userId);
+
+        order.setStatus("CANCELLED");
+        order.setCancelledQuantity(order.getPendingQuantity());
+        order.setPendingQuantity(0);
+        order.setStatusMessage("Order cancelled by user");
+        order.setExchangeTimestamp(LocalDateTime.now());
+
+        addToHistory(orderId, order);
+
+        log.info("[PAPER TRADING] Order cancelled: {}", orderId);
+        return new OrderResponse(orderId, "SUCCESS", "Order cancelled successfully");
+    }
+
+    /**
+     * Release margin for pending orders
+     */
+    private void releasePendingMargin(PaperOrder order, String userId) {
         if ("BUY".equals(order.getTransactionType()) && order.getPendingQuantity() > 0) {
             PaperAccount account = accounts.get(userId);
             if (account != null) {
@@ -464,17 +443,6 @@ public class PaperTradingService {
                 }
             }
         }
-
-        order.setStatus("CANCELLED");
-        order.setCancelledQuantity(order.getPendingQuantity());
-        order.setPendingQuantity(0);
-        order.setStatusMessage("Order cancelled by user");
-        order.setExchangeTimestamp(LocalDateTime.now());
-
-        addToHistory(orderId, order);
-
-        log.info("[PAPER TRADING] Order cancelled: {}", orderId);
-        return new OrderResponse(orderId, "SUCCESS", "Order cancelled successfully");
     }
 
     /**
@@ -567,43 +535,10 @@ public class PaperTradingService {
     }
 
     private void addToHistory(String orderId, PaperOrder order) {
-        PaperOrder historyCopy = copyOrder(order);
-        orderHistory.computeIfAbsent(orderId, k -> new ArrayList<>()).add(historyCopy);
+        orderHistory.computeIfAbsent(orderId, k -> new ArrayList<>()).add(order.copy());
     }
 
-    private PaperOrder copyOrder(PaperOrder order) {
-        PaperOrder copy = new PaperOrder();
-        copy.setOrderId(order.getOrderId());
-        copy.setExchangeOrderId(order.getExchangeOrderId());
-        copy.setPlacedBy(order.getPlacedBy());
-        copy.setVariety(order.getVariety());
-        copy.setStatus(order.getStatus());
-        copy.setTradingSymbol(order.getTradingSymbol());
-        copy.setExchange(order.getExchange());
-        copy.setInstrumentToken(order.getInstrumentToken());
-        copy.setTransactionType(order.getTransactionType());
-        copy.setOrderType(order.getOrderType());
-        copy.setProduct(order.getProduct());
-        copy.setQuantity(order.getQuantity());
-        copy.setPrice(order.getPrice());
-        copy.setTriggerPrice(order.getTriggerPrice());
-        copy.setAveragePrice(order.getAveragePrice());
-        copy.setFilledQuantity(order.getFilledQuantity());
-        copy.setPendingQuantity(order.getPendingQuantity());
-        copy.setCancelledQuantity(order.getCancelledQuantity());
-        copy.setDisclosedQuantity(order.getDisclosedQuantity());
-        copy.setValidity(order.getValidity());
-        copy.setOrderTimestamp(order.getOrderTimestamp());
-        copy.setExchangeTimestamp(order.getExchangeTimestamp());
-        copy.setStatusMessage(order.getStatusMessage());
-        copy.setExecutionPrice(order.getExecutionPrice());
-        copy.setBrokerageCharges(order.getBrokerageCharges());
-        copy.setTaxes(order.getTaxes());
-        copy.setTotalCharges(order.getTotalCharges());
-        return copy;
-    }
-
-    private String validateOrder(PaperOrder order, PaperAccount account, Double currentPrice) {
+    private String validateOrder(PaperOrder order) {
         // Basic order validation
         if (order.getQuantity() <= 0) {
             return "Invalid quantity";
@@ -617,9 +552,6 @@ public class PaperTradingService {
             (order.getTriggerPrice() == null || order.getTriggerPrice() <= 0)) {
             return "Invalid trigger price";
         }
-
-        // Note: account and currentPrice parameters reserved for future validations
-        // such as margin checks and price range validations
 
         return null;
     }

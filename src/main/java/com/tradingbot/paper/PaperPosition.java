@@ -1,6 +1,7 @@
 package com.tradingbot.paper;
 
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -12,6 +13,7 @@ import java.time.LocalDateTime;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+@Builder
 public class PaperPosition {
 
     private String tradingSymbol;
@@ -20,42 +22,66 @@ public class PaperPosition {
     private String product;
 
     // Quantity details
-    private Integer quantity;
-    private Integer overnightQuantity;
-    private Integer multiplier;
+    @Builder.Default
+    private Integer quantity = 0;
+    @Builder.Default
+    private Integer overnightQuantity = 0;
+    @Builder.Default
+    private Integer multiplier = 1;
 
     // Buy details
-    private Double averagePrice;
-    private Integer buyQuantity;
-    private Double buyPrice;
-    private Double buyValue;
-    private Double buyM2M;
+    @Builder.Default
+    private Double averagePrice = 0.0;
+    @Builder.Default
+    private Integer buyQuantity = 0;
+    @Builder.Default
+    private Double buyPrice = 0.0;
+    @Builder.Default
+    private Double buyValue = 0.0;
+    @Builder.Default
+    private Double buyM2M = 0.0;
 
     // Sell details
-    private Integer sellQuantity;
-    private Double sellPrice;
-    private Double sellValue;
-    private Double sellM2M;
+    @Builder.Default
+    private Integer sellQuantity = 0;
+    @Builder.Default
+    private Double sellPrice = 0.0;
+    @Builder.Default
+    private Double sellValue = 0.0;
+    @Builder.Default
+    private Double sellM2M = 0.0;
 
     // Day trading details
-    private Integer dayBuyQuantity;
-    private Double dayBuyPrice;
-    private Double dayBuyValue;
-    private Integer daySellQuantity;
-    private Double daySellPrice;
-    private Double daySellValue;
+    @Builder.Default
+    private Integer dayBuyQuantity = 0;
+    @Builder.Default
+    private Double dayBuyPrice = 0.0;
+    @Builder.Default
+    private Double dayBuyValue = 0.0;
+    @Builder.Default
+    private Integer daySellQuantity = 0;
+    @Builder.Default
+    private Double daySellPrice = 0.0;
+    @Builder.Default
+    private Double daySellValue = 0.0;
 
     // P&L details
-    private Double pnl;
-    private Double realised;
-    private Double unrealised;
-    private Double m2m;
+    @Builder.Default
+    private Double pnl = 0.0;
+    @Builder.Default
+    private Double realised = 0.0;
+    @Builder.Default
+    private Double unrealised = 0.0;
+    @Builder.Default
+    private Double m2m = 0.0;
 
     // Current market price
-    private Double lastPrice;
-    private Double closePrice;
-    private Double value;
+    @Builder.Default
+    private Double lastPrice = 0.0;
+    @Builder.Default
+    private Double closePrice = 0.0;
+    @Builder.Default
+    private Double value = 0.0;
 
     private LocalDateTime lastUpdated;
 }
-
