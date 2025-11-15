@@ -1,7 +1,7 @@
 # Zerodha Trading Bot - Complete API & Functionality Documentation
 
-**Version:** 2.1.0  
-**Last Updated:** November 12, 2025  
+**Version:** 2.2.0  
+**Last Updated:** November 15, 2025  
 **Base URL (Development):** `http://localhost:8080`  
 **Base URL (Production):** `https://your-app.onrender.com`
 
@@ -25,6 +25,8 @@
 14. [Configuration](#configuration)
 15. [Error Handling](#error-handling)
 16. [Code Examples](#code-examples)
+17. [Historical Replay APIs](#historical-replay-apis)
+18. [Changelog](#changelog)
 
 ---
 
@@ -45,14 +47,15 @@ A comprehensive Spring Boot backend application for automated trading using Zero
 ✅ **Order Charges**: Calculate brokerage and charges before placing orders  
 ✅ **Individual Leg Exit**: Close individual legs of multi-leg strategies  
 ✅ **Delta-Based Strike Selection**: Accurate ATM strike selection using Black-Scholes  
+✅ **Historical Replay (Backtest-like)**: Execute strategies over the most recent day's data with per-second replay derived from minute candles
 
 ---
 
 ## Technology Stack
 
-- **Java 21**
+- **Java 17**
 - **Spring Boot 3.2.0**
-- **Kite Connect Java SDK 3.2.0**
+- **Kite Connect Java SDK 3.5.1**
 - **Maven**
 - **Swagger/OpenAPI** for API documentation
 - **Lombok** for reducing boilerplate code
@@ -64,7 +67,7 @@ A comprehensive Spring Boot backend application for automated trading using Zero
 
 ### Prerequisites
 
-1. **Java 21** or higher
+1. **Java 17** or higher
 2. **Maven 3.6+**
 3. **Zerodha Kite Connect API credentials** (API Key and API Secret)
 4. Active Zerodha trading account
@@ -1870,123 +1873,103 @@ async function calculateCharges() {
 
 ---
 
-### Python Examples
+#### 8. Execute Strategy with Historical Replay (JavaScript)
 
-#### 1. Authentication Flow
+```javascript
+async function executeHistoricalReplay() {
+  const payload = {
+    strategyType: 'ATM_STRADDLE',
+    instrumentType: 'NIFTY',
+    expiry: 'WEEKLY',
+    lots: 1,
+    orderType: 'MARKET',
+    stopLossPoints: 10.0,
+    targetPoints: 15.0
+  };
 
-```python
-import requests
+  const response = await fetch('http://localhost:8080/api/historical/execute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
 
-BASE_URL = "http://localhost:8080"
-
-# Step 1: Get login URL
-def get_login_url():
-    response = requests.get(f"{BASE_URL}/api/auth/login-url")
-    data = response.json()
-    
-    if data['success']:
-        print(f"Login URL: {data['data']}")
-        return data['data']
-
-# Step 2: Generate session
-def generate_session(request_token):
-    payload = {"requestToken": request_token}
-    response = requests.post(
-        f"{BASE_URL}/api/auth/session",
-        json=payload
-    )
-    data = response.json()
-    
-    if data['success']:
-        print(f"Logged in as: {data['data']['userName']}")
-        return data['data']['accessToken']
-```
-
----
-
-#### 2. Execute Strategy
-
-```python
-def execute_strategy():
-    payload = {
-        "strategyType": "ATM_STRADDLE",
-        "instrumentType": "NIFTY",
-        "expiry": "WEEKLY",
-        "lots": 1,
-        "stopLossPoints": 10.0,
-        "targetPoints": 15.0
-    }
-    
-    response = requests.post(
-        f"{BASE_URL}/api/strategies/execute",
-        json=payload
-    )
-    data = response.json()
-    
-    if data['success']:
-        print(f"Strategy executed: {data['data']['executionId']}")
-        print(f"Total Premium: ₹{data['data']['totalPremium']}")
-        return data['data']
-    else:
-        print(f"Error: {data['message']}")
-```
-
----
-
-#### 3. Monitor Strategy
-
-```python
-import time
-
-def monitor_strategy(execution_id):
-    while True:
-        response = requests.get(
-            f"{BASE_URL}/api/strategies/{execution_id}"
-        )
-        data = response.json()
-        
-        if data['success']:
-            strategy = data['data']
-            print(f"Status: {strategy['status']}")
-            print(f"P&L: ₹{strategy['profitLoss']}")
-            
-            if strategy['status'] == 'COMPLETED':
-                print("Strategy completed!")
-                break
-        
-        time.sleep(5)  # Check every 5 seconds
-```
-
----
-
-## Health Check
-
-### Health Check Endpoint
-
-**Endpoint:** `GET /health`
-
-**Response:**
-```json
-{
-  "status": "UP",
-  "timestamp": "2025-11-09 09:15:00"
+  const data = await response.json();
+  if (data.success) {
+    console.log('Historical execution started:', data.data.executionId);
+  } else {
+    console.error('Historical execution failed:', data.message);
+  }
 }
 ```
 
 ---
 
-## Support and Contact
+## Historical Replay APIs
 
-For issues, questions, or feature requests:
+Backtest-like execution using the most recent trading day's historical data. Designed to reuse existing strategy and monitoring flows in paper mode while replaying prices per-second.
 
-1. Check the API documentation at `/swagger-ui.html`
-2. Review error messages and logs
-3. Ensure Kite Connect credentials are valid
-4. Verify market hours for trading operations
+### 1. Execute Strategy with Historical Replay
+
+**Endpoint:** `POST /api/historical/execute`
+
+**Prerequisites:**
+- Paper trading must be enabled (`trading.paper-trading-enabled: true`).
+- A valid Kite session (access token) must be active.
+
+**How it works:**
+- The system executes the selected strategy in paper mode (same request shape as live execute).
+- It then replays the most recent trading day's session (09:15–15:30 IST) for the option legs involved.
+- Second-wise prices are synthesized by linearly interpolating minute candles from Kite Historical API.
+- Monitoring and exits (SL/Target/leg thresholds) run as usual; replay runs asynchronously.
+
+**Request Body (same as /api/strategies/execute):**
+```json
+{
+  "strategyType": "ATM_STRADDLE",
+  "instrumentType": "NIFTY",
+  "expiry": "WEEKLY",
+  "lots": 1,
+  "orderType": "MARKET",
+  "stopLossPoints": 10.0,
+  "targetPoints": 15.0,
+  "autoSquareOff": false
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Historical execution started",
+  "data": {
+    "executionId": "abc123-def456-ghi789",
+    "status": "ACTIVE",
+    "orders": [
+      { "orderId": "...", "tradingSymbol": "...", "optionType": "CE", "strike": 24000.0, "quantity": 50, "entryPrice": 120.50, "status": "COMPLETE" },
+      { "orderId": "...", "tradingSymbol": "...", "optionType": "PE", "strike": 24000.0, "quantity": 50, "entryPrice": 115.75, "status": "COMPLETE" }
+    ],
+    "totalPremium": 11812.50,
+    "currentValue": 11812.50,
+    "profitLoss": 0.0,
+    "profitLossPercentage": 0.0
+  }
+}
+```
+
+**Notes & Limitations:**
+- Replay uses minute candles for the latest trading day and derives second-wise prices by interpolation; this is not tick-by-tick accuracy.
+- Replay is accelerated (milliseconds per simulated second) to complete in reasonable time.
+- Endpoint is only available in paper mode; requests in live mode will be rejected.
 
 ---
 
 ## Changelog
+
+### Version 2.2.0 (November 15, 2025)
+- ✅ Added Historical Replay API: `POST /api/historical/execute`
+- ✅ Paper-mode backtest-style execution over most recent trading day (per-second replay from minute candles)
+- ✅ Non-breaking: existing live and paper flows unchanged
+- 🔧 Documentation updates (stack versions, examples, monitoring notes)
 
 ### Version 2.1.0 (November 12, 2025)
 - ✅ Added individual leg exit functionality
@@ -2018,4 +2001,3 @@ This project is for educational and testing purposes only. Use at your own risk.
 ---
 
 **End of Documentation**
-

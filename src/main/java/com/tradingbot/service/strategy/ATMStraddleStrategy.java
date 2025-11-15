@@ -328,7 +328,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
     private void startWebSocketMonitoring(String executionId, PositionMonitor monitor,
                                           double callEntryPrice, double putEntryPrice) {
-        if (!webSocketService.isConnected()) {
+        if (!webSocketService.isWebSocketConnected()) {
             webSocketService.connect();
         }
 

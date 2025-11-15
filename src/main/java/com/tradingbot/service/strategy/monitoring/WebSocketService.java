@@ -42,9 +42,28 @@ public class WebSocketService implements DisposableBean {
     private static final int MAX_RECONNECT_ATTEMPTS = 10;
     private static final long INITIAL_RECONNECT_DELAY_SECONDS = 5;
 
+    // Controls whether to actually perform live subscription/connect. Useful for historical replay.
+    private volatile boolean liveSubscriptionEnabled = true;
+
     @PostConstruct
     public void init() {
         this.reconnectScheduler = Executors.newSingleThreadScheduledExecutor();
+    }
+
+    /**
+     * Unambiguous connection status accessor to avoid any naming clashes.
+     */
+    public boolean isWebSocketConnected() {
+        return isConnected.get();
+    }
+
+    /**
+     * Enable/disable live WebSocket subscription. When disabled, startMonitoring will register monitors
+     * but will not attempt to connect/subscribe to live ticks. Synthetic ticks can still be fed.
+     */
+    public void setLiveSubscriptionEnabled(boolean enabled) {
+        this.liveSubscriptionEnabled = enabled;
+        log.info("Live WebSocket subscription {}", enabled ? "ENABLED" : "DISABLED");
     }
 
     /**
@@ -60,6 +79,10 @@ public class WebSocketService implements DisposableBean {
      * This method is idempotent and thread-safe.
      */
     public void connect() {
+        if (!liveSubscriptionEnabled) {
+            log.info("Live WebSocket subscription disabled; skipping connect().");
+            return;
+        }
         if (isConnected.get() || isConnecting.get()) {
             log.debug("WebSocket connection attempt ignored: already connected or connecting.");
             return;
@@ -177,6 +200,10 @@ public class WebSocketService implements DisposableBean {
     }
 
     private void scheduleReconnection(int attempt) {
+        if (!liveSubscriptionEnabled) {
+            log.info("Live subscription disabled; not scheduling reconnection.");
+            return;
+        }
         if (attempt > MAX_RECONNECT_ATTEMPTS) {
             log.error("Exceeded max reconnection attempts. Please check the connection and credentials.");
             return;
@@ -253,6 +280,10 @@ public class WebSocketService implements DisposableBean {
     }
 
     private void subscribe(List<Long> tokens) {
+        if (!liveSubscriptionEnabled) {
+            log.info("Live subscription disabled; skipping subscribe() for {} tokens.", tokens.size());
+            return;
+        }
         if (!isConnected.get()) {
             log.warn("Cannot subscribe - WebSocket not connected. Will attempt to connect.");
             connect(); // connect() is non-blocking and safe to call
@@ -270,6 +301,10 @@ public class WebSocketService implements DisposableBean {
     }
 
     private void unsubscribe(List<Long> tokens) {
+        if (!liveSubscriptionEnabled) {
+            log.info("Live subscription disabled; skipping unsubscribe() for {} tokens.", tokens.size());
+            return;
+        }
         if (!isConnected.get() || ticker == null) {
             log.warn("Cannot unsubscribe - WebSocket not connected.");
             return;
@@ -299,6 +334,10 @@ public class WebSocketService implements DisposableBean {
     }
 
     private void resubscribeAll() {
+        if (!liveSubscriptionEnabled) {
+            log.info("Live subscription disabled; skipping resubscribeAll().");
+            return;
+        }
         Set<Long> allTokens = instrumentToExecutions.keySet();
         if (!allTokens.isEmpty()) {
             log.info("Resubscribing to {} active instruments after reconnection.", allTokens.size());
@@ -338,5 +377,24 @@ public class WebSocketService implements DisposableBean {
      */
     public int getActiveMonitorsCount() {
         return activeMonitors.size();
+    }
+
+    // --- Additions for historical replay ---
+
+    /**
+     * Get the monitor for a specific execution id, if any.
+     */
+    public Optional<PositionMonitor> getMonitor(String executionId) {
+        return Optional.ofNullable(activeMonitors.get(executionId));
+    }
+
+    /**
+     * Feed synthetic ticks directly to a specific execution's monitor.
+     */
+    public void feedTicks(String executionId, ArrayList<Tick> ticks) {
+        PositionMonitor monitor = activeMonitors.get(executionId);
+        if (monitor != null && monitor.isActive()) {
+            monitor.updatePriceWithDifferenceCheck(ticks);
+        }
     }
 }

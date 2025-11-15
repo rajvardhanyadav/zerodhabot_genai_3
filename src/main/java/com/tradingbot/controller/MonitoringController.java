@@ -28,7 +28,7 @@ public class MonitoringController {
                description = "Check if WebSocket is connected and number of active monitors")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getStatus() {
         Map<String, Object> status = Map.of(
-            "connected", webSocketService.isConnected(),
+            "connected", webSocketService.isWebSocketConnected(),
             "activeMonitors", webSocketService.getActiveMonitorsCount()
         );
         return ResponseEntity.ok(ApiResponse.success(status));

@@ -79,6 +79,27 @@ public class PositionMonitor {
         checkAndTriggerIndividualLegExits();
     }
 
+    // --- New helper for historical replay ---
+    /**
+     * Update prices using a map of instrumentToken -> lastPrice and run threshold checks.
+     */
+    public void updateWithTokenPrices(Map<Long, Double> tokenPrices) {
+        if (!active || tokenPrices == null || tokenPrices.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<Long, Double> e : tokenPrices.entrySet()) {
+            LegMonitor leg = legsByInstrumentToken.get(e.getKey());
+            if (leg != null && e.getValue() != null) {
+                leg.setCurrentPrice(e.getValue());
+                log.debug("Price updated for {}: {}", leg.getSymbol(), leg.getCurrentPrice());
+            }
+        }
+        if (checkAndTriggerAllLegsExit()) {
+            return;
+        }
+        checkAndTriggerIndividualLegExits();
+    }
+
     private void updateLegPrices(ArrayList<Tick> ticks) {
         for (Tick tick : ticks) {
             LegMonitor leg = legsByInstrumentToken.get(tick.getInstrumentToken());
