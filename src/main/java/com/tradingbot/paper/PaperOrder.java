@@ -7,6 +7,8 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
+import static com.tradingbot.service.TradingConstants.*;
+
 /**
  * Paper Trading Order - In-memory representation of a simulated order
  */
@@ -61,8 +63,8 @@ public class PaperOrder {
                 .orderId(orderId)
                 .exchangeOrderId("PAPER" + orderId)
                 .placedBy(userId)
-                .variety("regular")
-                .status("PENDING")
+                .variety(VARIETY_REGULAR)
+                .status(STATUS_PENDING)
                 .tradingSymbol(tradingSymbol)
                 .exchange(exchange)
                 .instrumentToken(instrumentToken)
@@ -79,7 +81,7 @@ public class PaperOrder {
                 .disclosedQuantity(disclosedQuantity != null ? disclosedQuantity : 0)
                 .validity(validity)
                 .orderTimestamp(LocalDateTime.now())
-                .statusMessage("Order placed")
+                .statusMessage(MSG_ORDER_PLACED_SUCCESS)
                 .brokerageCharges(0.0)
                 .taxes(0.0)
                 .totalCharges(0.0)

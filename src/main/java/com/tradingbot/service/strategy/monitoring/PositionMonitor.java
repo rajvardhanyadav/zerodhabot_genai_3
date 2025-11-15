@@ -20,8 +20,14 @@ import java.util.function.BiConsumer;
 @Data
 public class PositionMonitor {
 
+    private static final double INDIVIDUAL_LEG_CLOSE_THRESHOLD = -1.5;
+    private static final double ALL_LEGS_CLOSE_THRESHOLD = 3.0;
+    private static final String EXIT_REASON_PRICE_DIFF_ALL_LEGS = "PRICE_DIFF_ALL_LEGS (Triggered by: %s)";
+    private static final String EXIT_REASON_PRICE_DIFF_INDIVIDUAL = "PRICE_DIFF_INDIVIDUAL (Leg: %s, Diff: %.2f points)";
+
     private final String executionId;
-    private final Map<String, LegMonitor> legs = new ConcurrentHashMap<>();
+    private final Map<String, LegMonitor> legsBySymbol = new ConcurrentHashMap<>();
+    private final Map<Long, LegMonitor> legsByInstrumentToken = new ConcurrentHashMap<>();
     private final double stopLossPoints;
     private final double targetPoints;
     @Setter
@@ -45,7 +51,8 @@ public class PositionMonitor {
                        double entryPrice, int quantity, String type) {
         LegMonitor leg = new LegMonitor(orderId, symbol, instrumentToken,
                                         entryPrice, quantity, type);
-        legs.put(symbol, leg);
+        legsBySymbol.put(symbol, leg);
+        legsByInstrumentToken.put(instrumentToken, leg);
         log.info("Added leg to monitor: {} at entry price: {}", symbol, entryPrice);
     }
 
@@ -63,63 +70,63 @@ public class PositionMonitor {
             return;
         }
 
-        // Track maximum difference found across all legs
-        double maxDifference = Double.NEGATIVE_INFINITY;
-        String maxDiffLegSymbol = null;
-        List<String> legsToClose = new ArrayList<>();
+        updateLegPrices(ticks);
 
-        // Update prices and check differences
+        if (checkAndTriggerAllLegsExit()) {
+            return; // Exit if all legs are closed
+        }
+
+        checkAndTriggerIndividualLegExits();
+    }
+
+    private void updateLegPrices(ArrayList<Tick> ticks) {
         for (Tick tick : ticks) {
-            long tickInstrumentToken = tick.getInstrumentToken();
-            double ltp = tick.getLastTradedPrice();
+            LegMonitor leg = legsByInstrumentToken.get(tick.getInstrumentToken());
+            if (leg != null) {
+                leg.setCurrentPrice(tick.getLastTradedPrice());
+                log.debug("Price updated for {}: {}", leg.getSymbol(), leg.getCurrentPrice());
+            }
+        }
+    }
 
-            // Find matching leg and update
-            for (LegMonitor leg : legs.values()) {
-                if (leg.instrumentToken == tickInstrumentToken) {
-                    // Update price and P&L
-                    leg.currentPrice = ltp;
+    private boolean checkAndTriggerAllLegsExit() {
+        double maxDifference = Double.NEGATIVE_INFINITY;
+        String triggerLegSymbol = null;
 
-                    // Calculate signed price difference (positive = profit, negative = loss)
-                    double priceDifference = ltp - leg.entryPrice;
-
-                    log.debug("Price diff check for {}: Entry={}, Current={}, Diff={}",
-                             leg.symbol, leg.entryPrice, ltp, priceDifference);
-
-                    // Track maximum difference
-                    if (priceDifference > maxDifference) {
-                        maxDifference = priceDifference;
-                        maxDiffLegSymbol = leg.symbol;
-                    }
-
-                    // Mark legs that need to be closed (difference <= -1.5, i.e., loss of 1.5+ points)
-                    if (priceDifference <= -1.5) {
-                        legsToClose.add(leg.symbol);
-                        log.info("Leg {} marked for closure (loss): Diff={} points", leg.symbol, priceDifference);
-                    }
-
-                    break; // Found matching leg, move to next tick
-                }
+        for (LegMonitor leg : legsBySymbol.values()) {
+            double priceDifference = leg.getCurrentPrice() - leg.getEntryPrice();
+            if (priceDifference > maxDifference) {
+                maxDifference = priceDifference;
+                triggerLegSymbol = leg.getSymbol();
             }
         }
 
-        // Check if we need to close all legs (max difference >= 3, i.e., profit of 3+ points)
-        if (maxDifference >= 3.0) {
+        if (maxDifference >= ALL_LEGS_CLOSE_THRESHOLD) {
             log.warn("Price difference threshold (3+) hit for {}: Diff={} points - Closing ALL legs",
-                     maxDiffLegSymbol, maxDifference);
-            triggerExitAllLegs(maxDiffLegSymbol);
-            return;
+                    triggerLegSymbol, maxDifference);
+            triggerExitAllLegs(triggerLegSymbol);
+            return true;
+        }
+        return false;
+    }
+
+    private void checkAndTriggerIndividualLegExits() {
+        List<String> legsToClose = new ArrayList<>();
+        for (LegMonitor leg : legsBySymbol.values()) {
+            double priceDifference = leg.getCurrentPrice() - leg.getEntryPrice();
+            if (priceDifference <= INDIVIDUAL_LEG_CLOSE_THRESHOLD) {
+                legsToClose.add(leg.getSymbol());
+                log.info("Leg {} marked for closure (loss): Diff={} points", leg.getSymbol(), priceDifference);
+            }
         }
 
-        // Close individual legs if difference <= -1.5 (loss)
-        if (!legsToClose.isEmpty()) {
-            for (String legSymbol : legsToClose) {
-                LegMonitor leg = legs.get(legSymbol);
-                if (leg != null) {
-                    double diff = leg.currentPrice - leg.entryPrice;
-                    log.warn("Price difference threshold (-1.5 or less) hit for {}: Entry={}, Current={}, Diff={} points - Closing individual leg",
-                             legSymbol, leg.entryPrice, leg.currentPrice, diff);
-                    triggerIndividualLegExit(legSymbol, diff);
-                }
+        for (String legSymbol : legsToClose) {
+            LegMonitor leg = legsBySymbol.get(legSymbol);
+            if (leg != null) {
+                double diff = leg.getCurrentPrice() - leg.getEntryPrice();
+                log.warn("Price difference threshold (-1.5 or less) hit for {}: Entry={}, Current={}, Diff={} points - Closing individual leg",
+                        legSymbol, leg.getEntryPrice(), leg.getCurrentPrice(), diff);
+                triggerIndividualLegExit(legSymbol, diff);
             }
         }
     }
@@ -133,7 +140,7 @@ public class PositionMonitor {
         }
 
         active = false;
-        exitReason = "PRICE_DIFF_ALL_LEGS (Triggered by: " + triggerLeg + ")";
+        exitReason = String.format(EXIT_REASON_PRICE_DIFF_ALL_LEGS, triggerLeg);
 
         log.warn("Triggering exit for execution {} - Reason: {}", executionId, exitReason);
 
@@ -146,20 +153,21 @@ public class PositionMonitor {
      * Trigger exit for an individual leg
      */
     private void triggerIndividualLegExit(String legSymbol, double priceDifference) {
-        LegMonitor leg = legs.get(legSymbol);
+        LegMonitor leg = legsBySymbol.get(legSymbol);
         if (leg == null) {
             log.warn("Cannot close leg {}: not found in monitor", legSymbol);
             return;
         }
 
-        String exitReason = String.format("PRICE_DIFF_INDIVIDUAL (Leg: %s, Diff: %.2f points)",
+        String exitReason = String.format(EXIT_REASON_PRICE_DIFF_INDIVIDUAL,
                                          legSymbol, priceDifference);
 
         log.warn("Triggering individual leg exit for {} in execution {} - Reason: {}",
                  legSymbol, executionId, exitReason);
 
         // Remove the leg from monitoring
-        legs.remove(legSymbol);
+        legsBySymbol.remove(legSymbol);
+        legsByInstrumentToken.remove(leg.getInstrumentToken());
 
         // If individualLegExitCallback is set, use it; otherwise fall back to exitCallback
         if (individualLegExitCallback != null) {
@@ -171,7 +179,7 @@ public class PositionMonitor {
         }
 
         // If no more legs remain, deactivate the monitor
-        if (legs.isEmpty()) {
+        if (legsBySymbol.isEmpty()) {
             active = false;
             log.info("All legs closed for execution {}, deactivating monitor", executionId);
         }
@@ -189,7 +197,7 @@ public class PositionMonitor {
      * Get all legs
      */
     public List<LegMonitor> getLegs() {
-        return List.copyOf(legs.values());
+        return List.copyOf(legsBySymbol.values());
     }
 
     /**

@@ -8,6 +8,7 @@ import com.tradingbot.dto.StrategyTypeInfo;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyType;
 import com.tradingbot.service.StrategyService;
+import com.tradingbot.util.ApiConstants;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -37,19 +38,19 @@ public class StrategyController {
                description = "Execute a configured trading strategy (ATM Straddle, ATM Strangle, etc.)")
     public ResponseEntity<ApiResponse<StrategyExecutionResponse>> executeStrategy(
             @Valid @RequestBody StrategyRequest request) throws KiteException, IOException {
-        log.info("API Request - Execute strategy: {} for instrument: {}", request.getStrategyType(), request.getInstrumentType());
+        log.info(ApiConstants.LOG_EXECUTE_STRATEGY_REQUEST, request.getStrategyType(), request.getInstrumentType());
         StrategyExecutionResponse response = strategyService.executeStrategy(request);
-        log.info("API Response - Strategy execution completed: {} with status: {}", response.getExecutionId(), response.getStatus());
-        return ResponseEntity.ok(ApiResponse.success("Strategy executed successfully", response));
+        log.info(ApiConstants.LOG_EXECUTE_STRATEGY_RESPONSE, response.getExecutionId(), response.getStatus());
+        return ResponseEntity.ok(ApiResponse.success(ApiConstants.MSG_STRATEGY_EXECUTED_SUCCESS, response));
     }
 
     @GetMapping("/active")
     @Operation(summary = "Get all active strategies",
                description = "Fetch all currently active strategy executions being monitored")
     public ResponseEntity<ApiResponse<List<StrategyExecution>>> getActiveStrategies() {
-        log.debug("API Request - Get all active strategies");
+        log.debug(ApiConstants.LOG_GET_ACTIVE_STRATEGIES_REQUEST);
         List<StrategyExecution> strategies = strategyService.getActiveStrategies();
-        log.debug("API Response - Found {} active strategies", strategies.size());
+        log.debug(ApiConstants.LOG_GET_ACTIVE_STRATEGIES_RESPONSE, strategies.size());
         return ResponseEntity.ok(ApiResponse.success(strategies));
     }
 
@@ -57,13 +58,13 @@ public class StrategyController {
     @Operation(summary = "Get strategy execution details by ID",
                description = "Fetch specific strategy execution details including current P&L and status")
     public ResponseEntity<ApiResponse<StrategyExecution>> getStrategy(@PathVariable String executionId) {
-        log.debug("API Request - Get strategy details for executionId: {}", executionId);
+        log.debug(ApiConstants.LOG_GET_STRATEGY_REQUEST, executionId);
         StrategyExecution strategy = strategyService.getStrategy(executionId);
         if (strategy == null) {
-            log.warn("API Response - Strategy not found: {}", executionId);
+            log.warn(ApiConstants.LOG_GET_STRATEGY_RESPONSE_NOT_FOUND, executionId);
             return ResponseEntity.notFound().build();
         }
-        log.debug("API Response - Strategy found: {} with status: {}", executionId, strategy.getStatus());
+        log.debug(ApiConstants.LOG_GET_STRATEGY_RESPONSE_FOUND, executionId, strategy.getStatus());
         return ResponseEntity.ok(ApiResponse.success(strategy));
     }
 
@@ -71,7 +72,7 @@ public class StrategyController {
     @Operation(summary = "Get available strategy types",
                description = "List all supported strategy types with their implementation status")
     public ResponseEntity<ApiResponse<List<StrategyTypeInfo>>> getStrategyTypes() {
-        log.debug("API Request - Get available strategy types");
+        log.debug(ApiConstants.LOG_GET_STRATEGY_TYPES_REQUEST);
         List<StrategyTypeInfo> types = Arrays.stream(StrategyType.values())
             .map(type -> new StrategyTypeInfo(
                 type.name(),
@@ -80,7 +81,7 @@ public class StrategyController {
             ))
             .collect(Collectors.toList());
 
-        log.debug("API Response - Returning {} strategy types", types.size());
+        log.debug(ApiConstants.LOG_GET_STRATEGY_TYPES_RESPONSE, types.size());
         return ResponseEntity.ok(ApiResponse.success(types));
     }
 
@@ -88,7 +89,7 @@ public class StrategyController {
     @Operation(summary = "Get available instruments",
                description = "Fetch available instruments with their lot sizes and strike intervals")
     public ResponseEntity<ApiResponse<List<InstrumentInfo>>> getInstruments() throws KiteException, IOException {
-        log.debug("API Request - Get available instruments");
+        log.debug(ApiConstants.LOG_GET_INSTRUMENTS_REQUEST);
         List<StrategyService.InstrumentDetail> instrumentDetails = strategyService.getAvailableInstruments();
 
         List<InstrumentInfo> instruments = instrumentDetails.stream()
@@ -99,8 +100,6 @@ public class StrategyController {
                 detail.strikeInterval()
             ))
             .collect(Collectors.toList());
-
-        log.debug("API Response - Returning {} instruments", instruments.size());
         return ResponseEntity.ok(ApiResponse.success(instruments));
     }
 
@@ -111,47 +110,34 @@ public class StrategyController {
             throws KiteException, IOException {
         log.debug("API Request - Get expiries for instrument: {}", instrumentType);
         List<String> expiries = strategyService.getAvailableExpiries(instrumentType);
-        log.debug("API Response - Found {} expiries for {}", expiries.size(), instrumentType);
         return ResponseEntity.ok(ApiResponse.success(expiries));
     }
 
-    @DeleteMapping("/stop/{executionId}")
-    @Operation(summary = "Stop a specific strategy",
-               description = "Close all legs of a strategy execution at market price and mark as completed")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> stopStrategy(@PathVariable String executionId)
-            throws KiteException, IOException {
-        log.info("Request to stop strategy: {}", executionId);
+    @PostMapping("/stop/{executionId}")
+    @Operation(summary = "Stop a running strategy",
+               description = "Stop a running strategy by closing all its open positions")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> stopStrategy(@PathVariable String executionId) throws KiteException {
         Map<String, Object> result = strategyService.stopStrategy(executionId);
         return ResponseEntity.ok(ApiResponse.success("Strategy stopped successfully", result));
     }
 
     @PostMapping("/stop-all")
     @Operation(summary = "Stop all active strategies",
-               description = "Close all legs of all active strategy executions at market price")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> stopAllStrategies() throws KiteException, IOException {
-        log.info("Request to stop all active strategies");
+               description = "Stop all active strategies by closing all open positions")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> stopAllStrategies() throws KiteException {
         Map<String, Object> result = strategyService.stopAllActiveStrategies();
         return ResponseEntity.ok(ApiResponse.success("All active strategies stopped", result));
     }
 
-    /**
-     * Get strategy description by type
-     */
-    private String getStrategyDescription(StrategyType type) {
-        return switch (type) {
-            case ATM_STRADDLE -> "Buy ATM Call + Buy ATM Put (Non-directional strategy with delta-based strike selection)";
-            case ATM_STRANGLE -> "Buy OTM Call + Buy OTM Put (Lower cost than straddle)";
-            case BULL_CALL_SPREAD -> "Bullish strategy using call options";
-            case BEAR_PUT_SPREAD -> "Bearish strategy using put options";
-            case IRON_CONDOR -> "Range-bound strategy with limited risk";
-            case CUSTOM -> "Custom strategy configuration";
-        };
-    }
-
-    /**
-     * Check if strategy type is implemented
-     */
     private boolean isImplemented(StrategyType type) {
         return type == StrategyType.ATM_STRADDLE || type == StrategyType.ATM_STRANGLE;
+    }
+
+    private String getStrategyDescription(StrategyType type) {
+        return switch (type) {
+            case ATM_STRADDLE -> "Buy 1 ATM Call + Buy 1 ATM Put (Non-directional, profits from high volatility)";
+            case ATM_STRANGLE -> "Buy 1 OTM Call + Buy 1 OTM Put (Non-directional, cheaper than Straddle)";
+            default -> "Strategy not yet implemented";
+        };
     }
 }

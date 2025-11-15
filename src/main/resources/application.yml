@@ -15,7 +15,7 @@ kite:
 # Paper Trading Configuration
 trading:
   # Master switch: true = Paper Trading, false = Live Trading
-  paper-trading-enabled: false
+  paper-trading-enabled: true
 
   # Initial virtual balance for paper trading (in INR)
   initial-balance: 1000000.0

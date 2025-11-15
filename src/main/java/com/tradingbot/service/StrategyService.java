@@ -14,6 +14,8 @@ import com.zerodhatech.models.Instrument;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import com.tradingbot.util.StrategyConstants;
+
 
 import java.io.IOException;
 import java.text.SimpleDateFormat;
@@ -58,9 +60,9 @@ public class StrategyService {
             StrategyExecutionResponse response = strategy.execute(request, executionId, this::markStrategyAsCompleted);
 
             // Set execution status based on response status
-            if ("ACTIVE".equalsIgnoreCase(response.getStatus())) {
+            if (StrategyStatus.ACTIVE.name().equalsIgnoreCase(response.getStatus())) {
                 execution.setStatus(StrategyStatus.ACTIVE);
-                execution.setMessage("Strategy active - positions being monitored");
+                execution.setMessage(StrategyConstants.MSG_STRATEGY_ACTIVE);
 
                 // Store order legs for later stopping
                 if (response.getOrders() != null && !response.getOrders().isEmpty()) {
@@ -68,9 +70,9 @@ public class StrategyService {
                 }
 
                 log.info("Strategy {} is ACTIVE - positions being monitored", executionId);
-            } else if ("COMPLETED".equalsIgnoreCase(response.getStatus())) {
+            } else if (StrategyStatus.COMPLETED.name().equalsIgnoreCase(response.getStatus())) {
                 execution.setStatus(StrategyStatus.COMPLETED);
-                execution.setMessage("Strategy executed and completed successfully");
+                execution.setMessage(StrategyConstants.MSG_STRATEGY_COMPLETED);
                 log.info("Strategy {} COMPLETED successfully", executionId);
             } else {
                 execution.setStatus(StrategyStatus.FAILED);
@@ -274,7 +276,7 @@ public class StrategyService {
      * Common method to exit all legs for any strategy
      */
     private Map<String, Object> exitAllLegs(String executionId, List<StrategyExecution.OrderLeg> orderLegs) throws KiteException {
-        String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
+        String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? StrategyConstants.TRADING_MODE_PAPER : StrategyConstants.TRADING_MODE_LIVE;
         log.info("[{} MODE] Exiting all legs for execution {}: {} legs", tradingMode, executionId, orderLegs.size());
 
         List<Map<String, String>> exitOrders = new ArrayList<>();
@@ -305,7 +307,7 @@ public class StrategyService {
 
                 exitOrders.add(orderResult);
 
-                if ("SUCCESS".equals(response.getStatus())) {
+                if (STATUS_SUCCESS.equals(response.getStatus())) {
                     successCount++;
                     log.info("[{} MODE] Successfully closed {} leg: {}", tradingMode, leg.getOptionType(), leg.getTradingSymbol());
                 } else {
@@ -319,7 +321,7 @@ public class StrategyService {
                 Map<String, String> orderResult = new HashMap<>();
                 orderResult.put("tradingSymbol", leg.getTradingSymbol());
                 orderResult.put("optionType", leg.getOptionType());
-                orderResult.put("status", "FAILED");
+                orderResult.put("status", STATUS_FAILED);
                 orderResult.put("message", "Exception: " + e.getMessage());
                 exitOrders.add(orderResult);
             }
@@ -339,7 +341,7 @@ public class StrategyService {
         result.put("successCount", successCount);
         result.put("failureCount", failureCount);
         result.put("exitOrders", exitOrders);
-        result.put("status", failureCount == 0 ? "SUCCESS" : "PARTIAL");
+        result.put("status", failureCount == 0 ? STATUS_SUCCESS : STATUS_PARTIAL);
 
         log.info("[{} MODE] Exited all legs for execution {} - {} closed successfully, {} failed",
                  tradingMode, executionId, successCount, failureCount);
@@ -375,7 +377,7 @@ public class StrategyService {
         execution.setStatus(StrategyStatus.COMPLETED);
         execution.setMessage(String.format("Strategy stopped manually - %d legs closed successfully, %d failed", successCount, failureCount));
 
-        String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? "PAPER" : "LIVE";
+        String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? StrategyConstants.TRADING_MODE_PAPER : StrategyConstants.TRADING_MODE_LIVE;
         log.info("[{} MODE] Strategy {} stopped - {} legs closed successfully, {} failed",
                  tradingMode, executionId, successCount, failureCount);
 
@@ -422,7 +424,7 @@ public class StrategyService {
                 log.error("Error stopping strategy {}: {}", execution.getExecutionId(), e.getMessage());
                 Map<String, Object> errorResult = new HashMap<>();
                 errorResult.put("executionId", execution.getExecutionId());
-                errorResult.put("status", "ERROR");
+                errorResult.put("status", STATUS_FAILED);
                 errorResult.put("message", e.getMessage());
                 results.add(errorResult);
             }

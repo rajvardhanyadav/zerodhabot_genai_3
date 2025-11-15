@@ -8,6 +8,7 @@ import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Instrument;
 import com.zerodhatech.models.LTPQuote;
 import com.zerodhatech.models.Order;
+import com.zerodhatech.models.Quote;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -32,7 +33,7 @@ public abstract class BaseStrategy implements TradingStrategy {
 
     // Constants for Black-Scholes calculation
     private static final double RISK_FREE_RATE = 0.05; // 5% annual risk-free rate (approximate)
-    private static final double VOLATILITY = 0.15; // 15% annualized volatility (approximate)
+//    private static final double VOLATILITY = 0.15; // 15% annualized volatility (approximate)
 
     /**
      * Get current spot price for the instrument
@@ -90,7 +91,7 @@ public abstract class BaseStrategy implements TradingStrategy {
         double minDeltaDifference = Double.MAX_VALUE;
 
         for (Double strike : strikesToCheck) {
-            double callDelta = calculateCallDelta(spotPrice, strike, timeToExpiry);
+            double callDelta = calculateCallDelta(spotPrice, strike, timeToExpiry, instrumentType, expiry);
             double deltaDifference = Math.abs(callDelta - 0.5);
 
             log.debug("Strike: {}, Call Delta: {}, Delta Diff from 0.5: {}",
@@ -136,23 +137,37 @@ public abstract class BaseStrategy implements TradingStrategy {
      * @param timeToExpiry Time to expiry in years
      * @return Call option delta (0 to 1)
      */
-    private double calculateCallDelta(double spotPrice, double strikePrice, double timeToExpiry) {
+    private double calculateCallDelta(double spotPrice, double strikePrice, double timeToExpiry, String instrumentType, Date expiry) {
         if (timeToExpiry <= 0) {
             return spotPrice >= strikePrice ? 1.0 : 0.0;
         }
 
-        double d1 = calculateD1(spotPrice, strikePrice, timeToExpiry);
-        log.info("Calculating Call Delta - d1: {}", d1);
+        double optionPrice = getOptionPrice(instrumentType, strikePrice, expiry, "CE");
+        if (optionPrice <= 0) {
+            log.warn("Invalid option price ({}), unable to calculate delta for strike {}.", optionPrice, strikePrice);
+            return 0.0; // Cannot calculate delta without a valid price.
+        }
+
+        // Calculate Implied Volatility
+        double volatility = calculateImpliedVolatility(optionPrice, spotPrice, strikePrice, timeToExpiry, "CE");
+        if (volatility <= 0 || Double.isNaN(volatility)) {
+            log.warn("Invalid volatility ({}) calculated for strike {}. Using fallback.", volatility, strikePrice);
+            volatility = 0.15; // Fallback to a default value if IV calculation fails
+        }
+
+
+        double d1 = calculateD1(spotPrice, strikePrice, timeToExpiry, volatility);
+        log.info("Calculating Call Delta - Strike: {}, Spot: {}, TTE: {}, Vol: {}, d1: {}", strikePrice, spotPrice, timeToExpiry, volatility, d1);
         return cumulativeNormalDistribution(d1);
     }
 
     /**
      * Calculate d1 for Black-Scholes formula
      */
-    private double calculateD1(double spotPrice, double strikePrice, double timeToExpiry) {
+    private double calculateD1(double spotPrice, double strikePrice, double timeToExpiry, double volatility) {
         double numerator = Math.log(spotPrice / strikePrice) +
-                (RISK_FREE_RATE + 0.5 * VOLATILITY * VOLATILITY) * timeToExpiry;
-        double denominator = VOLATILITY * Math.sqrt(timeToExpiry);
+                (RISK_FREE_RATE + 0.5 * volatility * volatility) * timeToExpiry;
+        double denominator = volatility * Math.sqrt(timeToExpiry);
 
         return numerator / denominator;
     }
@@ -187,6 +202,120 @@ public abstract class BaseStrategy implements TradingStrategy {
         double y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
 
         return sign * y;
+    }
+
+    /**
+     * Calculate Implied Volatility using Newton-Raphson method.
+     *
+     * @param marketPrice    The market price of the option.
+     * @param spotPrice      The current price of the underlying asset.
+     * @param strikePrice    The strike price of the option.
+     * @param timeToExpiry   Time to expiration in years.
+     * @param optionType     "CE" for Call or "PE" for Put.
+     * @return The implied volatility.
+     */
+    private double calculateImpliedVolatility(double marketPrice, double spotPrice, double strikePrice, double timeToExpiry, String optionType) {
+        final int MAX_ITERATIONS = 100;
+        final double ACCURACY = 1.0e-5;
+        double volatility = 0.5; // Initial guess
+
+        for (int i = 0; i < MAX_ITERATIONS; i++) {
+            double theoreticalPrice = calculateBlackScholesPrice(spotPrice, strikePrice, timeToExpiry, volatility, optionType);
+            double vega = calculateVega(spotPrice, strikePrice, timeToExpiry, volatility);
+
+            double difference = theoreticalPrice - marketPrice;
+
+            if (Math.abs(difference) < ACCURACY) {
+                return volatility;
+            }
+
+            if (vega == 0) { // Avoid division by zero
+                break;
+            }
+
+            volatility -= difference / vega;
+        }
+
+        return volatility; // Return last calculated value even if accuracy not reached
+    }
+
+    /**
+     * Calculate the theoretical price of an option using the Black-Scholes model.
+     */
+    private double calculateBlackScholesPrice(double spotPrice, double strikePrice, double timeToExpiry, double volatility, String optionType) {
+        double d1 = calculateD1(spotPrice, strikePrice, timeToExpiry, volatility);
+        double d2 = d1 - volatility * Math.sqrt(timeToExpiry);
+
+        if ("CE".equalsIgnoreCase(optionType)) {
+            return spotPrice * cumulativeNormalDistribution(d1) - strikePrice * Math.exp(-RISK_FREE_RATE * timeToExpiry) * cumulativeNormalDistribution(d2);
+        } else if ("PE".equalsIgnoreCase(optionType)) {
+            return strikePrice * Math.exp(-RISK_FREE_RATE * timeToExpiry) * cumulativeNormalDistribution(-d2) - spotPrice * cumulativeNormalDistribution(-d1);
+        } else {
+            return 0.0;
+        }
+    }
+
+    /**
+     * Calculate Vega, the sensitivity of option price to volatility.
+     */
+    private double calculateVega(double spotPrice, double strikePrice, double timeToExpiry, double volatility) {
+        double d1 = calculateD1(spotPrice, strikePrice, timeToExpiry, volatility);
+        return spotPrice * normalPDF(d1) * Math.sqrt(timeToExpiry);
+    }
+
+    /**
+     * Standard Normal Probability Density Function.
+     */
+    private double normalPDF(double x) {
+        return (1.0 / Math.sqrt(2.0 * Math.PI)) * Math.exp(-0.5 * x * x);
+    }
+
+    private double getOptionPrice(String instrumentType, double strike, Date expiry, String optionType) {
+        log.info("Fetching option price for Instrument: {}, Strike: {}, Expiry: {}, Type: {}",
+                instrumentType, strike, expiry, optionType);
+
+        String instrumentIdentifier = "";
+        try {
+            // Format expiry date for trading symbol
+            SimpleDateFormat sdf = new SimpleDateFormat("yyMMM");
+            String expiryStr = sdf.format(expiry).toUpperCase();
+            log.debug("Formatted expiry date string: {}", expiryStr);
+
+            // Construct the trading symbol
+            String tradingSymbol = instrumentType.toUpperCase() + expiryStr + (int) strike + optionType;
+            String exchange = "NFO";
+            instrumentIdentifier = exchange + ":" + tradingSymbol;
+            log.info("Constructed instrument identifier: {}", instrumentIdentifier);
+
+            // Fetch quote to get Implied Volatility
+            log.debug("Fetching quote from trading service for: {}", instrumentIdentifier);
+            Map<String, Quote> quotes = tradingService.getQuote(new String[]{instrumentIdentifier});
+            Quote quote = quotes.get(instrumentIdentifier);
+
+            if (quote != null) {
+                log.debug("Successfully fetched quote for {}. OI: {}, Sell depth available: {}",
+                        instrumentIdentifier, quote.oi, quote.depth != null && quote.depth.sell != null && !quote.depth.sell.isEmpty());
+
+                if (quote.oi > 0 && quote.depth != null && quote.depth.sell != null && !quote.depth.sell.isEmpty()) {
+                    double price = quote.lastPrice;
+                    log.info("Returning option price: {} for {}", price, instrumentIdentifier);
+                    return price;
+                } else {
+                    log.warn("Could not fetch valid price for {}. OI: {}, Depth: {}",
+                            instrumentIdentifier, quote.oi, quote.depth);
+                    return 0.0; // Fallback to 0
+                }
+            } else {
+                log.warn("Could not fetch quote for {}. The quote object is null.", instrumentIdentifier);
+                return 0.0; // Fallback to 0
+            }
+        } catch (KiteException e) {
+            log.error("KiteException fetching option price for {}: {}", instrumentIdentifier, e.getMessage(), e);
+            return 0.0; // Fallback on error
+        } catch (Exception e) {
+            log.error("Unexpected error fetching option price for {}: {}", instrumentIdentifier, e.getMessage(), e);
+            return 0.0; // Fallback on error
+        }
     }
 
     /**

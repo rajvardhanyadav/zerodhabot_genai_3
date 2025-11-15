@@ -129,8 +129,8 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
     private void validateATMOptions(Instrument atmCall, Instrument atmPut, double atmStrike) {
         log.info("ATM Call: {}, ATM Put: {}",
-                atmCall != null ? atmCall.tradingsymbol : "null",
-                atmPut != null ? atmPut.tradingsymbol : "null");
+                atmCall != null ? atmCall.tradingsymbol : StrategyConstants.NULL_STRING,
+                atmPut != null ? atmPut.tradingsymbol : StrategyConstants.NULL_STRING);
 
         if (atmCall == null || atmPut == null) {
             throw new RuntimeException(StrategyConstants.ERROR_ATM_OPTIONS_NOT_FOUND + atmStrike);
@@ -140,31 +140,28 @@ public class ATMStraddleStrategy extends BaseStrategy {
     private void placeCallLeg(Instrument atmCall, int quantity, String orderType,
                               List<StrategyExecutionResponse.OrderDetail> orderDetails,
                               String tradingMode) throws KiteException, IOException {
-        log.info(StrategyConstants.LOG_PLACING_ORDER, tradingMode, StrategyConstants.OPTION_TYPE_CALL, atmCall.tradingsymbol);
-
-        OrderRequest callOrder = createOrderRequest(atmCall.tradingsymbol, StrategyConstants.TRANSACTION_BUY,
-                quantity, orderType);
-        OrderResponse callOrderResponse = unifiedTradingService.placeOrder(callOrder);
-
-        validateOrderResponse(callOrderResponse, "Call");
-
-        double callPrice = getOrderPrice(callOrderResponse.getOrderId());
-        orderDetails.add(createOrderDetail(callOrderResponse.getOrderId(), atmCall, quantity, callPrice));
+        placeLeg(atmCall, quantity, orderType, orderDetails, tradingMode, StrategyConstants.LEG_TYPE_CALL);
     }
 
     private void placePutLeg(Instrument atmPut, int quantity, String orderType,
                              List<StrategyExecutionResponse.OrderDetail> orderDetails,
                              String tradingMode) throws KiteException, IOException {
-        log.info(StrategyConstants.LOG_PLACING_ORDER, tradingMode, StrategyConstants.OPTION_TYPE_PUT, atmPut.tradingsymbol);
+        placeLeg(atmPut, quantity, orderType, orderDetails, tradingMode, StrategyConstants.LEG_TYPE_PUT);
+    }
 
-        OrderRequest putOrder = createOrderRequest(atmPut.tradingsymbol, StrategyConstants.TRANSACTION_BUY,
+    private void placeLeg(Instrument instrument, int quantity, String orderType,
+                          List<StrategyExecutionResponse.OrderDetail> orderDetails,
+                          String tradingMode, String legType) throws KiteException, IOException {
+        log.info(StrategyConstants.LOG_PLACING_ORDER, tradingMode, legType, instrument.tradingsymbol);
+
+        OrderRequest orderRequest = createOrderRequest(instrument.tradingsymbol, StrategyConstants.TRANSACTION_BUY,
                 quantity, orderType);
-        OrderResponse putOrderResponse = unifiedTradingService.placeOrder(putOrder);
+        OrderResponse orderResponse = unifiedTradingService.placeOrder(orderRequest);
 
-        validateOrderResponse(putOrderResponse, "Put");
+        validateOrderResponse(orderResponse, legType);
 
-        double putPrice = getOrderPrice(putOrderResponse.getOrderId());
-        orderDetails.add(createOrderDetail(putOrderResponse.getOrderId(), atmPut, quantity, putPrice));
+        double price = getOrderPrice(orderResponse.getOrderId());
+        orderDetails.add(createOrderDetail(orderResponse.getOrderId(), instrument, quantity, price));
     }
 
     private void validateOrderResponse(OrderResponse orderResponse, String legType) {

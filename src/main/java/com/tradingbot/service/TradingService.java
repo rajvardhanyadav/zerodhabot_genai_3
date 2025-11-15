@@ -72,32 +72,32 @@ public class TradingService {
     /**
      * Place a new order
      */
-    public OrderResponse placeOrder(OrderRequest orderRequest) throws KiteException, IOException {
+    public OrderResponse placeOrder(OrderRequest orderRequest) {
         log.info("Placing order - Symbol: {}, Type: {}, Qty: {}",
             orderRequest.getTradingSymbol(), orderRequest.getTransactionType(), orderRequest.getQuantity());
         try {
             OrderParams orderParams = buildOrderParams(orderRequest);
-            Order order = kiteConnect.placeOrder(orderParams, "regular");
+            Order order = kiteConnect.placeOrder(orderParams, VARIETY_REGULAR);
 
             // Check if order was placed successfully
             if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
                 log.info("Order placed successfully: {} - {} {} {} @ {}",
                     order.orderId, order.transactionType, order.quantity, order.tradingSymbol, order.orderType);
-                return new OrderResponse(order.orderId, "SUCCESS", "Order placed successfully");
+                return new OrderResponse(order.orderId, STATUS_SUCCESS, MSG_ORDER_PLACED_SUCCESS);
             } else {
                 log.error("Order placement failed - no order ID returned");
-                return new OrderResponse(null, "FAILED", "Order placement failed - no order ID returned");
+                return new OrderResponse(null, STATUS_FAILED, ERR_ORDER_PLACEMENT_FAILED_NO_ID);
             }
 
         } catch (KiteException e) {
             log.error("Kite API error while placing order: {}", e.message, e);
-            return new OrderResponse(null, "FAILED", "Order placement failed: " + e.message);
+            return new OrderResponse(null, STATUS_FAILED, ERR_ORDER_PLACEMENT_FAILED + e.message);
         } catch (IOException e) {
             log.error("Network error while placing order: {}", e.getMessage(), e);
-            return new OrderResponse(null, "FAILED", "Network error: " + e.getMessage());
+            return new OrderResponse(null, STATUS_FAILED, ERR_NETWORK + e.getMessage());
         } catch (Exception e) {
             log.error("Unexpected error while placing order: {}", e.getMessage(), e);
-            return new OrderResponse(null, "FAILED", "Unexpected error: " + e.getMessage());
+            return new OrderResponse(null, STATUS_FAILED, ERR_UNEXPECTED + e.getMessage());
         }
     }
 
@@ -107,10 +107,10 @@ public class TradingService {
     public OrderResponse modifyOrder(String orderId, OrderRequest orderRequest) throws KiteException, IOException {
         log.info("Modifying order: {} - New params: {}", orderId, orderRequest);
         OrderParams orderParams = buildModifyOrderParams(orderRequest);
-        Order order = kiteConnect.modifyOrder(orderId, orderParams, "regular");
+        Order order = kiteConnect.modifyOrder(orderId, orderParams, VARIETY_REGULAR);
         log.info("Order modified successfully: {}", orderId);
 
-        return new OrderResponse(order.orderId, "SUCCESS", "Order modified successfully");
+        return new OrderResponse(order.orderId, STATUS_SUCCESS, MSG_ORDER_MODIFIED_SUCCESS);
     }
 
     /**
@@ -119,26 +119,26 @@ public class TradingService {
     public OrderResponse cancelOrder(String orderId) {
         log.info("Cancelling order: {}", orderId);
         try {
-            Order order = kiteConnect.cancelOrder(orderId, "regular");
+            Order order = kiteConnect.cancelOrder(orderId, VARIETY_REGULAR);
 
             // Check if order was cancelled successfully
             if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
                 log.info("Order cancelled successfully: {}", orderId);
-                return new OrderResponse(order.orderId, "SUCCESS", "Order cancelled successfully");
+                return new OrderResponse(order.orderId, STATUS_SUCCESS, MSG_ORDER_CANCELLED_SUCCESS);
             } else {
                 log.error("Order cancellation failed for orderId: {}", orderId);
-                return new OrderResponse(orderId, "FAILED", "Order cancellation failed");
+                return new OrderResponse(orderId, STATUS_FAILED, ERR_ORDER_CANCELLATION_FAILED);
             }
 
         } catch (KiteException e) {
             log.error("Kite API error while cancelling order {}: {}", orderId, e.message, e);
-            return new OrderResponse(orderId, "FAILED", "Order cancellation failed: " + e.message);
+            return new OrderResponse(orderId, STATUS_FAILED, ERR_ORDER_CANCELLATION_FAILED + ": " + e.message);
         } catch (IOException e) {
             log.error("Network error while cancelling order {}: {}", orderId, e.getMessage(), e);
-            return new OrderResponse(orderId, "FAILED", "Network error: " + e.getMessage());
+            return new OrderResponse(orderId, STATUS_FAILED, ERR_NETWORK + e.getMessage());
         } catch (Exception e) {
             log.error("Unexpected error while cancelling order {}: {}", orderId, e.getMessage(), e);
-            return new OrderResponse(orderId, "FAILED", "Unexpected error: " + e.getMessage());
+            return new OrderResponse(orderId, STATUS_FAILED, ERR_UNEXPECTED + e.getMessage());
         }
     }
 
@@ -179,8 +179,8 @@ public class TradingService {
         log.debug("Fetching all positions");
         Map<String, List<Position>> positions = kiteConnect.getPositions();
         log.debug("Fetched positions - Net: {}, Day: {}",
-            positions.get("net") != null ? positions.get("net").size() : 0,
-            positions.get("day") != null ? positions.get("day").size() : 0);
+            positions.get(POSITION_NET) != null ? positions.get(POSITION_NET).size() : 0,
+            positions.get(POSITION_DAY) != null ? positions.get(POSITION_DAY).size() : 0);
         return positions;
     }
 
@@ -393,7 +393,7 @@ public class TradingService {
                 // Build charges breakdown - all fields are primitives (double)
                 OrderChargesResponse.Charges charges = OrderChargesResponse.Charges.builder()
                         .transactionTax(contractNote.charges.transactionTax)
-                        .transactionTaxType(contractNote.charges.transactionTaxType != null ? contractNote.charges.transactionTaxType : "stt")
+                        .transactionTaxType(contractNote.charges.transactionTaxType != null ? contractNote.charges.transactionTaxType : TRANSACTION_TAX_TYPE_STT)
                         .exchangeTurnoverCharge(contractNote.charges.exchangeTurnoverCharge)
                         .sebiTurnoverCharge(0.0)  // SEBI charge field not available in ContractNote SDK model
                         .brokerage(contractNote.charges.brokerage)
@@ -407,7 +407,7 @@ public class TradingService {
                         .transactionType(contractNote.transactionType != null ? contractNote.transactionType : "")
                         .tradingsymbol(contractNote.tradingSymbol != null ? contractNote.tradingSymbol : "")
                         .exchange(contractNote.exchange != null ? contractNote.exchange : "")
-                        .variety(contractNote.variety != null ? contractNote.variety : "regular")
+                        .variety(contractNote.variety != null ? contractNote.variety : VARIETY_REGULAR)
                         .product(contractNote.product != null ? contractNote.product : "")
                         .orderType(contractNote.orderType != null ? contractNote.orderType : "")
                         .quantity(contractNote.quantity)

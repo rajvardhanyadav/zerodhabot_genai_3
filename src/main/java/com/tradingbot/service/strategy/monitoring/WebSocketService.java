@@ -3,260 +3,338 @@ package com.tradingbot.service.strategy.monitoring;
 import com.tradingbot.config.KiteConfig;
 import com.zerodhatech.kiteconnect.KiteConnect;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
-import com.zerodhatech.ticker.KiteTicker;
 import com.zerodhatech.models.Tick;
+import com.zerodhatech.ticker.KiteTicker;
+import com.zerodhatech.ticker.OnError;
+import jakarta.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * WebSocket service for real-time price updates
+ * WebSocket service for real-time price updates.
+ * This service manages the WebSocket connection for receiving ticks and routes them to active position monitors.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 @Getter
-public class WebSocketService {
+public class WebSocketService implements DisposableBean {
 
     private final KiteConnect kiteConnect;
     private final KiteConfig kiteConfig;
     private KiteTicker ticker;
     private final Map<String, PositionMonitor> activeMonitors = new ConcurrentHashMap<>();
     private final Map<Long, Set<String>> instrumentToExecutions = new ConcurrentHashMap<>();
-    private volatile boolean isConnected = false;
+    private final AtomicBoolean isConnected = new AtomicBoolean(false);
+    private final AtomicBoolean isConnecting = new AtomicBoolean(false);
+    private final ReentrantLock connectionLock = new ReentrantLock();
+    private ScheduledExecutorService reconnectScheduler;
+
+    private static final int MAX_RECONNECT_ATTEMPTS = 10;
+    private static final long INITIAL_RECONNECT_DELAY_SECONDS = 5;
+
+    @PostConstruct
+    public void init() {
+        this.reconnectScheduler = Executors.newSingleThreadScheduledExecutor();
+    }
 
     /**
-     * Initialize WebSocket connection
+     * Checks if the WebSocket is currently connected.
+     * @return true if connected, false otherwise.
      */
-    public synchronized void connect() {
-        if (ticker != null && isConnected) {
-            log.debug("WebSocket already connected");
+    public boolean isConnected() {
+        return isConnected.get();
+    }
+
+    /**
+     * Initialize and connect the WebSocket.
+     * This method is idempotent and thread-safe.
+     */
+    public void connect() {
+        if (isConnected.get() || isConnecting.get()) {
+            log.debug("WebSocket connection attempt ignored: already connected or connecting.");
             return;
         }
 
-        try {
-            String accessToken = kiteConnect.getAccessToken();
-            if (accessToken == null || accessToken.isEmpty()) {
-                log.error("Access token not available for WebSocket connection. Please login first via /api/auth/session");
-                throw new IllegalStateException("Access token not set. Please authenticate first.");
-            }
-
-            // Validate token is not just the config value (which might be expired)
-            log.info("Attempting WebSocket connection...");
-            log.info("API Key : {}", kiteConfig.getApiKey());
-            log.debug("Access Token length: {}", accessToken);
-
-            // Verify we can make API calls before attempting WebSocket connection
+        if (connectionLock.tryLock()) {
             try {
-                kiteConnect.getProfile();
-                log.info("Access token validated successfully");
-            } catch (KiteException | IOException e) {
-                log.error("Access token validation failed. Token may be expired. Please re-login via /api/auth/session");
-                throw new IllegalStateException("Invalid or expired access token. Please authenticate again.", e);
+                if (!isConnecting.compareAndSet(false, true)) {
+                    return;
+                }
+                log.info("Attempting to establish WebSocket connection...");
+                initializeAndConnectTicker();
+            } finally {
+                connectionLock.unlock();
             }
-
-            ticker = new KiteTicker(accessToken, kiteConfig.getApiKey());
-
-            ticker.setOnConnectedListener(() -> {
-                isConnected = true;
-                log.info("WebSocket connected successfully");
-                resubscribeAll();
-            });
-
-            ticker.setOnDisconnectedListener(() -> {
-                isConnected = false;
-                log.warn("WebSocket disconnected");
-            });
-
-            ticker.setOnErrorListener(new com.zerodhatech.ticker.OnError() {
-                @Override
-                public void onError(Exception exception) {
-                    log.error("WebSocket error occurred", exception);
-                    isConnected = false;
-                }
-
-                @Override
-                public void onError(KiteException kiteException) {
-                    log.error("WebSocket Kite error occurred", kiteException);
-                    isConnected = false;
-                }
-
-                @Override
-                public void onError(String error) {
-                    log.error("WebSocket error occurred: {}", error);
-                    isConnected = false;
-                }
-            });
-
-            ticker.setOnTickerArrivalListener(this::processTicks);
-
-            ticker.setTryReconnection(true);
-
-            try {
-                ticker.setMaximumRetries(10);
-                ticker.setMaximumRetryInterval(30);
-            } catch (KiteException e) {
-                log.warn("Could not set retry configuration: {}", e.getMessage());
-            }
-
-            ticker.connect();
-            log.info("WebSocket connection initiated");
-
-        } catch (IllegalStateException e) {
-            log.error("WebSocket connection failed: {}", e.getMessage());
-            isConnected = false;
-            throw e;
-        } catch (Exception e) {
-            log.error("Error connecting WebSocket: {}", e.getMessage(), e);
-            isConnected = false;
-            throw new RuntimeException("Failed to establish WebSocket connection: " + e.getMessage(), e);
+        } else {
+            log.warn("WebSocket connection attempt is already in progress.");
         }
     }
 
+    private void initializeAndConnectTicker() {
+        try {
+            String accessToken = validateAndGetAccessToken();
+            setupTicker(accessToken);
+            ticker.connect();
+            log.info("WebSocket connection process initiated.");
+        } catch (IllegalStateException e) {
+            log.error("WebSocket connection failed pre-check: {}", e.getMessage());
+            isConnecting.set(false);
+            // Optionally schedule a reconnect attempt here if appropriate
+        } catch (Exception e) {
+            log.error("Fatal error during WebSocket initialization: {}", e.getMessage(), e);
+            isConnecting.set(false);
+            scheduleReconnection(1);
+        }
+    }
+
+    private String validateAndGetAccessToken() throws IllegalStateException {
+        String accessToken = kiteConnect.getAccessToken();
+        if (accessToken == null || accessToken.isEmpty()) {
+            throw new IllegalStateException("Access token not available. Please login first via /api/auth/session");
+        }
+        try {
+            kiteConnect.getProfile();
+            log.info("Access token validated successfully.");
+            return accessToken;
+        } catch (KiteException | IOException e) {
+            log.error("Access token validation failed. Token may be expired. Please re-login.", e);
+            throw new IllegalStateException("Invalid or expired access token. Please authenticate again.", e);
+        }
+    }
+
+    private void setupTicker(String accessToken) {
+        ticker = new KiteTicker(accessToken, kiteConfig.getApiKey());
+
+        ticker.setOnConnectedListener(this::onConnected);
+        ticker.setOnDisconnectedListener(this::onDisconnected);
+
+        ticker.setOnErrorListener(new OnError() {
+            @Override
+            public void onError(Exception e) {
+                WebSocketService.this.handleError(e);
+            }
+
+            @Override
+            public void onError(KiteException e) {
+                WebSocketService.this.handleError(e);
+            }
+
+            @Override
+            public void onError(String message) {
+                log.error("WebSocket error: {}", message);
+            }
+        });
+
+        ticker.setOnTickerArrivalListener(this::processTicks);
+
+        ticker.setTryReconnection(false); // We manage reconnection manually
+    }
+
+    private void onConnected() {
+        isConnected.set(true);
+        isConnecting.set(false);
+        log.info("WebSocket connected successfully.");
+        resubscribeAll();
+    }
+
+    private void onDisconnected() {
+        isConnected.set(false);
+        isConnecting.set(false);
+        log.warn("WebSocket disconnected. Attempting to reconnect...");
+        scheduleReconnection(1);
+    }
+
+    private void handleError(Throwable e) {
+        log.error("WebSocket error occurred", e);
+        isConnected.set(false);
+        isConnecting.set(false);
+        if (e instanceof KiteException) {
+            handleKiteException((KiteException) e);
+        } else {
+            // For other exceptions, schedule a reconnect
+            scheduleReconnection(1);
+        }
+    }
+
+    private void handleKiteException(KiteException ke) {
+        log.error("WebSocket Kite error: Code={}, Message='{}'", ke.code, ke.message);
+        // 1001: Token Exception (invalid), 1009: User logged out
+        if (ke.code == 1001 || ke.code == 1009) {
+            log.error("Critical token error. Manual re-login required. Stopping reconnection attempts.");
+        } else {
+            scheduleReconnection(1);
+        }
+    }
+
+    private void scheduleReconnection(int attempt) {
+        if (attempt > MAX_RECONNECT_ATTEMPTS) {
+            log.error("Exceeded max reconnection attempts. Please check the connection and credentials.");
+            return;
+        }
+        if (isConnecting.get() || isConnected.get()) {
+            return;
+        }
+
+        long delay = (long) (INITIAL_RECONNECT_DELAY_SECONDS * Math.pow(2, attempt - 1));
+        log.info("Scheduling reconnection attempt {} in {} seconds.", attempt, delay);
+
+        reconnectScheduler.schedule(() -> {
+            log.info("Executing scheduled reconnection attempt #{}", attempt);
+            connect();
+            // If connect fails to acquire lock or start, it won't reschedule.
+            // If it starts but fails, onDisconnected/onError will schedule the *next* attempt.
+        }, delay, TimeUnit.SECONDS);
+    }
+
+
     /**
-     * Start monitoring a position
+     * Start monitoring a position.
+     * @param executionId A unique identifier for the monitoring task.
+     * @param monitor The PositionMonitor instance containing position details.
      */
     public void startMonitoring(String executionId, PositionMonitor monitor) {
-        activeMonitors.put(executionId, monitor);
+        if (activeMonitors.putIfAbsent(executionId, monitor) != null) {
+            log.warn("Monitoring for execution ID '{}' is already active.", executionId);
+            return;
+        }
 
-        // Subscribe to instrument tokens
-        List<Long> tokens = new ArrayList<>();
+        List<Long> tokensToSubscribe = new ArrayList<>();
         for (PositionMonitor.LegMonitor leg : monitor.getLegs()) {
             long token = leg.getInstrumentToken();
-            tokens.add(token);
-
-            instrumentToExecutions
-                .computeIfAbsent(token, k -> ConcurrentHashMap.newKeySet())
-                .add(executionId);
+            instrumentToExecutions.computeIfAbsent(token, k -> new CopyOnWriteArraySet<>()).add(executionId);
+            tokensToSubscribe.add(token);
         }
 
-        if (!tokens.isEmpty()) {
-            subscribe(tokens);
+        if (!tokensToSubscribe.isEmpty()) {
+            subscribe(tokensToSubscribe);
         }
-
-        log.info("Started monitoring execution: {} with {} legs", executionId, monitor.getLegs().size());
+        log.info("Started monitoring execution: {} with {} legs.", executionId, monitor.getLegs().size());
     }
 
     /**
-     * Stop monitoring a position
+     * Stop monitoring a position.
+     * @param executionId The identifier of the monitoring task to stop.
      */
     public void stopMonitoring(String executionId) {
         PositionMonitor monitor = activeMonitors.remove(executionId);
-
-        if (monitor != null) {
-            monitor.stop();
-
-            // Unsubscribe from tokens if no other execution is using them
-            List<Long> tokensToUnsubscribe = new ArrayList<>();
-            for (PositionMonitor.LegMonitor leg : monitor.getLegs()) {
-                long token = leg.getInstrumentToken();
-                Set<String> executions = instrumentToExecutions.get(token);
-
-                if (executions != null) {
-                    executions.remove(executionId);
-                    if (executions.isEmpty()) {
-                        instrumentToExecutions.remove(token);
-                        tokensToUnsubscribe.add(token);
-                    }
-                }
-            }
-
-            if (!tokensToUnsubscribe.isEmpty()) {
-                unsubscribe(tokensToUnsubscribe);
-            }
-
-            log.info("Stopped monitoring execution: {}", executionId);
-        }
-    }
-
-    /**
-     * Subscribe to instrument tokens
-     */
-    private void subscribe(List<Long> tokens) {
-        if (!isConnected || ticker == null) {
-            log.warn("Cannot subscribe - WebSocket not connected");
-            connect();
+        if (monitor == null) {
+            log.warn("No active monitor found for execution ID '{}' to stop.", executionId);
             return;
         }
 
+        monitor.stop();
+        List<Long> tokensToUnsubscribe = new ArrayList<>();
+        for (PositionMonitor.LegMonitor leg : monitor.getLegs()) {
+            long token = leg.getInstrumentToken();
+            Set<String> executions = instrumentToExecutions.get(token);
+            if (executions != null) {
+                executions.remove(executionId);
+                if (executions.isEmpty()) {
+                    instrumentToExecutions.remove(token);
+                    tokensToUnsubscribe.add(token);
+                }
+            }
+        }
+
+        if (!tokensToUnsubscribe.isEmpty()) {
+            unsubscribe(tokensToUnsubscribe);
+        }
+        log.info("Stopped monitoring execution: {}", executionId);
+    }
+
+    private void subscribe(List<Long> tokens) {
+        if (!isConnected.get()) {
+            log.warn("Cannot subscribe - WebSocket not connected. Will attempt to connect.");
+            connect(); // connect() is non-blocking and safe to call
+            // Subscription will happen automatically on connection via resubscribeAll
+            return;
+        }
         try {
             ArrayList<Long> tokenList = new ArrayList<>(tokens);
             ticker.subscribe(tokenList);
             ticker.setMode(tokenList, KiteTicker.modeLTP);
-            log.info("Subscribed to {} instruments", tokens.size());
+            log.info("Subscribed to {} new instruments.", tokens.size());
         } catch (Exception e) {
             log.error("Error subscribing to instruments: {}", e.getMessage(), e);
         }
     }
 
-    /**
-     * Unsubscribe from instrument tokens
-     */
     private void unsubscribe(List<Long> tokens) {
-        if (!isConnected || ticker == null) {
+        if (!isConnected.get() || ticker == null) {
+            log.warn("Cannot unsubscribe - WebSocket not connected.");
             return;
         }
-
         try {
-            ArrayList<Long> tokenList = new ArrayList<>(tokens);
-            ticker.unsubscribe(tokenList);
-            log.info("Unsubscribed from {} instruments", tokens.size());
+            ticker.unsubscribe(new ArrayList<>(tokens));
+            log.info("Unsubscribed from {} instruments.", tokens.size());
         } catch (Exception e) {
             log.error("Error unsubscribing from instruments: {}", e.getMessage(), e);
         }
     }
 
-    /**
-     * Process incoming ticks
-     */
     private void processTicks(ArrayList<Tick> ticks) {
         for (Tick tick : ticks) {
             long token = tick.getInstrumentToken();
-
             Set<String> executions = instrumentToExecutions.get(token);
             if (executions != null) {
                 for (String executionId : executions) {
                     PositionMonitor monitor = activeMonitors.get(executionId);
                     if (monitor != null && monitor.isActive()) {
-                        monitor.updatePriceWithDifferenceCheck(ticks);
+                        // Pass only the relevant tick to the monitor
+                        monitor.updatePriceWithDifferenceCheck(new ArrayList<>(Collections.singletonList(tick)));
                     }
                 }
             }
         }
     }
 
-    /**
-     * Resubscribe to all active instruments after reconnection
-     */
     private void resubscribeAll() {
-        Set<Long> allTokens = new HashSet<>(instrumentToExecutions.keySet());
+        Set<Long> allTokens = instrumentToExecutions.keySet();
         if (!allTokens.isEmpty()) {
+            log.info("Resubscribing to {} active instruments after reconnection.", allTokens.size());
             subscribe(new ArrayList<>(allTokens));
         }
     }
 
     /**
-     * Disconnect WebSocket
+     * Disconnects the WebSocket client.
      */
-    public synchronized void disconnect() {
-        if (ticker != null) {
-            try {
+    public void disconnect() {
+        connectionLock.lock();
+        try {
+            if (ticker != null && isConnected.get()) {
+                log.info("Disconnecting WebSocket client.");
                 ticker.disconnect();
-                isConnected = false;
-                log.info("WebSocket disconnected");
-            } catch (Exception e) {
-                log.error("Error disconnecting WebSocket: {}", e.getMessage(), e);
+                isConnected.set(false);
+                isConnecting.set(false);
             }
+        } finally {
+            connectionLock.unlock();
+        }
+    }
+
+    @Override
+    public void destroy() {
+        log.info("Shutting down WebSocketService.");
+        disconnect();
+        if (reconnectScheduler != null) {
+            reconnectScheduler.shutdownNow();
         }
     }
 
     /**
-     * Get active monitors count
+     * Get the number of active position monitors.
+     * @return The count of active monitors.
      */
     public int getActiveMonitorsCount() {
         return activeMonitors.size();

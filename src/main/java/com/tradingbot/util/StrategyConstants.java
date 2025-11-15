@@ -39,6 +39,10 @@ public final class StrategyConstants {
      */
     public static final String OPTION_TYPE_PUT = "PE";
 
+    // ==================== Leg Types ====================
+    public static final String LEG_TYPE_CALL = "Call";
+    public static final String LEG_TYPE_PUT = "Put";
+
     // ==================== Strategy Statuses ====================
     public static final String STRATEGY_STATUS_ACTIVE = "ACTIVE";
 
@@ -48,6 +52,7 @@ public final class StrategyConstants {
     public static final String ERROR_ORDER_PLACEMENT_FAILED = "order placement failed: ";
     public static final String ERROR_INVALID_ENTRY_PRICE = "Unable to fetch valid entry prices. Call: {}, Put: {}. Monitoring will not start.";
     public static final String ERROR_ORDER_HISTORY_FETCH = "Unable to fetch order history for callOrderId: {} or putOrderId: {}";
+    public static final String NULL_STRING = "null";
 
     // ==================== Log Messages ====================
     public static final String LOG_EXECUTING_STRATEGY = "[{} MODE] Executing ATM Straddle for {} with SL={}pts, Target={}pts";
@@ -61,6 +66,8 @@ public final class StrategyConstants {
 
     // ==================== Success Messages ====================
     public static final String MSG_STRATEGY_SUCCESS = "[%s MODE] ATM Straddle executed successfully. Monitoring with SL=%.1fpts, Target=%.1fpts";
+    public static final String MSG_STRATEGY_ACTIVE = "Strategy active - positions being monitored";
+    public static final String MSG_STRATEGY_COMPLETED = "Strategy executed and completed successfully";
 
     /**
      * Private constructor to prevent instantiation
