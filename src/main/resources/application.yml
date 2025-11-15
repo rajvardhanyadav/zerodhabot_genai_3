@@ -48,6 +48,13 @@ strategy:
   auto-square-off-enabled: false
   auto-square-off-time: "15:15"
 
+# Historical Replay Configuration
+historical:
+  replay:
+    # Milliseconds to sleep per simulated second during historical replay
+    # Set to 0 for fastest possible replay
+    sleep-millis-per-second: 2
+
 # Actuator endpoints
 management:
   endpoints:

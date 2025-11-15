@@ -4,6 +4,7 @@ import com.tradingbot.config.KiteConfig;
 import com.tradingbot.dto.OrderChargesResponse;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
+import com.tradingbot.service.session.UserSessionManager;
 import com.zerodhatech.kiteconnect.KiteConnect;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.*;
@@ -25,28 +26,33 @@ import static com.tradingbot.service.TradingConstants.*;
 @Slf4j
 public class TradingService {
 
-    private final KiteConnect kiteConnect;
     private final KiteConfig kiteConfig;
+    private final UserSessionManager sessionManager;
 
     /**
      * Generate login URL for Kite Connect authentication
      */
     public String getLoginUrl() {
         log.debug("Generating Kite Connect login URL");
-        String loginUrl = kiteConnect.getLoginURL();
+        // Use a fresh KiteConnect with API key; no access token needed for login URL
+        KiteConnect temp = new KiteConnect(kiteConfig.getApiKey());
+        String loginUrl = temp.getLoginURL();
         log.debug("Login URL generated: {}", loginUrl);
         return loginUrl;
     }
 
     /**
-     * Generate session using request token
+     * Generate session using request token for the current user
      */
     public User generateSession(String requestToken) throws KiteException, IOException {
-        log.info("Generating session with request token");
-        User user = kiteConnect.generateSession(requestToken, kiteConfig.getApiSecret());
-        kiteConnect.setAccessToken(user.accessToken);
+        log.info("Generating session with request token (header optional)");
+        User user = sessionManager.createSessionFromRequestToken(requestToken);
         log.info("Session generated successfully for user: {}", user.userId);
         return user;
+    }
+
+    private KiteConnect kc() {
+        return sessionManager.getRequiredKiteForCurrentUser();
     }
 
     /**
@@ -54,7 +60,7 @@ public class TradingService {
      */
     public Profile getUserProfile() throws KiteException, IOException {
         log.debug("Fetching user profile");
-        Profile profile = kiteConnect.getProfile();
+        Profile profile = kc().getProfile();
         log.debug("User profile fetched for user: {}", profile.userName);
         return profile;
     }
@@ -64,7 +70,7 @@ public class TradingService {
      */
     public Margin getMargins(String segment) throws KiteException, IOException {
         log.debug("Fetching margins for segment: {}", segment);
-        Margin margin = kiteConnect.getMargins(segment);
+        Margin margin = kc().getMargins(segment);
         log.debug("Margins fetched - Available: {}, Used: {}", margin.available.cash, margin.utilised.debits);
         return margin;
     }
@@ -77,7 +83,7 @@ public class TradingService {
             orderRequest.getTradingSymbol(), orderRequest.getTransactionType(), orderRequest.getQuantity());
         try {
             OrderParams orderParams = buildOrderParams(orderRequest);
-            Order order = kiteConnect.placeOrder(orderParams, VARIETY_REGULAR);
+            Order order = kc().placeOrder(orderParams, VARIETY_REGULAR);
 
             // Check if order was placed successfully
             if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
@@ -107,7 +113,7 @@ public class TradingService {
     public OrderResponse modifyOrder(String orderId, OrderRequest orderRequest) throws KiteException, IOException {
         log.info("Modifying order: {} - New params: {}", orderId, orderRequest);
         OrderParams orderParams = buildModifyOrderParams(orderRequest);
-        Order order = kiteConnect.modifyOrder(orderId, orderParams, VARIETY_REGULAR);
+        Order order = kc().modifyOrder(orderId, orderParams, VARIETY_REGULAR);
         log.info("Order modified successfully: {}", orderId);
 
         return new OrderResponse(order.orderId, STATUS_SUCCESS, MSG_ORDER_MODIFIED_SUCCESS);
@@ -119,7 +125,7 @@ public class TradingService {
     public OrderResponse cancelOrder(String orderId) {
         log.info("Cancelling order: {}", orderId);
         try {
-            Order order = kiteConnect.cancelOrder(orderId, VARIETY_REGULAR);
+            Order order = kc().cancelOrder(orderId, VARIETY_REGULAR);
 
             // Check if order was cancelled successfully
             if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
@@ -147,7 +153,7 @@ public class TradingService {
      */
     public List<Order> getOrders() throws KiteException, IOException {
         log.debug("Fetching all orders for the day");
-        List<Order> orders = kiteConnect.getOrders();
+        List<Order> orders = kc().getOrders();
         log.debug("Fetched {} orders", orders != null ? orders.size() : 0);
         return orders;
     }
@@ -157,7 +163,7 @@ public class TradingService {
      */
     public List<Order> getOrderHistory(String orderId) throws KiteException, IOException {
         log.debug("Fetching order history for order: {}", orderId);
-        List<Order> history = kiteConnect.getOrderHistory(orderId);
+        List<Order> history = kc().getOrderHistory(orderId);
         log.debug("Fetched {} order history records for order: {}", history != null ? history.size() : 0, orderId);
         return history;
     }
@@ -167,7 +173,7 @@ public class TradingService {
      */
     public List<Trade> getTrades() throws KiteException, IOException {
         log.debug("Fetching all trades for the day");
-        List<Trade> trades = kiteConnect.getTrades();
+        List<Trade> trades = kc().getTrades();
         log.debug("Fetched {} trades", trades != null ? trades.size() : 0);
         return trades;
     }
@@ -177,7 +183,7 @@ public class TradingService {
      */
     public Map<String, List<Position>> getPositions() throws KiteException, IOException {
         log.debug("Fetching all positions");
-        Map<String, List<Position>> positions = kiteConnect.getPositions();
+        Map<String, List<Position>> positions = kc().getPositions();
         log.debug("Fetched positions - Net: {}, Day: {}",
             positions.get(POSITION_NET) != null ? positions.get(POSITION_NET).size() : 0,
             positions.get(POSITION_DAY) != null ? positions.get(POSITION_DAY).size() : 0);
@@ -189,7 +195,7 @@ public class TradingService {
      */
     public List<Holding> getHoldings() throws KiteException, IOException {
         log.debug("Fetching holdings");
-        List<Holding> holdings = kiteConnect.getHoldings();
+        List<Holding> holdings = kc().getHoldings();
         log.debug("Fetched {} holdings", holdings != null ? holdings.size() : 0);
         return holdings;
     }
@@ -202,7 +208,7 @@ public class TradingService {
                                       int quantity) throws KiteException, IOException {
         log.info("Converting position - Symbol: {}, Exchange: {}, Type: {}, Qty: {}, From: {} To: {}",
             tradingSymbol, exchange, transactionType, quantity, oldProduct, newProduct);
-        JSONObject result = kiteConnect.convertPosition(tradingSymbol, exchange, transactionType,
+        JSONObject result = kc().convertPosition(tradingSymbol, exchange, transactionType,
                 positionType, oldProduct, newProduct, quantity);
         log.info("Position conversion completed for symbol: {}", tradingSymbol);
         return result;
@@ -213,7 +219,7 @@ public class TradingService {
      */
     public Map<String, Quote> getQuote(String[] instruments) throws KiteException, IOException {
         log.debug("Fetching quotes for {} instruments", instruments.length);
-        Map<String, Quote> quotes = kiteConnect.getQuote(instruments);
+        Map<String, Quote> quotes = kc().getQuote(instruments);
         log.debug("Fetched quotes for {} instruments", quotes != null ? quotes.size() : 0);
         return quotes;
     }
@@ -223,7 +229,7 @@ public class TradingService {
      */
     public Map<String, OHLCQuote> getOHLC(String[] instruments) throws KiteException, IOException {
         log.debug("Fetching OHLC data for {} instruments", instruments.length);
-        Map<String, OHLCQuote> ohlc = kiteConnect.getOHLC(instruments);
+        Map<String, OHLCQuote> ohlc = kc().getOHLC(instruments);
         log.debug("Fetched OHLC data for {} instruments", ohlc != null ? ohlc.size() : 0);
         return ohlc;
     }
@@ -233,7 +239,7 @@ public class TradingService {
      */
     public Map<String, LTPQuote> getLTP(String[] instruments) throws KiteException, IOException {
         log.debug("Fetching LTP for {} instruments", instruments.length);
-        Map<String, LTPQuote> ltp = kiteConnect.getLTP(instruments);
+        Map<String, LTPQuote> ltp = kc().getLTP(instruments);
         log.debug("Fetched LTP for {} instruments", ltp != null ? ltp.size() : 0);
         return ltp;
     }
@@ -246,7 +252,7 @@ public class TradingService {
             throws KiteException, IOException {
         log.debug("Fetching historical data - Token: {}, Interval: {}, From: {}, To: {}",
             instrumentToken, interval, fromDate, toDate);
-        HistoricalData data = kiteConnect.getHistoricalData(fromDate, toDate, instrumentToken, interval, continuous, oi);
+        HistoricalData data = kc().getHistoricalData(fromDate, toDate, instrumentToken, interval, continuous, oi);
         log.debug("Fetched {} candles of historical data", data != null && data.dataArrayList != null ? data.dataArrayList.size() : 0);
         return data;
     }
@@ -256,7 +262,7 @@ public class TradingService {
      */
     public List<Instrument> getInstruments() throws KiteException, IOException {
         log.debug("Fetching all instruments");
-        List<Instrument> instruments = kiteConnect.getInstruments();
+        List<Instrument> instruments = kc().getInstruments();
         log.debug("Fetched {} instruments", instruments != null ? instruments.size() : 0);
         return instruments;
     }
@@ -266,7 +272,7 @@ public class TradingService {
      */
     public List<Instrument> getInstruments(String exchange) throws KiteException, IOException {
         log.debug("Fetching instruments for exchange: {}", exchange);
-        List<Instrument> instruments = kiteConnect.getInstruments(exchange);
+        List<Instrument> instruments = kc().getInstruments(exchange);
         log.debug("Fetched {} instruments for exchange: {}", instruments != null ? instruments.size() : 0, exchange);
         return instruments;
     }
@@ -276,7 +282,7 @@ public class TradingService {
      */
     public List<GTT> getGTTs() throws KiteException, IOException {
         log.debug("Fetching GTT orders");
-        List<GTT> gtts = kiteConnect.getGTTs();
+        List<GTT> gtts = kc().getGTTs();
         log.debug("Fetched {} GTT orders", gtts != null ? gtts.size() : 0);
         return gtts;
     }
@@ -286,7 +292,7 @@ public class TradingService {
      */
     public GTT placeGTT(GTTParams gttParams) throws KiteException, IOException {
         log.info("Placing GTT order - Type: {}, Symbol: {}", gttParams.triggerType, gttParams.tradingsymbol);
-        GTT gtt = kiteConnect.placeGTT(gttParams);
+        GTT gtt = kc().placeGTT(gttParams);
         log.info("GTT order placed successfully - ID: {}", gtt.id);
         return gtt;
     }
@@ -296,7 +302,7 @@ public class TradingService {
      */
     public GTT getGTT(int triggerId) throws KiteException, IOException {
         log.debug("Fetching GTT order: {}", triggerId);
-        GTT gtt = kiteConnect.getGTT(triggerId);
+        GTT gtt = kc().getGTT(triggerId);
         log.debug("Fetched GTT order: {} - Status: {}", triggerId, gtt.status);
         return gtt;
     }
@@ -306,7 +312,7 @@ public class TradingService {
      */
     public GTT modifyGTT(int triggerId, GTTParams gttParams) throws KiteException, IOException {
         log.info("Modifying GTT order: {}", triggerId);
-        GTT gtt = kiteConnect.modifyGTT(triggerId, gttParams);
+        GTT gtt = kc().modifyGTT(triggerId, gttParams);
         log.info("GTT order modified successfully: {}", triggerId);
         return gtt;
     }
@@ -316,23 +322,18 @@ public class TradingService {
      */
     public GTT cancelGTT(int triggerId) throws KiteException, IOException {
         log.info("Cancelling GTT order: {}", triggerId);
-        GTT gtt = kiteConnect.cancelGTT(triggerId);
+        GTT gtt = kc().cancelGTT(triggerId);
         log.info("GTT order cancelled successfully: {}", triggerId);
         return gtt;
     }
 
     /**
      * Get order charges for orders placed today
-     * This uses the Kite Connect SDK's getVirtualContractNote method to get actual charges breakdown for executed orders
-     * <a href="https://kite.trade/docs/connect/v3/margins/#virtual-contract-note">API Reference</a>
-     *
-     * @return List of OrderChargesResponse with detailed charge breakdown for each order
-     * @throws KiteException if Kite API returns an error
      */
     public List<OrderChargesResponse> getOrderCharges() throws KiteException {
         try {
             // Get all orders for the day
-            List<Order> orders = kiteConnect.getOrders();
+            List<Order> orders = kc().getOrders();
 
             if (orders == null || orders.isEmpty()) {
                 log.info("No orders found for today");
@@ -371,7 +372,7 @@ public class TradingService {
 
             // Call KiteConnect SDK's getVirtualContractNote method
             log.info("Calling KiteConnect.getVirtualContractNote() with {} orders", executedOrders.size());
-            List<ContractNote> contractNotes = kiteConnect.getVirtualContractNote(contractNoteParamsList);
+            List<ContractNote> contractNotes = kc().getVirtualContractNote(contractNoteParamsList);
 
             if (contractNotes == null || contractNotes.isEmpty()) {
                 log.warn("No contract notes returned from Kite API");

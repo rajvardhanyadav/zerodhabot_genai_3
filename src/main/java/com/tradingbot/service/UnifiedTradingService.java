@@ -8,6 +8,7 @@ import com.tradingbot.paper.PaperAccount;
 import com.tradingbot.paper.PaperOrder;
 import com.tradingbot.paper.PaperPosition;
 import com.tradingbot.paper.PaperTradingService;
+import com.tradingbot.util.CurrentUserContext;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Holding;
 import com.zerodhatech.models.Order;
@@ -32,9 +33,8 @@ import java.util.stream.Collectors;
 @Slf4j
 public class UnifiedTradingService {
 
-    private static final String DEFAULT_PAPER_USER_ID = "PAPER_USER";
-    private static final String PAPER_MODE_EMOJI = "🎯";
-    private static final String LIVE_MODE_EMOJI = "💰";
+    private static final String PAPER_MODE_EMOJI = "\uD83C\uDFAF";
+    private static final String LIVE_MODE_EMOJI = "\uD83D\uDCB0";
     private static final String PAPER_MODE = "PAPER";
     private static final String LIVE_MODE = "LIVE";
 
@@ -46,11 +46,12 @@ public class UnifiedTradingService {
      * Place order - routes to paper or live trading based on config
      */
     public OrderResponse placeOrder(OrderRequest orderRequest) throws KiteException, IOException {
+        String userId = getUserId();
         if (isPaperTradingEnabled()) {
-            logPaperMode("Placing paper order");
-            return paperTradingService.placeOrder(orderRequest, getUserId());
+            logPaperMode("Placing paper order for user=" + userId);
+            return paperTradingService.placeOrder(orderRequest, userId);
         } else {
-            logLiveMode("Placing live order");
+            logLiveMode("Placing live order for user=" + userId);
             return liveTradingService.placeOrder(orderRequest);
         }
     }
@@ -59,11 +60,12 @@ public class UnifiedTradingService {
      * Modify order
      */
     public OrderResponse modifyOrder(String orderId, OrderRequest orderRequest) throws KiteException, IOException {
+        String userId = getUserId();
         if (isPaperTradingEnabled()) {
-            logPaperMode("Modifying paper order: " + orderId);
-            return paperTradingService.modifyOrder(orderId, orderRequest, getUserId());
+            logPaperMode("Modifying paper order: " + orderId + " for user=" + userId);
+            return paperTradingService.modifyOrder(orderId, orderRequest, userId);
         } else {
-            logLiveMode("Modifying live order: " + orderId);
+            logLiveMode("Modifying live order: " + orderId + " for user=" + userId);
             return liveTradingService.modifyOrder(orderId, orderRequest);
         }
     }
@@ -72,11 +74,12 @@ public class UnifiedTradingService {
      * Cancel order
      */
     public OrderResponse cancelOrder(String orderId) {
+        String userId = getUserId();
         if (isPaperTradingEnabled()) {
-            logPaperMode("Cancelling paper order: " + orderId);
-            return paperTradingService.cancelOrder(orderId, getUserId());
+            logPaperMode("Cancelling paper order: " + orderId + " for user=" + userId);
+            return paperTradingService.cancelOrder(orderId, userId);
         } else {
-            logLiveMode("Cancelling live order: " + orderId);
+            logLiveMode("Cancelling live order: " + orderId + " for user=" + userId);
             return liveTradingService.cancelOrder(orderId);
         }
     }
@@ -85,12 +88,13 @@ public class UnifiedTradingService {
      * Get all orders
      */
     public List<Order> getOrders() throws KiteException, IOException {
+        String userId = getUserId();
         if (isPaperTradingEnabled()) {
-            log.debug("{} [{}] Fetching paper orders", PAPER_MODE_EMOJI, PAPER_MODE);
-            List<PaperOrder> paperOrders = paperTradingService.getAllOrders(getUserId());
+            log.debug("{} [{}] Fetching paper orders for user={}", PAPER_MODE_EMOJI, PAPER_MODE, userId);
+            List<PaperOrder> paperOrders = paperTradingService.getAllOrders(userId);
             return convertPaperOrdersToKiteOrders(paperOrders);
         } else {
-            log.debug("{} [{}] Fetching live orders", LIVE_MODE_EMOJI, LIVE_MODE);
+            log.debug("{} [{}] Fetching live orders for user={}", LIVE_MODE_EMOJI, LIVE_MODE, userId);
             return liveTradingService.getOrders();
         }
     }
@@ -99,12 +103,13 @@ public class UnifiedTradingService {
      * Get order history
      */
     public List<Order> getOrderHistory(String orderId) throws KiteException, IOException {
+        String userId = getUserId();
         if (isPaperTradingEnabled()) {
-            log.debug("{} [{}] Fetching paper order history: {}", PAPER_MODE_EMOJI, PAPER_MODE, orderId);
+            log.debug("{} [{}] Fetching paper order history: {} for user={}", PAPER_MODE_EMOJI, PAPER_MODE, orderId, userId);
             List<PaperOrder> paperOrders = paperTradingService.getOrderHistory(orderId);
             return convertPaperOrdersToKiteOrders(paperOrders);
         } else {
-            log.debug("{} [{}] Fetching live order history: {}", LIVE_MODE_EMOJI, LIVE_MODE, orderId);
+            log.debug("{} [{}] Fetching live order history: {} for user={}", LIVE_MODE_EMOJI, LIVE_MODE, orderId, userId);
             return liveTradingService.getOrderHistory(orderId);
         }
     }
@@ -113,12 +118,13 @@ public class UnifiedTradingService {
      * Get positions
      */
     public Map<String, List<Position>> getPositions() throws KiteException, IOException {
+        String userId = getUserId();
         if (isPaperTradingEnabled()) {
-            log.debug("{} [{}] Fetching paper positions", PAPER_MODE_EMOJI, PAPER_MODE);
-            List<PaperPosition> paperPositions = paperTradingService.getPositions(getUserId());
+            log.debug("{} [{}] Fetching paper positions for user={}", PAPER_MODE_EMOJI, PAPER_MODE, userId);
+            List<PaperPosition> paperPositions = paperTradingService.getPositions(userId);
             return convertPaperPositionsToKitePositions(paperPositions);
         } else {
-            log.debug("{} [{}] Fetching live positions", LIVE_MODE_EMOJI, LIVE_MODE);
+            log.debug("{} [{}] Fetching live positions for user={}", LIVE_MODE_EMOJI, LIVE_MODE, userId);
             return liveTradingService.getPositions();
         }
     }
@@ -139,7 +145,7 @@ public class UnifiedTradingService {
     public void resetPaperAccount() {
         if (isPaperTradingEnabled()) {
             paperTradingService.resetAccount(getUserId());
-            logPaperMode("Account reset completed");
+            logPaperMode("Account reset completed for user=" + getUserId());
         }
     }
 
@@ -324,9 +330,7 @@ public class UnifiedTradingService {
     }
 
     private String getUserId() {
-        // Get user ID from session or authentication context
-        // For now, using a default user ID
-        return DEFAULT_PAPER_USER_ID;
+        return CurrentUserContext.getRequiredUserId();
     }
 
     private void logPaperMode(String message) {

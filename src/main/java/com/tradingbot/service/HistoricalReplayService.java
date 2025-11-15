@@ -7,6 +7,7 @@ import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
 import org.springframework.stereotype.Service;
 
@@ -23,6 +24,9 @@ public class HistoricalReplayService {
     private final HistoricalDataService historicalDataService;
     private final WebSocketService webSocketService;
     private final UnifiedTradingService unifiedTradingService;
+
+    @Value("${historical.replay.sleep-millis-per-second:2}")
+    private long replaySleepMillisPerSecond;
 
     private final ExecutorService replayExecutor = Executors.newCachedThreadPool(new CustomizableThreadFactory("hist-replay-"));
 
@@ -109,8 +113,8 @@ public class HistoricalReplayService {
                 NavigableSet<Long> allSeconds = new TreeSet<>();
                 for (NavigableMap<Long, Double> m : tokenToSecondPrices.values()) allSeconds.addAll(m.keySet());
 
-                // Simple throttle to not overwhelm CPU/logs
-                final long sleepMillisPerSecond = 2; // speed-up replay significantly
+                // Throttle based on configuration
+                final long sleepMillisPerSecond = Math.max(0L, replaySleepMillisPerSecond);
 
                 for (Long sec : allSeconds) {
                     PositionMonitor monitor = webSocketService.getMonitor(executionId).orElse(null);
@@ -130,7 +134,9 @@ public class HistoricalReplayService {
                         monitor.updateWithTokenPrices(tickPrices);
                     }
 
-                    try { Thread.sleep(sleepMillisPerSecond); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+                    if (sleepMillisPerSecond > 0) {
+                        try { Thread.sleep(sleepMillisPerSecond); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+                    }
                 }
 
                 log.info("Historical replay completed for execution {}", executionId);

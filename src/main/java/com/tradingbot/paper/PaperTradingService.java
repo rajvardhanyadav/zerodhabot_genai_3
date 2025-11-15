@@ -32,7 +32,8 @@ public class PaperTradingService {
     // In-memory storage for paper trading
     private final Map<String, PaperOrder> orders = new ConcurrentHashMap<>();
     private final Map<String, List<PaperOrder>> orderHistory = new ConcurrentHashMap<>();
-    private final Map<String, PaperPosition> positions = new ConcurrentHashMap<>();
+    // Per-user positions: userId -> (positionKey -> PaperPosition)
+    private final Map<String, Map<String, PaperPosition>> positionsByUser = new ConcurrentHashMap<>();
     private final Map<String, PaperAccount> accounts = new ConcurrentHashMap<>();
 
     private final AtomicLong orderIdGenerator = new AtomicLong(System.currentTimeMillis());
@@ -40,7 +41,7 @@ public class PaperTradingService {
     /**
      * Place a paper order
      */
-    public OrderResponse placeOrder(OrderRequest orderRequest, String userId) throws KiteException, IOException {
+    public OrderResponse placeOrder(OrderRequest orderRequest, String userId) {
         log.info("[PAPER TRADING] Placing order for {}: {} {} @ {}",
                  orderRequest.getTradingSymbol(),
                  orderRequest.getTransactionType(),
@@ -53,11 +54,10 @@ public class PaperTradingService {
         // Generate order ID
         String orderId = String.valueOf(orderIdGenerator.incrementAndGet());
 
-        // Get instrument token and current price
+        // Get instrument token first
         Long instrumentToken = getInstrumentToken(orderRequest.getTradingSymbol(), orderRequest.getExchange());
-        Double currentPrice = getCurrentPrice(orderRequest.getTradingSymbol(), orderRequest.getExchange());
 
-        // Create paper order
+        // Create paper order upfront so we can reject gracefully if anything fails later
         PaperOrder order = PaperOrder.fromOrderRequest(
             orderId, userId,
             orderRequest.getTradingSymbol(),
@@ -77,6 +77,16 @@ public class PaperTradingService {
         String validationError = validateOrder(order);
         if (validationError != null) {
             return rejectAndReturnOrder(order, orderId, validationError);
+        }
+
+        // Fetch current price, handle API errors internally
+        Double currentPrice;
+        try {
+            currentPrice = getCurrentPrice(orderRequest.getTradingSymbol(), orderRequest.getExchange());
+        } catch (KiteException | IOException e) {
+            String msg = "Failed to fetch LTP: " + e.getMessage();
+            log.error("[PAPER TRADING] {}", msg, e);
+            return rejectAndReturnOrder(order, orderId, msg);
         }
 
         // Calculate required margin
@@ -308,9 +318,12 @@ public class PaperTradingService {
      * Update position after order execution
      */
     private void updatePosition(PaperOrder order, Double executionPrice, PaperAccount account) {
+        String userId = order.getPlacedBy();
+        Map<String, PaperPosition> userPositions = positionsByUser.computeIfAbsent(userId, k -> new ConcurrentHashMap<>());
+
         String positionKey = order.getTradingSymbol() + "_" + order.getProduct();
 
-        PaperPosition position = positions.computeIfAbsent(positionKey, k -> PaperPosition.builder()
+        PaperPosition position = userPositions.computeIfAbsent(positionKey, k -> PaperPosition.builder()
                 .tradingSymbol(order.getTradingSymbol())
                 .exchange(order.getExchange())
                 .instrumentToken(order.getInstrumentToken())
@@ -327,9 +340,9 @@ public class PaperTradingService {
             updateSellPosition(position, order, executionPrice, account);
         }
 
-        positions.put(positionKey, position);
-        log.debug("[PAPER TRADING] Position updated: {} - Qty: {}, Avg: {}",
-                 positionKey, position.getQuantity(), position.getAveragePrice());
+        userPositions.put(positionKey, position);
+        log.debug("[PAPER TRADING] Position updated [user={}]: {} - Qty: {}, Avg: {}",
+                 userId, positionKey, position.getQuantity(), position.getAveragePrice());
     }
 
     /**
@@ -508,10 +521,7 @@ public class PaperTradingService {
      */
     @SuppressWarnings("unused")
     public List<PaperPosition> getPositions(String userId) {
-        // The paper positions map does not track per-user positions currently.
-        // Keep the userId parameter in the signature for API compatibility but
-        // return all positions for now. Suppress unused-parameter warning.
-        return new ArrayList<>(positions.values());
+        return new ArrayList<>(positionsByUser.getOrDefault(userId, Collections.emptyMap()).values());
     }
 
     /**
@@ -525,9 +535,15 @@ public class PaperTradingService {
      * Reset paper trading account
      */
     public void resetAccount(String userId) {
+        // Remove user's orders and related history only for that user
         orders.entrySet().removeIf(e -> e.getValue().getPlacedBy().equals(userId));
-        orderHistory.clear();
-        positions.clear();
+        orderHistory.entrySet().removeIf(e -> {
+            List<PaperOrder> hist = e.getValue();
+            return !hist.isEmpty() && userId.equals(hist.get(0).getPlacedBy());
+        });
+
+        // Clear only this user's positions and account
+        positionsByUser.remove(userId);
         accounts.remove(userId);
 
         log.info("[PAPER TRADING] Account reset for user: {}", userId);
@@ -574,4 +590,3 @@ public class PaperTradingService {
         return (long) (tradingSymbol + exchange).hashCode();
     }
 }
-

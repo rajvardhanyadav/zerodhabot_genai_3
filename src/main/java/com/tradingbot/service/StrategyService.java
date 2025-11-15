@@ -9,13 +9,13 @@ import com.tradingbot.model.StrategyStatus;
 import com.tradingbot.service.strategy.StrategyFactory;
 import com.tradingbot.service.strategy.TradingStrategy;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
+import com.tradingbot.util.CurrentUserContext;
+import com.tradingbot.util.StrategyConstants;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Instrument;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import com.tradingbot.util.StrategyConstants;
-
 
 import java.io.IOException;
 import java.text.SimpleDateFormat;
@@ -33,24 +33,28 @@ public class StrategyService {
     private final UnifiedTradingService unifiedTradingService;
     private final StrategyFactory strategyFactory;
     private final WebSocketService webSocketService;
-    private final Map<String, StrategyExecution> activeStrategies = new ConcurrentHashMap<>();
+
+    // Keyed by executionId but owned by userId; maintain both maps for efficient lookups
+    private final Map<String, StrategyExecution> executionsById = new ConcurrentHashMap<>();
 
     /**
      * Execute a trading strategy
      */
     public StrategyExecutionResponse executeStrategy(StrategyRequest request) throws KiteException, IOException {
-        log.info("Executing strategy: {} for instrument: {}", request.getStrategyType(), request.getInstrumentType());
+        String userId = CurrentUserContext.getRequiredUserId();
+        log.info("Executing strategy: {} for instrument: {} by user {}", request.getStrategyType(), request.getInstrumentType(), userId);
 
         String executionId = UUID.randomUUID().toString();
         StrategyExecution execution = new StrategyExecution();
         execution.setExecutionId(executionId);
+        execution.setUserId(userId);
         execution.setStrategyType(request.getStrategyType());
         execution.setInstrumentType(request.getInstrumentType());
         execution.setExpiry(request.getExpiry());
         execution.setStatus(StrategyStatus.EXECUTING);
         execution.setTimestamp(System.currentTimeMillis());
 
-        activeStrategies.put(executionId, execution);
+        executionsById.put(executionId, execution);
 
         try {
             // Get the appropriate strategy implementation from factory
@@ -69,15 +73,15 @@ public class StrategyService {
                     updateOrderLegs(executionId, response.getOrders());
                 }
 
-                log.info("Strategy {} is ACTIVE - positions being monitored", executionId);
+                log.info("Strategy {} is ACTIVE - positions being monitored (user={})", executionId, userId);
             } else if (StrategyStatus.COMPLETED.name().equalsIgnoreCase(response.getStatus())) {
                 execution.setStatus(StrategyStatus.COMPLETED);
                 execution.setMessage(StrategyConstants.MSG_STRATEGY_COMPLETED);
-                log.info("Strategy {} COMPLETED successfully", executionId);
+                log.info("Strategy {} COMPLETED successfully (user={})", executionId, userId);
             } else {
                 execution.setStatus(StrategyStatus.FAILED);
                 execution.setMessage(response.getMessage());
-                log.info("Strategy {} status: {}", executionId, response.getStatus());
+                log.info("Strategy {} status: {} (user={})", executionId, response.getStatus(), userId);
             }
 
             return response;
@@ -85,34 +89,46 @@ public class StrategyService {
         } catch (Exception e) {
             execution.setStatus(StrategyStatus.FAILED);
             execution.setMessage("Strategy execution failed: " + e.getMessage());
-            log.error("Strategy execution failed", e);
+            log.error("Strategy execution failed for user={} executionId={}", userId, executionId, e);
             throw e;
         }
     }
 
     /**
-     * Get all active strategies
+     * Get all active strategies for current user
      */
     public List<StrategyExecution> getActiveStrategies() {
-        return new ArrayList<>(activeStrategies.values());
+        String userId = CurrentUserContext.getRequiredUserId();
+        List<StrategyExecution> list = new ArrayList<>();
+        for (StrategyExecution se : executionsById.values()) {
+            if (se.getUserId() != null && se.getUserId().equals(userId)) {
+                list.add(se);
+            }
+        }
+        return list;
     }
 
     /**
-     * Get strategy by execution ID
+     * Get strategy by execution ID for current user
      */
     public StrategyExecution getStrategy(String executionId) {
-        return activeStrategies.get(executionId);
+        StrategyExecution se = executionsById.get(executionId);
+        String userId = CurrentUserContext.getRequiredUserId();
+        if (se != null && userId.equals(se.getUserId())) {
+            return se;
+        }
+        return null;
     }
 
     /**
      * Update strategy status to COMPLETED when both legs are closed
      */
     public void markStrategyAsCompleted(String executionId, String reason) {
-        StrategyExecution execution = activeStrategies.get(executionId);
+        StrategyExecution execution = executionsById.get(executionId);
         if (execution != null) {
             execution.setStatus(StrategyStatus.COMPLETED);
             execution.setMessage("Strategy completed - " + reason);
-            log.info("Strategy {} marked as COMPLETED: {}", executionId, reason);
+            log.info("Strategy {} marked as COMPLETED: {} (user={})", executionId, reason, execution.getUserId());
         } else {
             log.warn("Attempted to mark non-existent strategy as completed: {}", executionId);
         }
@@ -254,7 +270,7 @@ public class StrategyService {
      * Update order legs for a strategy execution
      */
     public void updateOrderLegs(String executionId, List<StrategyExecutionResponse.OrderDetail> orderDetails) {
-        StrategyExecution execution = activeStrategies.get(executionId);
+        StrategyExecution execution = executionsById.get(executionId);
         if (execution != null) {
             List<StrategyExecution.OrderLeg> orderLegs = orderDetails.stream()
                 .map(od -> new StrategyExecution.OrderLeg(
@@ -266,7 +282,7 @@ public class StrategyService {
                 ))
                 .toList();
             execution.setOrderLegs(orderLegs);
-            log.info("Updated order legs for execution {}: {} legs", executionId, orderLegs.size());
+            log.info("Updated order legs for execution {}: {} legs (user={})", executionId, orderLegs.size(), execution.getUserId());
         } else {
             log.warn("Cannot update order legs - execution not found: {}", executionId);
         }
@@ -353,10 +369,11 @@ public class StrategyService {
      * Stop a specific strategy by closing all legs
      */
     public Map<String, Object> stopStrategy(String executionId) throws KiteException {
-        log.info("Stopping strategy: {}", executionId);
+        String userId = CurrentUserContext.getRequiredUserId();
+        log.info("Stopping strategy: {} by user {}", executionId, userId);
 
-        StrategyExecution execution = activeStrategies.get(executionId);
-        if (execution == null) {
+        StrategyExecution execution = executionsById.get(executionId);
+        if (execution == null || !userId.equals(execution.getUserId())) {
             throw new IllegalArgumentException("Strategy not found: " + executionId);
         }
 
@@ -378,24 +395,26 @@ public class StrategyService {
         execution.setMessage(String.format("Strategy stopped manually - %d legs closed successfully, %d failed", successCount, failureCount));
 
         String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? StrategyConstants.TRADING_MODE_PAPER : StrategyConstants.TRADING_MODE_LIVE;
-        log.info("[{} MODE] Strategy {} stopped - {} legs closed successfully, {} failed",
-                 tradingMode, executionId, successCount, failureCount);
+        log.info("[{} MODE] Strategy {} stopped - {} legs closed successfully, {} failed (user={})",
+                 tradingMode, executionId, successCount, failureCount, userId);
 
         return result;
     }
 
     /**
-     * Stop all active strategies
+     * Stop all active strategies for current user
      */
     public Map<String, Object> stopAllActiveStrategies() throws KiteException {
-        log.info("Stopping all active strategies");
+        String userId = CurrentUserContext.getRequiredUserId();
+        log.info("Stopping all active strategies for user {}", userId);
 
-        List<StrategyExecution> activeList = activeStrategies.values().stream()
+        List<StrategyExecution> activeList = executionsById.values().stream()
+            .filter(s -> userId.equals(s.getUserId()))
             .filter(s -> s.getStatus() == StrategyStatus.ACTIVE)
             .toList();
 
         if (activeList.isEmpty()) {
-            log.info("No active strategies found");
+            log.info("No active strategies found for user {}", userId);
             Map<String, Object> result = new HashMap<>();
             result.put("message", "No active strategies to stop");
             result.put("totalStrategies", 0);
@@ -403,7 +422,7 @@ public class StrategyService {
             return result;
         }
 
-        log.info("Found {} active strategies to stop", activeList.size());
+        log.info("Found {} active strategies to stop for user {}", activeList.size(), userId);
 
         List<Map<String, Object>> results = new ArrayList<>();
         int totalSuccess = 0;
@@ -437,7 +456,7 @@ public class StrategyService {
         summary.put("totalLegsFailed", totalFailures);
         summary.put("results", results);
 
-        log.info("Stopped all active strategies - {} legs closed successfully, {} failed", totalSuccess, totalFailures);
+        log.info("Stopped all active strategies for user {} - {} legs closed successfully, {} failed", userId, totalSuccess, totalFailures);
 
         return summary;
     }

@@ -19,6 +19,9 @@ public class StrategyExecution {
     private String executionId;
     private StrategyType strategyType;
 
+    // User context
+    private String userId;
+
     // Strategy parameters
     private String instrumentType; // NIFTY, BANKNIFTY, FINNIFTY
     private String expiry; // Format: yyyy-MM-dd or WEEKLY/MONTHLY

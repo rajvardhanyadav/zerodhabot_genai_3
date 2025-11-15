@@ -1,6 +1,6 @@
 # Zerodha Trading Bot - Complete API & Functionality Documentation
 
-**Version:** 2.2.0  
+**Version:** 2.3.1  
 **Last Updated:** November 15, 2025  
 **Base URL (Development):** `http://localhost:8080`  
 **Base URL (Production):** `https://your-app.onrender.com`
@@ -47,7 +47,8 @@ A comprehensive Spring Boot backend application for automated trading using Zero
 ✅ **Order Charges**: Calculate brokerage and charges before placing orders  
 ✅ **Individual Leg Exit**: Close individual legs of multi-leg strategies  
 ✅ **Delta-Based Strike Selection**: Accurate ATM strike selection using Black-Scholes  
-✅ **Historical Replay (Backtest-like)**: Execute strategies over the most recent day's data with per-second replay derived from minute candles
+✅ **Historical Replay (Backtest-like)**: Execute strategies over the most recent day's data with per-second replay derived from minute candles  
+✅ **Multi-User Isolation**: All runtime state (sessions, WebSockets, orders, positions) is segregated per user via the `X-User-Id` header
 
 ---
 
@@ -56,7 +57,7 @@ A comprehensive Spring Boot backend application for automated trading using Zero
 - **Java 17**
 - **Spring Boot 3.2.0**
 - **Kite Connect Java SDK 3.5.1**
-- **Maven**
+- **Maven (Wrapper included)**
 - **Swagger/OpenAPI** for API documentation
 - **Lombok** for reducing boilerplate code
 - **WebSocket** for real-time market data
@@ -68,9 +69,10 @@ A comprehensive Spring Boot backend application for automated trading using Zero
 ### Prerequisites
 
 1. **Java 17** or higher
-2. **Maven 3.6+**
-3. **Zerodha Kite Connect API credentials** (API Key and API Secret)
-4. Active Zerodha trading account
+2. Zerodha Kite Connect API credentials (API Key and API Secret)
+3. Active Zerodha trading account
+
+Note: Maven Wrapper is included; a global Maven install is not required.
 
 ### Setup Instructions
 
@@ -97,20 +99,30 @@ strategy:
   default-target-points: 15.0
 ```
 
-Or set environment variables:
-```cmd
-set KITE_API_KEY=your_api_key
-set KITE_API_SECRET=your_api_secret
+Or set environment variables (PowerShell):
+```powershell
+$env:KITE_API_KEY='your_api_key'
+$env:KITE_API_SECRET='your_api_secret'
 ```
 
 #### 3. Build and Run
 
-```cmd
-# Build the project
-mvn clean install
+Windows (PowerShell):
+```powershell
+# Build the project and run tests
+./mvnw.cmd -DskipTests=false test
 
 # Run the application
-mvn spring-boot:run
+./mvnw.cmd spring-boot:run
+```
+
+macOS/Linux (bash):
+```bash
+# Build the project and run tests
+./mvnw -DskipTests=false test
+
+# Run the application
+./mvnw spring-boot:run
 ```
 
 The application will start on `http://localhost:8080`
@@ -118,6 +130,20 @@ The application will start on `http://localhost:8080`
 #### 4. Access API Documentation
 
 Open Swagger UI: `http://localhost:8080/swagger-ui.html`
+
+---
+
+## Multi-User Model and Required Headers
+
+This API is multi-tenant by design. Each request is processed under a specific user and all runtime state is isolated per user.
+
+- Provide the following header on every protected API call:
+  - `X-User-Id: <your-user-id>` (any opaque identifier: email, UUID, username)
+- Session creation (`POST /api/auth/session`) is flexible:
+  - If you supply `X-User-Id`, that value becomes the key for the session.
+  - If you omit the header, the backend infers the id from Kite (`user.userId`) and returns it; use that id for subsequent protected calls.
+- WebSocket connections are per user; after generating a session, call `POST /api/monitoring/connect` with the header to start streaming ticks.
+- Paper trading accounts, orders, and positions are segregated by `X-User-Id`.
 
 ---
 
@@ -157,33 +183,44 @@ Generate access token using the request token received after login.
 
 **Endpoint:** `POST /api/auth/session`
 
-**Request Body:**
-```json
-{
-  "requestToken": "your_request_token_here"
-}
+**Headers (optional):**
+```
+X-User-Id: <your-user-id>   # Optional; if absent userId from Kite is used
+Content-Type: application/json
 ```
 
-**Response:**
+**Request Body:**
+```json
+{ "requestToken": "your_request_token_here" }
+```
+
+**Response (header provided):**
 ```json
 {
   "success": true,
   "message": "Session generated successfully",
   "data": {
-    "userId": "AB1234",
-    "userName": "John Doe",
-    "userShortname": "John",
-    "email": "john@example.com",
-    "userType": "individual",
-    "broker": "ZERODHA",
+    "userId": "EXTERNAL-123",
     "accessToken": "your_access_token_here",
-    "publicToken": "your_public_token_here",
-    "loginTime": "2025-11-09 09:15:00"
+    "publicToken": "your_public_token_here"
   }
 }
 ```
 
-**Important:** Store the `accessToken` securely. It's automatically set in the backend for subsequent API calls.
+**Response (no header, inferred userId):**
+```json
+{
+  "success": true,
+  "message": "Session generated successfully",
+  "data": {
+    "userId": "AB1234",             // Use this value as X-User-Id henceforth
+    "accessToken": "your_access_token_here",
+    "publicToken": "your_public_token_here"
+  }
+}
+```
+
+**Important:** Store the `accessToken` securely. The backend stores it per user for subsequent API calls.
 
 ---
 
@@ -1049,56 +1086,25 @@ Get list of tradeable instruments with details.
 
 Real-time position monitoring using WebSocket for live price updates with automatic stop-loss and target execution.
 
-### Features
-
-✅ **Real-time Price Updates**: WebSocket-based live market data  
-✅ **Automatic SL/Target**: Exit positions when thresholds are hit  
-✅ **Individual Leg Exit**: Close individual legs independently  
-✅ **P&L Tracking**: Real-time profit/loss calculation  
-✅ **Delta-Based Strike Selection**: Accurate ATM using Black-Scholes model  
-
----
-
 ### 1. Get Monitoring Status
 
-Get WebSocket connection and monitoring status.
+Get WebSocket connection and monitoring status for the current user.
 
 **Endpoint:** `GET /api/monitoring/status`
+
+**Headers:**
+```
+X-User-Id: <your-user-id>
+```
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Monitoring status retrieved",
+  "message": "Success",
   "data": {
     "connected": true,
-    "activeMonitors": 2,
-    "subscribedTokens": ["256265", "256521"],
-    "monitorDetails": [
-      {
-        "executionId": "abc123-def456-ghi789",
-        "strategyType": "ATM_STRADDLE",
-        "legs": [
-          {
-            "symbol": "NIFTY2511024000CE",
-            "entryPrice": 120.50,
-            "currentPrice": 125.00,
-            "pnl": 4.50,
-            "pnlPercentage": 3.73
-          },
-          {
-            "symbol": "NIFTY2511024000PE",
-            "entryPrice": 115.75,
-            "currentPrice": 118.00,
-            "pnl": 2.25,
-            "pnlPercentage": 1.94
-          }
-        ],
-        "stopLoss": 10.0,
-        "target": 15.0,
-        "isActive": true
-      }
-    ]
+    "activeMonitors": 2
   }
 }
 ```
@@ -1107,41 +1113,50 @@ Get WebSocket connection and monitoring status.
 
 ### 2. Connect WebSocket
 
-Manually connect WebSocket for real-time monitoring.
+Establish the per-user WebSocket connection for real-time monitoring. Requires a valid session created via `/api/auth/session` for the same `X-User-Id`.
 
 **Endpoint:** `POST /api/monitoring/connect`
 
-**Response:**
+**Headers:**
+```
+X-User-Id: <your-user-id>
+```
+
+**Response (200):**
 ```json
 {
   "success": true,
-  "message": "WebSocket connected successfully",
-  "data": {
-    "connected": true,
-    "timestamp": "2025-11-09 09:15:00"
-  }
+  "message": "WebSocket connection initiated for current user",
+  "data": "WebSocket connection initiated for current user"
 }
 ```
 
-**Note:** WebSocket automatically connects when a strategy is executed.
+**Response (400):**
+```json
+{
+  "success": false,
+  "message": "Access token is missing or invalid for this user. Please authenticate via /api/auth/session before connecting WebSocket."
+}
+```
 
 ---
 
 ### 3. Disconnect WebSocket
 
-Disconnect WebSocket connection.
+Close the current user's WebSocket connection.
 
 **Endpoint:** `POST /api/monitoring/disconnect`
+
+**Headers:**
+```
+X-User-Id: <your-user-id>
+```
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "WebSocket disconnected successfully",
-  "data": {
-    "connected": false,
-    "timestamp": "2025-11-09 15:30:00"
-  }
+  "message": "WebSocket disconnected for current user"
 }
 ```
 
@@ -1149,9 +1164,14 @@ Disconnect WebSocket connection.
 
 ### 4. Stop Monitoring
 
-Stop monitoring a specific strategy execution.
+Stop monitoring a specific strategy execution (does not close positions).
 
 **Endpoint:** `DELETE /api/monitoring/{executionId}`
+
+**Headers:**
+```
+X-User-Id: <your-user-id>
+```
 
 **Path Parameters:**
 - `executionId` - Unique execution identifier
@@ -1160,88 +1180,8 @@ Stop monitoring a specific strategy execution.
 ```json
 {
   "success": true,
-  "message": "Monitoring stopped for execution",
-  "data": {
-    "executionId": "abc123-def456-ghi789",
-    "stopped": true
-  }
+  "message": "Monitoring stopped for execution: abc123-def456-ghi789"
 }
-```
-
----
-
-### How Monitoring Works
-
-#### Stop Loss Logic
-
-When any leg loses **10 points** (or configured value):
-1. PositionMonitor detects price drop
-2. Triggers `exitCallback`
-3. Closes **ALL legs** at market price
-4. Strategy status changes to COMPLETED
-5. Monitoring stops automatically
-
-**Example:**
-- CE entry: 120.50, current: 110.50 → Loss = 10 points → **Exit triggered**
-
----
-
-#### Target Logic
-
-When any leg gains **15 points** (or configured value):
-1. PositionMonitor detects price gain
-2. Triggers `exitCallback`
-3. Closes **ALL legs** at market price
-4. Strategy status changes to COMPLETED
-5. Monitoring stops automatically
-
-**Example:**
-- CE entry: 120.50, current: 135.50 → Gain = 15 points → **Exit triggered**
-
----
-
-#### Individual Leg Exit Logic
-
-When a leg loses **2 points** (price difference):
-1. PositionMonitor detects individual leg loss
-2. Triggers `individualLegExitCallback`
-3. Closes **ONLY that specific leg**
-4. Other legs continue monitoring
-5. Strategy exits completely when all legs closed
-
-**Example:**
-- CE entry: 120.50, current: 118.50 → Loss = 2 points → **Only CE exits**
-- PE continues monitoring
-
----
-
-#### P&L Difference Exit
-
-When total P&L difference exceeds **10 points**:
-1. Calculates P&L across all legs
-2. If difference > 10 points, triggers exit
-3. Closes all legs
-
----
-
-### Delta-Based Strike Selection
-
-The system uses the Black-Scholes model to select true ATM strikes:
-
-**How it works:**
-1. Calculates call delta for strikes around spot price
-2. Selects strike with delta nearest to **±0.5**
-3. ATM options have ~50% probability of expiring ITM
-
-**Parameters Used:**
-- Risk-free rate: 5% (annualized)
-- Volatility: 15% (annualized)
-- Time to expiry: Calculated dynamically until 3:30 PM IST
-
-**Formula:**
-```
-Call Delta = N(d1)
-where d1 = [ln(S/K) + (r + σ²/2)T] / (σ√T)
 ```
 
 ---
@@ -1689,6 +1629,7 @@ async function generateSession(requestToken) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'X-User-Id': 'your-user-id'
     },
     body: JSON.stringify({ requestToken }),
   });
@@ -1722,6 +1663,7 @@ async function placeOrder() {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'X-User-Id': 'your-user-id'
     },
     body: JSON.stringify(orderRequest),
   });
@@ -1756,6 +1698,7 @@ async function executeATMStraddle() {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'X-User-Id': 'your-user-id'
     },
     body: JSON.stringify(strategyRequest),
   });
@@ -1856,6 +1799,7 @@ async function calculateCharges() {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'X-User-Id': 'your-user-id'
     },
     body: JSON.stringify(chargesRequest),
   });
@@ -1965,32 +1909,20 @@ Backtest-like execution using the most recent trading day's historical data. Des
 
 ## Changelog
 
-### Version 2.2.0 (November 15, 2025)
-- ✅ Added Historical Replay API: `POST /api/historical/execute`
-- ✅ Paper-mode backtest-style execution over most recent trading day (per-second replay from minute candles)
-- ✅ Non-breaking: existing live and paper flows unchanged
-- 🔧 Documentation updates (stack versions, examples, monitoring notes)
+- 2.3.1 (2025-11-15)
+  - Made `X-User-Id` optional for `/api/auth/session`; userId inferred from Kite when header omitted.
+  - Updated documentation across README and Architecture to reflect flexible session creation.
+  - Clarified response examples for session generation (header vs inferred).
 
-### Version 2.1.0 (November 12, 2025)
-- ✅ Added individual leg exit functionality
-- ✅ Implemented delta-based strike selection using Black-Scholes
-- ✅ Made stop-loss and target configurable per request
-- ✅ Added order charges calculation API
-- ✅ Enhanced paper trading with realistic simulation
-- ✅ Improved position monitoring with WebSocket
-- ✅ Added stop strategy APIs
+- 2.3.0 (2025-11-15)
+  - Multi-user model clarified and enforced: `X-User-Id` header documented and required on protected endpoints.
+  - WebSocketService refactored to per-user connections and instrument maps.
+  - Re-enabled `POST /api/monitoring/connect`; updated response examples and error cases.
+  - Simplified monitoring status payload to `{ connected, activeMonitors }` to match implementation.
+  - Introduced Maven Wrapper; updated build/run instructions to use `mvnw`/`mvnw.cmd`.
 
-### Version 2.0.0 (November 9, 2025)
-- ✅ Added ATM Straddle and ATM Strangle strategies
-- ✅ Implemented real-time position monitoring
-- ✅ Added WebSocket integration for live prices
-- ✅ Implemented paper trading mode
-- ✅ Added configurable SL/Target
-
-### Version 1.0.0 (November 8, 2025)
-- ✅ Initial release with basic trading APIs
-- ✅ Authentication and order management
-- ✅ Portfolio and market data APIs
+- 2.2.0
+  - Previous features and docs improvements.
 
 ---
 

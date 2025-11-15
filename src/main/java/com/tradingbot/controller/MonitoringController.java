@@ -25,7 +25,7 @@ public class MonitoringController {
 
     @GetMapping("/status")
     @Operation(summary = "Get WebSocket connection status",
-               description = "Check if WebSocket is connected and number of active monitors")
+               description = "Check if WebSocket is connected and number of active monitors (for current user)")
     public ResponseEntity<ApiResponse<Map<String, Object>>> getStatus() {
         Map<String, Object> status = Map.of(
             "connected", webSocketService.isWebSocketConnected(),
@@ -36,23 +36,27 @@ public class MonitoringController {
 
     @PostMapping("/connect")
     @Operation(summary = "Connect WebSocket for real-time monitoring",
-               description = "Establish WebSocket connection to receive real-time market ticks")
+               description = "Establish a per-user WebSocket connection to receive real-time market ticks")
     public ResponseEntity<ApiResponse<String>> connect() {
+        if (!webSocketService.isAccessTokenValid()) {
+            String msg = "Access token is missing or invalid for this user. Please authenticate via /api/auth/session before connecting WebSocket.";
+            return ResponseEntity.badRequest().body(ApiResponse.error(msg));
+        }
         webSocketService.connect();
-        return ResponseEntity.ok(ApiResponse.success("WebSocket connection initiated"));
+        return ResponseEntity.ok(ApiResponse.success("WebSocket connection initiated for current user"));
     }
 
     @PostMapping("/disconnect")
     @Operation(summary = "Disconnect WebSocket",
-               description = "Close WebSocket connection and stop receiving market ticks")
+               description = "Close current user's WebSocket connection and stop receiving market ticks")
     public ResponseEntity<ApiResponse<String>> disconnect() {
         webSocketService.disconnect();
-        return ResponseEntity.ok(ApiResponse.success("WebSocket disconnected"));
+        return ResponseEntity.ok(ApiResponse.success("WebSocket disconnected for current user"));
     }
 
     @DeleteMapping("/{executionId}")
     @Operation(summary = "Stop monitoring a specific execution",
-               description = "Stop monitoring a strategy execution without closing positions")
+               description = "Stop monitoring a strategy execution without closing positions (current user)")
     public ResponseEntity<ApiResponse<String>> stopMonitoring(@PathVariable String executionId) {
         webSocketService.stopMonitoring(executionId);
         return ResponseEntity.ok(ApiResponse.success("Monitoring stopped for execution: " + executionId));

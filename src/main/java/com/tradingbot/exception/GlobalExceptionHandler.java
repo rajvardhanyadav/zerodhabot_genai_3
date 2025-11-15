@@ -112,6 +112,15 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handles operations explicitly not supported in current mode (e.g., paper mode).
+     */
+    @ExceptionHandler(UnsupportedOperationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnsupportedOperation(UnsupportedOperationException e) {
+        log.warn("Unsupported operation: {}", e.getMessage());
+        return createErrorResponse(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    /**
      * Handles all uncaught exceptions as a safety net.
      * Logs full stack trace for debugging and returns generic error message to client.
      */

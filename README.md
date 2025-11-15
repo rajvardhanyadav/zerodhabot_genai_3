@@ -6,6 +6,8 @@ A comprehensive Spring Boot backend application for automated trading using Zero
 
 **For detailed API documentation, please refer to:** [COMPLETE_API_DOCUMENTATION.md](COMPLETE_API_DOCUMENTATION.md)
 
+- Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
 This comprehensive guide includes:
 - Complete API Reference for all endpoints
 - Trading Strategies documentation
@@ -23,17 +25,18 @@ This comprehensive guide includes:
 - **Market Data**: Real-time quotes, OHLC, LTP, and historical data
 - **GTT Orders**: Good Till Triggered order management
 - **Trading Strategies**: ATM Straddle, ATM Strangle with auto SL/Target
-- **Position Monitoring**: Real-time WebSocket-based monitoring
+- **Position Monitoring**: Real-time WebSocket-based monitoring (per-user)
 - **Paper Trading**: Risk-free testing with real market data
 - **Order Charges**: Calculate brokerage and charges before placing orders
 - **API Documentation**: Interactive Swagger UI
+- **Multi-User Support**: Per-user sessions, WebSockets, and paper trading via `X-User-Id` header
 
 ## Technology Stack
 
-- **Java 21**
+- **Java 17**
 - **Spring Boot 3.2.0**
-- **Kite Connect Java SDK 3.2.0**
-- **Maven**
+- **Kite Connect Java SDK 3.5.1**
+- **Maven (Wrapper included)**
 - **Swagger/OpenAPI** for API documentation
 - **Lombok** for reducing boilerplate code
 - **WebSocket** for real-time market data
@@ -42,10 +45,11 @@ This comprehensive guide includes:
 
 ### Prerequisites
 
-1. Java 21 or higher
-2. Maven 3.6+
-3. Zerodha Kite Connect API credentials (API Key and API Secret)
-4. Active Zerodha trading account
+1. Java 17 or higher
+2. Zerodha Kite Connect API credentials (API Key and API Secret)
+3. Active Zerodha trading account
+
+Note: Maven Wrapper is included; you do not need a global Maven installation.
 
 ### Setup
 
@@ -72,12 +76,22 @@ strategy:
 
 3. **Build and Run**
 
-```cmd
-# Build the project
-mvn clean install
+Windows (PowerShell):
+```powershell
+# Build and run tests
+./mvnw.cmd -DskipTests=false test
 
 # Run the application
-mvn spring-boot:run
+./mvnw.cmd spring-boot:run
+```
+
+macOS/Linux (bash):
+```bash
+# Build and run tests
+./mvnw -DskipTests=false test
+
+# Run the application
+./mvnw spring-boot:run
 ```
 
 The application will start on `http://localhost:8080`
@@ -89,14 +103,14 @@ Open Swagger UI: `http://localhost:8080/swagger-ui.html`
 ## Key Features
 
 ### 🎯 Trading Strategies
-- **ATM Straddle**: Buy ATM Call + ATM Put
-- **ATM Strangle**: Buy OTM Call + OTM Put
+- **ATM Straddle**: Buy ATM Call + Buy ATM Put
+- **ATM Strangle**: Buy OTM Call + Buy OTM Put
 - Configurable Stop-Loss and Target
 - Individual leg exit capability
 - Delta-based strike selection using Black-Scholes model
 
-### 📊 Position Monitoring
-- Real-time price updates via WebSocket
+### 📈 Position Monitoring
+- Real-time price updates via WebSocket (per-user connections)
 - Automatic SL/Target execution
 - P&L tracking for each leg
 - Individual and full position exits
@@ -140,6 +154,33 @@ strategy:
   default-stop-loss-points: 10.0  # Default SL in points
   default-target-points: 15.0      # Default target in points
 ```
+
+## Multi-User Support and X-User-Id header
+
+This API is multi-tenant by design. Each request is processed under a specific user and all runtime state (Kite sessions, WebSocket connections, paper-trading accounts, orders, and positions) is isolated per user.
+
+- Provide a header on every protected API call:
+  - Header name: `X-User-Id`
+  - Value: an opaque identifier for the calling user (e.g., an email, UUID, or username)
+- Session creation (`POST /api/auth/session`) is flexible: if you omit `X-User-Id` the backend will infer the user id from the Kite response (`user.userId`) and store the session under that id. It will also return that id so you can reuse it.
+- If you supply `X-User-Id` during session creation, that value becomes the key, allowing mapping to an external identity.
+- A request filter propagates the header into a per-request context. Services read the context to segregate state.
+- WebSocket connections are per user. Subscriptions and monitors are scoped to the current user and won’t affect others.
+- Paper trading accounts and positions are maintained per user. Resetting one user does not impact others.
+
+Example (PowerShell) with explicit header:
+```powershell
+$headers = @{ 'X-User-Id' = 'user-123' }
+Invoke-RestMethod -Uri http://localhost:8080/api/auth/session -Method Post -Headers $headers -Body '{"requestToken":"<KITE_REQUEST_TOKEN>"}' -ContentType 'application/json'
+```
+
+Example without header (user id inferred from Kite):
+```powershell
+Invoke-RestMethod -Uri http://localhost:8080/api/auth/session -Method Post -Body '{"requestToken":"<KITE_REQUEST_TOKEN>"}' -ContentType 'application/json'
+# Response data.userId => use this value as X-User-Id for subsequent calls
+```
+
+Swagger UI: All protected operations expose the `X-User-Id` header parameter so you can set it once and try requests interactively.
 
 ## License
 

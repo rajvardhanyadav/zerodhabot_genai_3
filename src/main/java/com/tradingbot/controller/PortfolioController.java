@@ -52,9 +52,15 @@ public class PortfolioController {
 
     @GetMapping("/trades")
     @Operation(summary = "Get all trades for the day",
-               description = "Returns completed trades from Paper Trading or Live Trading based on configuration")
+               description = "Returns completed trades in Live Trading mode. Not supported in Paper Trading mode (responds 400).")
     public ResponseEntity<ApiResponse<List<Trade>>> getTrades() throws KiteException, IOException {
         log.debug("API Request - Get all trades");
+        if (unifiedTradingService.isPaperTradingEnabled()) {
+            // Provide a clear and explicit response instead of server error
+            String msg = "Trades are not supported in paper trading mode yet. Please switch to live mode.";
+            log.warn("{}", msg);
+            return ResponseEntity.badRequest().body(ApiResponse.error(msg));
+        }
         List<Trade> trades = unifiedTradingService.getTrades();
         log.debug("API Response - Returning {} trades", trades.size());
         return ResponseEntity.ok(ApiResponse.success(trades));
