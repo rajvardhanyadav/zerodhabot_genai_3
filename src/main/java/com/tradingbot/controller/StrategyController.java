@@ -121,7 +121,7 @@ public class StrategyController {
         return ResponseEntity.ok(ApiResponse.success("Strategy stopped successfully", result));
     }
 
-    @PostMapping("/stop-all")
+    @DeleteMapping("/stop-all")
     @Operation(summary = "Stop all active strategies",
                description = "Stop all active strategies by closing all open positions")
     public ResponseEntity<ApiResponse<Map<String, Object>>> stopAllStrategies() throws KiteException {

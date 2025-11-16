@@ -20,8 +20,8 @@ import java.util.function.BiConsumer;
 @Data
 public class PositionMonitor {
 
-    private static final double INDIVIDUAL_LEG_CLOSE_THRESHOLD = -1.5; // points
-    private static final double ALL_LEGS_CLOSE_THRESHOLD = 3.0; // points
+    private static final double INDIVIDUAL_LEG_CLOSE_THRESHOLD = -1000.5; // points
+    private static final double ALL_LEGS_CLOSE_THRESHOLD = 3000.0; // points
     private static final String EXIT_REASON_PRICE_DIFF_ALL_LEGS = "PRICE_DIFF_ALL_LEGS (Triggered by: %s)";
     private static final String EXIT_REASON_PRICE_DIFF_INDIVIDUAL = "PRICE_DIFF_INDIVIDUAL (Leg: %s, Diff: %.2f points)";
 

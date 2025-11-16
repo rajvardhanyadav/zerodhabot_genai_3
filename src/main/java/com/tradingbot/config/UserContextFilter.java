@@ -33,6 +33,12 @@ public class UserContextFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
+        // Skip user enforcement for CORS preflight requests
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String path = request.getRequestURI();
         String userId = request.getHeader(USER_HEADER);
         boolean requiresUser = PROTECTED_PREFIXES.stream().anyMatch(path::startsWith);

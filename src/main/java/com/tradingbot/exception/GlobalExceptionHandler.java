@@ -22,7 +22,7 @@ import java.time.format.DateTimeParseException;
 @Slf4j
 public class GlobalExceptionHandler {
 
-    private static final String DATE_FORMAT_MESSAGE = "Invalid date format. Use yyyy-MM-dd (e.g., 2025-11-12)";
+    private static final String DATE_FORMAT_MESSAGE = "Invalid date format. Use yyyy-MM-dd (e.g., 2025-11-16)";
     private static final String MALFORMED_JSON_MESSAGE = "Malformed JSON request. Please check your request body format.";
 
     /**
@@ -137,7 +137,7 @@ public class GlobalExceptionHandler {
      * @param message Error message for the client
      * @return ResponseEntity with ApiResponse containing the error
      */
-    private ResponseEntity<ApiResponse<Void>> createErrorResponse(HttpStatus status, String message) {
+    private static ResponseEntity<ApiResponse<Void>> createErrorResponse(HttpStatus status, String message) {
         return ResponseEntity.status(status).body(ApiResponse.error(message));
     }
 }

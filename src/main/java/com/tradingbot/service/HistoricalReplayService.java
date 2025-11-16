@@ -15,6 +15,8 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.*;
 
+import com.tradingbot.util.CurrentUserContext;
+
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -41,6 +43,7 @@ public class HistoricalReplayService {
             throw new IllegalStateException("Historical replay requires paper trading mode to be enabled. Please enable trading.paperTradingEnabled=true.");
         }
 
+        String userId = CurrentUserContext.getRequiredUserId();
         // Temporarily disable live WebSocket subscription so strategy monitoring registration doesn't subscribe
         webSocketService.setLiveSubscriptionEnabled(false);
         try {
@@ -75,7 +78,7 @@ public class HistoricalReplayService {
             List<Callable<Void>> tasks = new ArrayList<>();
             for (PositionMonitor.LegMonitor leg : legs) {
                 long token = leg.getInstrumentToken();
-                tasks.add(() -> {
+                tasks.add(wrapCallableWithUserContext(userId, () -> {
                     try {
                         NavigableMap<Long, Double> map = historicalDataService.getSecondWisePricesForToken(token, dr.start, dr.end);
                         tokenToSecondPrices.put(token, map);
@@ -84,7 +87,7 @@ public class HistoricalReplayService {
                         tokenToSecondPrices.put(token, new TreeMap<>());
                     }
                     return null;
-                });
+                }));
             }
             try {
                 List<Future<Void>> futures = replayExecutor.invokeAll(tasks);
@@ -97,7 +100,7 @@ public class HistoricalReplayService {
             }
 
             // Start asynchronous replay
-            startReplayAsync(executionId, tokenToSecondPrices);
+            startReplayAsync(executionId, tokenToSecondPrices, userId);
             return response;
         } finally {
             // Re-enable for rest of app; our monitor remains registered but unsubscribed
@@ -105,8 +108,8 @@ public class HistoricalReplayService {
         }
     }
 
-    private void startReplayAsync(String executionId, Map<Long, NavigableMap<Long, Double>> tokenToSecondPrices) {
-        replayExecutor.submit(() -> {
+    private void startReplayAsync(String executionId, Map<Long, NavigableMap<Long, Double>> tokenToSecondPrices, String userId) {
+        replayExecutor.submit(wrapRunnableWithUserContext(userId, () -> {
             try {
                 log.info("Starting historical tick replay for execution {}", executionId);
                 // Merge all seconds across tokens
@@ -143,6 +146,46 @@ public class HistoricalReplayService {
             } catch (Exception e) {
                 log.error("Error during historical replay for {}: {}", executionId, e.getMessage(), e);
             }
-        });
+        }));
+    }
+
+    private Callable<Void> wrapCallableWithUserContext(String userId, Callable<Void> task) {
+        return () -> {
+            String previous = CurrentUserContext.getUserId();
+            try {
+                if (userId != null && !userId.isBlank()) {
+                    CurrentUserContext.setUserId(userId);
+                } else {
+                    CurrentUserContext.clear();
+                }
+                return task.call();
+            } finally {
+                restoreUserContext(previous);
+            }
+        };
+    }
+
+    private Runnable wrapRunnableWithUserContext(String userId, Runnable task) {
+        return () -> {
+            String previous = CurrentUserContext.getUserId();
+            try {
+                if (userId != null && !userId.isBlank()) {
+                    CurrentUserContext.setUserId(userId);
+                } else {
+                    CurrentUserContext.clear();
+                }
+                task.run();
+            } finally {
+                restoreUserContext(previous);
+            }
+        };
+    }
+
+    private void restoreUserContext(String previousUserId) {
+        if (previousUserId == null || previousUserId.isBlank()) {
+            CurrentUserContext.clear();
+        } else {
+            CurrentUserContext.setUserId(previousUserId);
+        }
     }
 }

@@ -3,14 +3,12 @@ package com.tradingbot.dto;
 import com.tradingbot.model.StrategyType;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
-import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-@Builder
 public class StrategyRequest {
 
     @NotNull(message = "Strategy type is required")
@@ -34,3 +32,4 @@ public class StrategyRequest {
 
     private Double targetPoints; // Target in points (optional, uses default from config if not provided)
 }
+

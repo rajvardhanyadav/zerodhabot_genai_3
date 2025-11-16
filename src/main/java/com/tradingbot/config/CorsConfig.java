@@ -9,8 +9,8 @@ import org.springframework.web.filter.CorsFilter;
 import java.util.List;
 
 /**
- * CORS Configuration
- * Configures Cross-Origin Resource Sharing for the application
+ * CORS Configuration.
+ * Configures Cross-Origin Resource Sharing for the application.
  */
 @Configuration
 public class CorsConfig {
@@ -18,29 +18,22 @@ public class CorsConfig {
     @Bean
     public CorsFilter corsFilter() {
         CorsConfiguration config = new CorsConfiguration();
-
+        // When credentials are allowed, origins cannot be '*'; enumerate dev origins
         config.setAllowCredentials(true);
-        config.setAllowedOriginPatterns(List.of("*"));
-
-        // Allow common headers
-        config.setAllowedHeaders(List.of(
-            "Origin", "Content-Type", "Accept", "Authorization",
-            "Access-Control-Request-Method", "Access-Control-Request-Headers", "X-Requested-With"
+        config.setAllowedOrigins(List.of(
+                "http://localhost:3000",
+                "http://127.0.0.1:3000"
         ));
-
-        // Allow all standard HTTP methods
+        // Allow all headers (simpler) and ensure custom user header is accepted
+        config.setAllowedHeaders(List.of("*"));
+        // Allow standard methods including preflight
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
-
-        // Expose necessary headers
-        config.setExposedHeaders(List.of(
-            "Access-Control-Allow-Origin", "Access-Control-Allow-Credentials", "Authorization"
-        ));
-
-        config.setMaxAge(3600L); // Cache pre-flight request for 1 hour
+        // Expose minimal headers needed by frontend (you can add more as required)
+        config.setExposedHeaders(List.of("Authorization", "X-User-Id"));
+        config.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);
-
         return new CorsFilter(source);
     }
 }

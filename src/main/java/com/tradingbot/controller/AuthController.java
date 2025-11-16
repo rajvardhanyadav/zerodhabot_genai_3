@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.validation.Valid;
 import java.io.IOException;
 
 @RestController
@@ -37,7 +38,7 @@ public class AuthController {
     @PostMapping("/session")
     @Operation(summary = "Generate session with request token",
                description = "Exchange request token for access token and create user session")
-    public ResponseEntity<ApiResponse<User>> generateSession(@RequestBody LoginRequest loginRequest)
+    public ResponseEntity<ApiResponse<User>> generateSession(@Valid @RequestBody LoginRequest loginRequest)
             throws KiteException, IOException {
         log.info("API Request - Generate session with request token");
         User user = tradingService.generateSession(loginRequest.getRequestToken());

@@ -1,6 +1,7 @@
 package com.tradingbot.model;
 
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -11,8 +12,10 @@ import java.util.List;
  * Model representing the execution state of a trading strategy.
  * Tracks strategy details, execution status, and associated order legs.
  */
-@Data
+@Data // Keep for now to avoid breaking callers that rely on Lombok-generated methods
 @NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class StrategyExecution {
 
     // Identification
@@ -37,6 +40,7 @@ public class StrategyExecution {
     private Double profitLoss;
 
     // Order tracking - initialized to empty list to avoid null checks
+    @Builder.Default
     private List<OrderLeg> orderLegs = new ArrayList<>();
 
     /**
@@ -46,6 +50,7 @@ public class StrategyExecution {
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
+    @Builder
     public static class OrderLeg {
         /** Unique order ID from the broker */
         private String orderId;
