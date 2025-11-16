@@ -8,7 +8,6 @@ import com.tradingbot.model.StrategyCompletionReason;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyStatus;
 import com.tradingbot.service.strategy.StrategyFactory;
-import com.tradingbot.service.strategy.StrategyRestartScheduler;
 import com.tradingbot.service.strategy.TradingStrategy;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import com.tradingbot.util.CurrentUserContext;
@@ -35,7 +34,6 @@ public class StrategyService {
     private final UnifiedTradingService unifiedTradingService;
     private final StrategyFactory strategyFactory;
     private final WebSocketService webSocketService;
-    private final StrategyRestartScheduler strategyRestartScheduler;
 
     // Keyed by executionId but owned by userId; maintain both maps for efficient lookups
     private final Map<String, StrategyExecution> executionsById = new ConcurrentHashMap<>();
@@ -139,6 +137,8 @@ public class StrategyService {
 
     /**
      * Handle completion of a strategy execution with structured reason.
+     * This method no longer triggers auto-restart directly to avoid circular dependency.
+     * Instead, StrategyRestartScheduler will call this as a listener.
      */
     public void handleStrategyCompletion(String executionId, StrategyCompletionReason reason) {
         StrategyExecution execution = executionsById.get(executionId);
@@ -147,9 +147,6 @@ public class StrategyService {
             execution.setCompletionReason(reason);
             execution.setMessage("Strategy completed - " + reason);
             log.info("Strategy {} marked as COMPLETED: {} (user={})", executionId, reason, execution.getUserId());
-
-            // Schedule auto-restart if applicable
-            strategyRestartScheduler.scheduleRestart(execution);
         } else {
             log.warn("Attempted to mark non-existent strategy as completed: {}", executionId);
         }

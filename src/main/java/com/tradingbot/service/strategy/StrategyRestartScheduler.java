@@ -12,6 +12,7 @@ import com.tradingbot.util.StrategyConstants;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 
@@ -36,6 +37,7 @@ public class StrategyRestartScheduler {
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
 
     private final StrategyConfig strategyConfig;
+    @Lazy
     private final StrategyService strategyService;
     private final UnifiedTradingService unifiedTradingService;
     private final TaskScheduler taskScheduler;

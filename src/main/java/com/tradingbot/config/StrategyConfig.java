@@ -2,7 +2,10 @@ package com.tradingbot.config;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 /**
  * Strategy Configuration
@@ -41,4 +44,13 @@ public class StrategyConfig {
      * 0 or negative means unlimited (use with care for live trading).
      */
     private int maxAutoRestarts = 0;
+
+    @Bean
+    public TaskScheduler strategyTaskScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(2);
+        scheduler.setThreadNamePrefix("strategy-restart-");
+        scheduler.initialize();
+        return scheduler;
+    }
 }
