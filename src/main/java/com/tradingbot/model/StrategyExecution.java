@@ -22,6 +22,9 @@ public class StrategyExecution {
     private String executionId;
     private StrategyType strategyType;
 
+    // Link to the root/previous execution in an auto-restart chain (may be null for first run)
+    private String parentExecutionId;
+
     // User context
     private String userId;
 
@@ -33,6 +36,12 @@ public class StrategyExecution {
     private StrategyStatus status; // Lifecycle state of the strategy
     private String message;
     private Long timestamp;
+
+    // New: structured completion reason (e.g. TARGET_HIT, STOPLOSS_HIT, MANUAL_STOP)
+    private StrategyCompletionReason completionReason;
+
+    // Optional: how many times this execution chain has auto-restarted
+    private int autoRestartCount;
 
     // Financial metrics
     private Double entryPrice;

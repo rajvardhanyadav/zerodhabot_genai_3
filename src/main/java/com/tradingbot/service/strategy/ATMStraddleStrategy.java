@@ -5,6 +5,7 @@ import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
+import com.tradingbot.model.StrategyCompletionReason;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.service.strategy.monitoring.PositionMonitor;
@@ -303,7 +304,9 @@ public class ATMStraddleStrategy extends BaseStrategy {
                                                   String callOrderId, String putOrderId,
                                                   Instrument callInstrument, Instrument putInstrument,
                                                   double callEntryPrice, double putEntryPrice,
-                                                  int quantity, StrategyCompletionCallback completionCallback) {
+                                                  int quantity,
+                                                  StrategyCompletionCallback completionCallback) {
+
         PositionMonitor monitor = new PositionMonitor(executionId, stopLossPoints, targetPoints);
 
         monitor.addLeg(callOrderId, callInstrument.tradingsymbol, callInstrument.instrument_token,
@@ -312,30 +315,26 @@ public class ATMStraddleStrategy extends BaseStrategy {
         monitor.addLeg(putOrderId, putInstrument.tradingsymbol, putInstrument.instrument_token,
                 putEntryPrice, quantity, StrategyConstants.OPTION_TYPE_PUT);
 
-        // Set callback for exiting ALL legs (for stop loss, target, P&L diff, or 4+ profit)
-        monitor.setExitCallback(reason ->
-            exitAllLegs(executionId, callInstrument.tradingsymbol, putInstrument.tradingsymbol,
-                       quantity, reason, completionCallback)
-        );
-
-        // Set callback for exiting INDIVIDUAL legs (for -2 or worse loss)
-        monitor.setIndividualLegExitCallback((legSymbol, reason) ->
-            exitIndividualLeg(executionId, legSymbol, quantity, reason, monitor, completionCallback)
-        );
+        monitor.setExitCallback(reason -> {
+            log.warn("Exit triggered for execution {}: {}", executionId, reason);
+            exitAllLegs(executionId, callInstrument.tradingsymbol,
+                    putInstrument.tradingsymbol, quantity, reason, completionCallback);
+        });
 
         return monitor;
     }
 
     private void startWebSocketMonitoring(String executionId, PositionMonitor monitor,
-                                          double callEntryPrice, double putEntryPrice) {
-        if (!webSocketService.isWebSocketConnected()) {
+                                         double callEntryPrice, double putEntryPrice) {
+        double totalPremium = (callEntryPrice + putEntryPrice) * monitor.getLegs().get(0).getQuantity();
+        log.info("Starting monitoring for execution {} with total premium: {}", executionId, totalPremium);
+
+        if (!webSocketService.isConnected()) {
             webSocketService.connect();
         }
 
         webSocketService.startMonitoring(executionId, monitor);
-
-        log.info("Position monitoring started for execution: {} with Call price: {}, Put price: {}",
-                executionId, callEntryPrice, putEntryPrice);
+        log.info("Position monitoring started for execution: {}", executionId);
     }
 
     /**
@@ -347,13 +346,33 @@ public class ATMStraddleStrategy extends BaseStrategy {
             String tradingMode = getTradingMode();
             log.info(StrategyConstants.LOG_EXITING_LEGS, tradingMode, executionId, reason);
 
-            exitLeg(callSymbol, quantity, "Call", tradingMode);
-            exitLeg(putSymbol, quantity, "Put", tradingMode);
+            OrderRequest callExitOrder = createOrderRequest(callSymbol, StrategyConstants.TRANSACTION_SELL,
+                    quantity, StrategyConstants.ORDER_TYPE_MARKET);
+            OrderResponse callExitResponse = unifiedTradingService.placeOrder(callExitOrder);
+
+            if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(callExitResponse.getStatus())) {
+                log.info(StrategyConstants.LOG_LEG_EXITED, tradingMode, "Call", callExitResponse.getOrderId());
+            } else {
+                log.error("Failed to exit Call leg: {}", callExitResponse.getMessage());
+            }
+
+            OrderRequest putExitOrder = createOrderRequest(putSymbol, StrategyConstants.TRANSACTION_SELL,
+                    quantity, StrategyConstants.ORDER_TYPE_MARKET);
+            OrderResponse putExitResponse = unifiedTradingService.placeOrder(putExitOrder);
+
+            if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(putExitResponse.getStatus())) {
+                log.info(StrategyConstants.LOG_LEG_EXITED, tradingMode, "Put", putExitResponse.getOrderId());
+            } else {
+                log.error("Failed to exit Put leg: {}", putExitResponse.getMessage());
+            }
 
             webSocketService.stopMonitoring(executionId);
 
             if (completionCallback != null) {
-                completionCallback.onStrategyCompleted(executionId, reason);
+                StrategyCompletionReason mappedReason = reason != null && reason.toUpperCase().contains("STOP")
+                        ? StrategyCompletionReason.STOPLOSS_HIT
+                        : StrategyCompletionReason.TARGET_HIT;
+                completionCallback.onStrategyCompleted(executionId, mappedReason);
             }
 
             log.info(StrategyConstants.LOG_ALL_LEGS_EXITED, tradingMode, executionId);
@@ -391,7 +410,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
                 if (completionCallback != null) {
                     completionCallback.onStrategyCompleted(executionId,
-                                                          "All legs closed individually - " + reason);
+                                                          StrategyCompletionReason.STOPLOSS_HIT);
                 }
             } else {
                 log.info("Remaining legs still being monitored for execution {}: {}",

@@ -4,9 +4,11 @@ import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
+import com.tradingbot.model.StrategyCompletionReason;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyStatus;
 import com.tradingbot.service.strategy.StrategyFactory;
+import com.tradingbot.service.strategy.StrategyRestartScheduler;
 import com.tradingbot.service.strategy.TradingStrategy;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import com.tradingbot.util.CurrentUserContext;
@@ -33,17 +35,16 @@ public class StrategyService {
     private final UnifiedTradingService unifiedTradingService;
     private final StrategyFactory strategyFactory;
     private final WebSocketService webSocketService;
+    private final StrategyRestartScheduler strategyRestartScheduler;
 
     // Keyed by executionId but owned by userId; maintain both maps for efficient lookups
     private final Map<String, StrategyExecution> executionsById = new ConcurrentHashMap<>();
 
     /**
-     * Execute a trading strategy
+     * Create and register a new StrategyExecution for the given request.
+     * If parentExecutionId is non-null, link this execution into an auto-restart chain.
      */
-    public StrategyExecutionResponse executeStrategy(StrategyRequest request) throws KiteException, IOException {
-        String userId = CurrentUserContext.getRequiredUserId();
-        log.info("Executing strategy: {} for instrument: {} by user {}", request.getStrategyType(), request.getInstrumentType(), userId);
-
+    public StrategyExecution createAndRegisterExecution(StrategyRequest request, String userId, String parentExecutionId) {
         String executionId = UUID.randomUUID().toString();
         StrategyExecution execution = new StrategyExecution();
         execution.setExecutionId(executionId);
@@ -53,15 +54,31 @@ public class StrategyService {
         execution.setExpiry(request.getExpiry());
         execution.setStatus(StrategyStatus.EXECUTING);
         execution.setTimestamp(System.currentTimeMillis());
-
+        execution.setParentExecutionId(parentExecutionId);
+        if (parentExecutionId != null) {
+            log.info("Linking execution {} as child of {}", executionId, parentExecutionId);
+        }
         executionsById.put(executionId, execution);
+        return execution;
+    }
+
+    /**
+     * Execute a trading strategy (user-initiated path)
+     */
+    public StrategyExecutionResponse executeStrategy(StrategyRequest request) throws KiteException, IOException {
+        String userId = CurrentUserContext.getRequiredUserId();
+        log.info("Executing strategy: {} for instrument: {} by user {}", request.getStrategyType(), request.getInstrumentType(), userId);
+
+        StrategyExecution execution = createAndRegisterExecution(request, userId, null);
+        String executionId = execution.getExecutionId();
 
         try {
             // Get the appropriate strategy implementation from factory
             TradingStrategy strategy = strategyFactory.getStrategy(request.getStrategyType());
 
             // Execute the strategy with completion callback
-            StrategyExecutionResponse response = strategy.execute(request, executionId, this::markStrategyAsCompleted);
+            StrategyExecutionResponse response = strategy.execute(request, executionId,
+                this::handleStrategyCompletion);
 
             // Set execution status based on response status
             if (StrategyStatus.ACTIVE.name().equalsIgnoreCase(response.getStatus())) {
@@ -121,17 +138,29 @@ public class StrategyService {
     }
 
     /**
-     * Update strategy status to COMPLETED when both legs are closed
+     * Handle completion of a strategy execution with structured reason.
      */
-    public void markStrategyAsCompleted(String executionId, String reason) {
+    public void handleStrategyCompletion(String executionId, StrategyCompletionReason reason) {
         StrategyExecution execution = executionsById.get(executionId);
         if (execution != null) {
             execution.setStatus(StrategyStatus.COMPLETED);
+            execution.setCompletionReason(reason);
             execution.setMessage("Strategy completed - " + reason);
             log.info("Strategy {} marked as COMPLETED: {} (user={})", executionId, reason, execution.getUserId());
+
+            // Schedule auto-restart if applicable
+            strategyRestartScheduler.scheduleRestart(execution);
         } else {
             log.warn("Attempted to mark non-existent strategy as completed: {}", executionId);
         }
+    }
+
+    /**
+     * Update strategy status to COMPLETED when both legs are closed
+     */
+    @Deprecated
+    public void markStrategyAsCompleted(String executionId, String reason) {
+        handleStrategyCompletion(executionId, StrategyCompletionReason.OTHER);
     }
 
     /**
@@ -466,5 +495,3 @@ public class StrategyService {
      */
     public record InstrumentDetail(String code, String name, int lotSize, double strikeInterval) {}
 }
-
-

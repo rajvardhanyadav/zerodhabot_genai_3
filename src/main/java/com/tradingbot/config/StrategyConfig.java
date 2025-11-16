@@ -20,4 +20,25 @@ public class StrategyConfig {
     // Auto square-off configuration
     private boolean autoSquareOffEnabled = false;
     private String autoSquareOffTime = "15:15"; // HH:mm format
+
+    // Auto-restart configuration
+    /** Enable/disable auto restart globally when target/SL is hit. */
+    private boolean autoRestartEnabled = false;
+
+    /**
+     * Enable auto-restart when trading in LIVE mode.
+     * Recommended to keep this false until behavior is validated in paper.
+     */
+    private boolean autoRestartLiveEnabled = false;
+
+    /**
+     * Enable auto-restart when trading in PAPER mode.
+     */
+    private boolean autoRestartPaperEnabled = true;
+
+    /**
+     * Maximum number of chained auto restarts for a given execution lineage.
+     * 0 or negative means unlimited (use with care for live trading).
+     */
+    private int maxAutoRestarts = 0;
 }

@@ -5,6 +5,7 @@ import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
+import com.tradingbot.model.StrategyCompletionReason;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.service.strategy.monitoring.PositionMonitor;
@@ -245,9 +246,12 @@ public class ATMStrangleStrategy extends BaseStrategy {
             // Stop monitoring
             webSocketService.stopMonitoring(executionId);
 
-            // Notify completion via callback
+            // Notify completion via callback with structured reason
             if (completionCallback != null) {
-                completionCallback.onStrategyCompleted(executionId, reason);
+                StrategyCompletionReason mappedReason = reason != null && reason.toUpperCase().contains("STOP")
+                        ? StrategyCompletionReason.STOPLOSS_HIT
+                        : StrategyCompletionReason.TARGET_HIT;
+                completionCallback.onStrategyCompleted(executionId, mappedReason);
             }
 
             log.info("[{} MODE] Successfully exited all legs for execution {}", tradingMode, executionId);
