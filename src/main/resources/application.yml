@@ -47,6 +47,10 @@ strategy:
   # Auto square off settings
   auto-square-off-enabled: false
   auto-square-off-time: "15:15"
+  auto-restart-enabled: true
+  auto-restart-paper-enabled: true
+  auto-restart-live-enabled: false  # optional, you can keep live off
+  max-auto-restarts: 50
 
 # Historical Replay Configuration
 historical:

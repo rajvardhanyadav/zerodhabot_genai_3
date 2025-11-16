@@ -9,6 +9,7 @@ import com.tradingbot.model.StrategyType;
 import com.tradingbot.service.StrategyService;
 import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.util.CandleUtils;
+import com.tradingbot.util.CurrentUserContext;
 import com.tradingbot.util.StrategyConstants;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import lombok.RequiredArgsConstructor;
@@ -118,29 +119,41 @@ public class StrategyRestartScheduler {
                 future.cancel(false);
             }
 
+            // Preserve and propagate user context into the scheduler thread
+            String previousUserId = CurrentUserContext.getUserId();
             try {
-                String newExecutionId = UUID.randomUUID().toString();
-                log.info("[{} MODE] Triggering auto-restart for execution {} (user={}) on candle {} with strategyType={}, instrument={}, expiry={}. New executionId={}",
-                         tradingMode,
-                         executionId,
-                         execution.getUserId(),
-                         ZonedDateTime.now(MARKET_ZONE),
-                         execution.getStrategyType(),
-                         execution.getInstrumentType(),
-                         execution.getExpiry(),
-                         newExecutionId);
+                if (execution.getUserId() != null && !execution.getUserId().isBlank()) {
+                    CurrentUserContext.setUserId(execution.getUserId());
+                }
 
-                // Execute strategy as usual. StrategyService will create a new StrategyExecution
-                // with its own executionId. To keep parent-child relation, we can set
-                // the parentExecutionId afterwards using the mapping inside StrategyService
-                // (for simplicity, we log the intended linkage here).
-                strategyService.executeStrategy(request);
+                try {
+                    String newExecutionId = UUID.randomUUID().toString();
+                    log.info("[{} MODE] Triggering auto-restart for execution {} (user={}) on candle {} with strategyType={}, instrument={}, expiry={}. New executionId={}",
+                             tradingMode,
+                             executionId,
+                             execution.getUserId(),
+                             ZonedDateTime.now(MARKET_ZONE),
+                             execution.getStrategyType(),
+                             execution.getInstrumentType(),
+                             execution.getExpiry(),
+                             newExecutionId);
 
-                execution.setAutoRestartCount(execution.getAutoRestartCount() + 1);
-            } catch (KiteException | java.io.IOException e) {
-                log.error("Failed to auto-restart strategy for execution {}: {}", executionId, e.getMessage(), e);
-            } catch (Exception e) {
-                log.error("Unexpected error while auto-restarting strategy for execution {}: {}", executionId, e.getMessage(), e);
+                    // Execute strategy as usual under the correct user context
+                    strategyService.executeStrategy(request);
+
+                    execution.setAutoRestartCount(execution.getAutoRestartCount() + 1);
+                } catch (KiteException | java.io.IOException e) {
+                    log.error("Failed to auto-restart strategy for execution {}: {}", executionId, e.getMessage(), e);
+                } catch (Exception e) {
+                    log.error("Unexpected error while auto-restarting strategy for execution {}: {}", executionId, e.getMessage(), e);
+                }
+            } finally {
+                // Restore previous user context on this thread
+                if (previousUserId == null || previousUserId.isBlank()) {
+                    CurrentUserContext.clear();
+                } else {
+                    CurrentUserContext.setUserId(previousUserId);
+                }
             }
         };
 

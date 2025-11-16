@@ -16,6 +16,7 @@ import java.util.*;
 import java.util.concurrent.*;
 
 import com.tradingbot.util.CurrentUserContext;
+import com.tradingbot.service.strategy.StrategyRestartScheduler;
 
 @Service
 @RequiredArgsConstructor
@@ -26,6 +27,7 @@ public class HistoricalReplayService {
     private final HistoricalDataService historicalDataService;
     private final WebSocketService webSocketService;
     private final UnifiedTradingService unifiedTradingService;
+    private final StrategyRestartScheduler strategyRestartScheduler;
 
     @Value("${historical.replay.sleep-millis-per-second:2}")
     private long replaySleepMillisPerSecond;
@@ -143,6 +145,14 @@ public class HistoricalReplayService {
                 }
 
                 log.info("Historical replay completed for execution {}", executionId);
+
+                // After historical replay finishes, schedule ATM-straddle auto re-entry on next 5-minute candle
+                try {
+                    strategyRestartScheduler.scheduleRestart(executionId);
+                } catch (Exception e) {
+                    log.error("Failed to schedule auto-restart for historical execution {}: {}", executionId, e.getMessage(), e);
+                }
+
             } catch (Exception e) {
                 log.error("Error during historical replay for {}: {}", executionId, e.getMessage(), e);
             }
