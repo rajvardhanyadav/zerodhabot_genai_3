@@ -5,6 +5,7 @@ import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.StrategyCompletionReason;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyStatus;
+import com.tradingbot.model.StrategyType;
 import com.tradingbot.service.StrategyService;
 import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.util.CandleUtils;
@@ -13,6 +14,7 @@ import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 
@@ -146,12 +148,23 @@ public class StrategyRestartScheduler {
         scheduledRestarts.put(executionId, future);
     }
 
+    /**
+     * Listener method that can be wired to application events if StrategyService publishes them in future.
+     * For now, this overload allows external callers to pass only an executionId and have the scheduler
+     * look up the StrategyExecution via StrategyService.
+     */
+    public void scheduleRestart(String executionId) {
+        StrategyExecution execution = strategyService.getStrategy(executionId);
+        scheduleRestart(execution);
+    }
+
     private StrategyRequest buildRestartRequestFromExecution(StrategyExecution execution) {
         StrategyRequest request = new StrategyRequest();
-        request.setStrategyType(execution.getStrategyType());
+        // Always restart as ATM_STRADDLE as per new requirement, regardless of original type
+        request.setStrategyType(StrategyType.ATM_STRADDLE);
         request.setInstrumentType(execution.getInstrumentType());
         request.setExpiry(execution.getExpiry());
-        // Other fields (like quantity, SL/target) will rely on defaults or client-provided values
+        // Other fields (like quantity, SL/target) will rely on defaults or client-provided values or config defaults
         return request;
     }
 }

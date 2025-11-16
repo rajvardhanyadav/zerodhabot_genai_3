@@ -38,6 +38,10 @@ public class StrategyController {
                description = "Execute a configured trading strategy (ATM Straddle, ATM Strangle, etc.)")
     public ResponseEntity<ApiResponse<StrategyExecutionResponse>> executeStrategy(
             @Valid @RequestBody StrategyRequest request) throws KiteException, IOException {
+        // Default to ATM_STRADDLE when strategyType is not provided by frontend
+        if (request.getStrategyType() == null) {
+            request.setStrategyType(StrategyType.ATM_STRADDLE);
+        }
         log.info(ApiConstants.LOG_EXECUTE_STRATEGY_REQUEST, request.getStrategyType(), request.getInstrumentType());
         StrategyExecutionResponse response = strategyService.executeStrategy(request);
         log.info(ApiConstants.LOG_EXECUTE_STRATEGY_RESPONSE, response.getExecutionId(), response.getStatus());

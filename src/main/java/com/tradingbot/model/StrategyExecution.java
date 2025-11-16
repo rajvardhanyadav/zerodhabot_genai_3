@@ -22,7 +22,10 @@ public class StrategyExecution {
     private String executionId;
     private StrategyType strategyType;
 
-    // Link to the root/previous execution in an auto-restart chain (may be null for first run)
+    // Root of the auto-restart chain so clients can group all re-entries
+    private String rootExecutionId;
+
+    // Link to the previous execution in an auto-restart chain (may be null for first run)
     private String parentExecutionId;
 
     // User context

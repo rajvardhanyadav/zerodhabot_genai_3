@@ -1,6 +1,6 @@
 # Zerodha Trading Bot - Architecture Overview
 
-Last updated: 2025-11-15 (IST)
+Last updated: 2025-11-16 (IST)
 
 This document captures the high-level architecture, key modules, data flows, and extension points of the backend.
 It’s meant to preserve shared context for future contributors and to accelerate onboarding and changes.
@@ -81,6 +81,7 @@ It’s meant to preserve shared context for future contributors and to accelerat
 - Expands to per-second via linear interpolation.
 - Feeds synthetic prices to the `PositionMonitor`.
 - Temporarily disables live WebSocket subscription while registering monitoring, then re-enables afterwards. Replay runs asynchronously.
+- Replay speed is configurable via `historical.replay.sleep-millis-per-second` (0 for fastest).
 
 ## 6. Configuration
 - `application.yml` keys of interest:
@@ -88,7 +89,7 @@ It’s meant to preserve shared context for future contributors and to accelerat
   - `trading.paper-trading-enabled` (switch between paper and live).
   - Charges/fees/slippage/delay/rejection parameters under `trading.*`.
   - `strategy.default-stop-loss-points`, `strategy.default-target-points`, and square-off flags.
-  - Swagger UI at `/swagger-ui.html` with global header parameter `X-User-Id`.
+  - Swagger UI at `/swagger-ui.html` (OpenAPI at `/api-docs`) with global header parameter `X-User-Id`.
 
 ## 7. Exposed API surface (by group)
 - Auth: `/api/auth/*` (`/api/auth/session` does NOT require `X-User-Id`; if absent the Kite `user.userId` is inferred and returned. Subsequent protected calls must include `X-User-Id`.)

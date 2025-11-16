@@ -52,10 +52,26 @@ public class StrategyService {
         execution.setExpiry(request.getExpiry());
         execution.setStatus(StrategyStatus.EXECUTING);
         execution.setTimestamp(System.currentTimeMillis());
+
+        // Chain linkage
         execution.setParentExecutionId(parentExecutionId);
-        if (parentExecutionId != null) {
-            log.info("Linking execution {} as child of {}", executionId, parentExecutionId);
+        if (parentExecutionId == null) {
+            // First execution in the chain: root is itself, count is 0
+            execution.setRootExecutionId(executionId);
+            execution.setAutoRestartCount(0);
+        } else {
+            // Child execution: inherit root and increment restart count
+            StrategyExecution parent = executionsById.get(parentExecutionId);
+            String rootId = parent != null && parent.getRootExecutionId() != null
+                    ? parent.getRootExecutionId()
+                    : parentExecutionId;
+            execution.setRootExecutionId(rootId);
+            int parentCount = parent != null ? parent.getAutoRestartCount() : 0;
+            execution.setAutoRestartCount(parentCount + 1);
+            log.info("Linking execution {} as child of {} (root={}, restartCount={})",
+                     executionId, parentExecutionId, rootId, execution.getAutoRestartCount());
         }
+
         executionsById.put(executionId, execution);
         return execution;
     }
@@ -147,6 +163,8 @@ public class StrategyService {
             execution.setCompletionReason(reason);
             execution.setMessage("Strategy completed - " + reason);
             log.info("Strategy {} marked as COMPLETED: {} (user={})", executionId, reason, execution.getUserId());
+            // Removed call to strategyRestartScheduler.scheduleRestart(execution) to break circular dependency.
+            // Auto-restart will now be handled by StrategyRestartScheduler observing completions via its own mechanism.
         } else {
             log.warn("Attempted to mark non-existent strategy as completed: {}", executionId);
         }

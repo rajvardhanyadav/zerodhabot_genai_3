@@ -1,7 +1,7 @@
 # Zerodha Trading Bot - Complete API & Functionality Documentation
 
-**Version:** 2.3.1  
-**Last Updated:** November 15, 2025  
+**Version:** 2.3.2  
+**Last Updated:** November 16, 2025  
 **Base URL (Development):** `http://localhost:8080`  
 **Base URL (Production):** `https://your-app.onrender.com`
 
@@ -17,7 +17,7 @@
 6. [Portfolio APIs](#portfolio-apis)
 7. [Market Data APIs](#market-data-apis)
 8. [Account APIs](#account-apis)
-9. [GTT (Good Till Triggered) APIs](#gtt-apis)
+9. [GTT (Good Till Triggered) APIs](#gtt-good-till-triggered-apis)
 10. [Trading Strategies APIs](#trading-strategies-apis)
 11. [Position Monitoring APIs](#position-monitoring-apis)
 12. [Paper Trading](#paper-trading)
@@ -129,7 +129,7 @@ The application will start on `http://localhost:8080`
 
 #### 4. Access API Documentation
 
-Open Swagger UI: `http://localhost:8080/swagger-ui.html`
+Open Swagger UI: `http://localhost:8080/swagger-ui.html` (OpenAPI JSON at `/api-docs`)
 
 ---
 
@@ -213,7 +213,7 @@ Content-Type: application/json
   "success": true,
   "message": "Session generated successfully",
   "data": {
-    "userId": "AB1234",             // Use this value as X-User-Id henceforth
+    "userId": "AB1234",
     "accessToken": "your_access_token_here",
     "publicToken": "your_public_token_here"
   }
@@ -443,6 +443,36 @@ Get all executed trades for the current day.
 
 ---
 
+### 7. Get Order Charges (Executed Orders Today)
+
+Fetch detailed charges for all executed orders placed today from Kite API.
+
+**Endpoint:** `GET /api/orders/charges`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Order charges fetched successfully",
+  "data": [
+    {
+      "orderId": "221108000123456",
+      "charges": {
+        "brokerage": 20.0,
+        "stt": 15.06,
+        "transactionCharges": 1.96,
+        "gst": 3.74,
+        "sebiCharges": 0.01,
+        "stampDuty": 0.18,
+        "totalCharges": 40.95
+      }
+    }
+  ]
+}
+```
+
+---
+
 ## Portfolio APIs
 
 ### 1. Get Positions
@@ -632,9 +662,6 @@ Get list of all tradeable instruments.
 
 **Endpoint:** `GET /api/market/instruments`
 
-**Query Parameters (Optional):**
-- `exchange` - Filter by exchange (NSE, BSE, NFO, MCX)
-
 **Response:**
 ```json
 {
@@ -661,42 +688,21 @@ Get list of all tradeable instruments.
 
 ---
 
-## Account APIs
+### 6. Get Instruments by Exchange
 
-### 1. Get Margins
+Get instruments for a specific exchange.
 
-Get margin details for all segments.
+**Endpoint:** `GET /api/market/instruments/{exchange}`
 
-**Endpoint:** `GET /api/account/margins`
+**Path Parameters:**
+- `exchange` - NSE, BSE, NFO, MCX
 
 **Response:**
 ```json
 {
   "success": true,
   "message": "Success",
-  "data": {
-    "equity": {
-      "enabled": true,
-      "net": 50000.00,
-      "available": {
-        "adhoc_margin": 0.0,
-        "cash": 50000.00,
-        "collateral": 0.0,
-        "intraday_payin": 0.0
-      },
-      "utilised": {
-        "debits": 0.0,
-        "exposure": 0.0,
-        "m2m_realised": 0.0,
-        "m2m_unrealised": 0.0,
-        "option_premium": 0.0,
-        "payout": 0.0,
-        "span": 0.0,
-        "holding_sales": 0.0,
-        "turnover": 0.0
-      }
-    }
-  }
+  "data": [ /* Instrument[] */ ]
 }
 ```
 
@@ -704,84 +710,84 @@ Get margin details for all segments.
 
 ## GTT (Good Till Triggered) APIs
 
-### 1. Place GTT Order
-
-Place a Good Till Triggered order.
-
-**Endpoint:** `POST /api/gtt/orders`
-
-**Request Body:**
-```json
-{
-  "triggerType": "single",
-  "tradingSymbol": "INFY",
-  "exchange": "NSE",
-  "triggerValues": [1500.0],
-  "lastPrice": 1460.0,
-  "orders": [
-    {
-      "transactionType": "BUY",
-      "quantity": 1,
-      "product": "CNC",
-      "orderType": "LIMIT",
-      "price": 1500.0
-    }
-  ]
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "GTT order placed successfully",
-  "data": {
-    "triggerId": 123456
-  }
-}
-```
-
----
-
-### 2. Get All GTT Orders
+### 1. Get All GTT Orders
 
 Get all active GTT orders.
 
-**Endpoint:** `GET /api/gtt/orders`
+**Endpoint:** `GET /api/gtt`
 
 **Response:**
 ```json
 {
   "success": true,
   "message": "Success",
-  "data": [
-    {
-      "id": 123456,
-      "triggerType": "single",
-      "tradingSymbol": "INFY",
-      "status": "active",
-      "createdAt": "2025-11-09 09:00:00"
-    }
-  ]
+  "data": [ /* GTT[] */ ]
 }
 ```
 
 ---
 
-### 3. Delete GTT Order
+### 2. Place GTT Order
 
-Delete a GTT order.
+Create a new GTT order.
 
-**Endpoint:** `DELETE /api/gtt/orders/{triggerId}`
+**Endpoint:** `POST /api/gtt`
+
+**Request Body:** `GTTParams`
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "GTT order deleted successfully",
-  "data": {
-    "triggerId": 123456
-  }
+  "message": "GTT order placed successfully",
+  "data": { /* GTT */ }
+}
+```
+
+---
+
+### 3. Get GTT by ID
+
+**Endpoint:** `GET /api/gtt/{triggerId}`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": { /* GTT */ }
+}
+```
+
+---
+
+### 4. Modify GTT
+
+**Endpoint:** `PUT /api/gtt/{triggerId}`
+
+**Request Body:** `GTTParams`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "GTT order modified successfully",
+  "data": { /* GTT */ }
+}
+```
+
+---
+
+### 5. Delete GTT
+
+**Endpoint:** `DELETE /api/gtt/{triggerId}`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "GTT order cancelled successfully",
+  "data": { /* GTT */ }
 }
 ```
 
@@ -930,7 +936,17 @@ Get details of a specific strategy execution.
     "executionId": "abc123-def456-ghi789",
     "strategyType": "ATM_STRADDLE",
     "status": "ACTIVE",
-    "orders": [...],
+    "orders": [
+      {
+        "orderId": "221108000123456",
+        "tradingSymbol": "NIFTY2511024000CE",
+        "optionType": "CE",
+        "strike": 24000.0,
+        "quantity": 50,
+        "entryPrice": 120.50,
+        "status": "COMPLETE"
+      }
+    ],
     "profitLoss": 687.50
   }
 }
@@ -1082,107 +1098,12 @@ Get list of tradeable instruments with details.
 
 ## Position Monitoring APIs
 
-### Overview
+- `GET /api/monitoring/status`
+- `POST /api/monitoring/connect`
+- `POST /api/monitoring/disconnect`
+- `DELETE /api/monitoring/{executionId}`
 
-Real-time position monitoring using WebSocket for live price updates with automatic stop-loss and target execution.
-
-### 1. Get Monitoring Status
-
-Get WebSocket connection and monitoring status for the current user.
-
-**Endpoint:** `GET /api/monitoring/status`
-
-**Headers:**
-```
-X-User-Id: <your-user-id>
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Success",
-  "data": {
-    "connected": true,
-    "activeMonitors": 2
-  }
-}
-```
-
----
-
-### 2. Connect WebSocket
-
-Establish the per-user WebSocket connection for real-time monitoring. Requires a valid session created via `/api/auth/session` for the same `X-User-Id`.
-
-**Endpoint:** `POST /api/monitoring/connect`
-
-**Headers:**
-```
-X-User-Id: <your-user-id>
-```
-
-**Response (200):**
-```json
-{
-  "success": true,
-  "message": "WebSocket connection initiated for current user",
-  "data": "WebSocket connection initiated for current user"
-}
-```
-
-**Response (400):**
-```json
-{
-  "success": false,
-  "message": "Access token is missing or invalid for this user. Please authenticate via /api/auth/session before connecting WebSocket."
-}
-```
-
----
-
-### 3. Disconnect WebSocket
-
-Close the current user's WebSocket connection.
-
-**Endpoint:** `POST /api/monitoring/disconnect`
-
-**Headers:**
-```
-X-User-Id: <your-user-id>
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "WebSocket disconnected for current user"
-}
-```
-
----
-
-### 4. Stop Monitoring
-
-Stop monitoring a specific strategy execution (does not close positions).
-
-**Endpoint:** `DELETE /api/monitoring/{executionId}`
-
-**Headers:**
-```
-X-User-Id: <your-user-id>
-```
-
-**Path Parameters:**
-- `executionId` - Unique execution identifier
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Monitoring stopped for execution: abc123-def456-ghi789"
-}
-```
+All protected endpoints require `X-User-Id`.
 
 ---
 
@@ -1292,119 +1213,63 @@ trading:
 
 ---
 
-#### 3. Get Paper Trading Positions
-
-**Endpoint:** `GET /api/paper-trading/positions`
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Positions retrieved",
-  "data": [
-    {
-      "tradingSymbol": "NIFTY2511024000CE",
-      "exchange": "NFO",
-      "product": "MIS",
-      "quantity": 50,
-      "buyQuantity": 50,
-      "sellQuantity": 0,
-      "averageBuyPrice": 120.50,
-      "averageSellPrice": 0.0,
-      "lastPrice": 125.00,
-      "realizedPnL": 0.0,
-      "unrealizedPnL": 225.00,
-      "totalPnL": 225.00,
-      "pnlPercentage": 3.73
-    }
-  ]
-}
-```
-
----
-
-#### 4. Get Paper Trading Orders
-
-**Endpoint:** `GET /api/paper-trading/orders`
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Orders retrieved",
-  "data": [
-    {
-      "orderId": "PAPER_221108000123456",
-      "tradingSymbol": "NIFTY2511024000CE",
-      "exchange": "NFO",
-      "transactionType": "BUY",
-      "quantity": 50,
-      "price": 120.50,
-      "triggerPrice": 0.0,
-      "product": "MIS",
-      "orderType": "MARKET",
-      "status": "COMPLETE",
-      "averagePrice": 120.56,
-      "filledQuantity": 50,
-      "pendingQuantity": 0,
-      "orderTimestamp": "2025-11-09 09:15:00",
-      "statusMessage": "Order executed successfully"
-    }
-  ]
-}
-```
-
----
-
-#### 5. Reset Paper Trading Account
+#### 3. Reset Paper Trading Account
 
 Reset account to initial state (useful for testing).
 
-**Endpoint:** `POST /api/paper-trading/reset`
+**Endpoint:** `POST /api/paper-trading/account/reset`
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Paper trading account reset successfully",
-  "data": {
-    "initialBalance": 1000000.0,
-    "currentBalance": 1000000.0,
-    "ordersCleared": 25,
-    "positionsCleared": 3
-  }
+  "message": "Paper trading account reset successfully"
 }
 ```
 
 ---
 
-### Switching Between Paper and Live Trading
+#### 4. Get Trading Statistics
 
-**Paper Trading:**
-```yaml
-trading:
-  paper-trading-enabled: true
+**Endpoint:** `GET /api/paper-trading/statistics`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Trading statistics",
+  "data": { /* stats map */ }
+}
 ```
 
-**Live Trading:**
-```yaml
-trading:
-  paper-trading-enabled: false
-```
+---
 
-**All API endpoints work the same way** in both modes. The application automatically routes requests to the appropriate service.
+#### 5. Get Paper Trading Info
+
+Aggregated info including mode and, if enabled, account snapshot.
+
+**Endpoint:** `GET /api/paper-trading/info`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": { /* info map */ }
+}
+```
 
 ---
 
 ## Order Charges APIs
 
-### Calculate Order Charges
+### Calculate Order Charges (Planned)
 
-Calculate brokerage, taxes, and total charges before placing an order.
+Note: The backend currently exposes `GET /api/orders/charges` to fetch charges for executed orders today. A pre-trade calculation endpoint is planned and not yet implemented.
 
-**Endpoint:** `POST /api/orders/charges`
+**Endpoint:** `POST /api/orders/charges` (not implemented)
 
-**Request Body:**
+**Request Body (example):**
 ```json
 {
   "tradingSymbol": "NIFTY2511024000CE",
@@ -1416,7 +1281,7 @@ Calculate brokerage, taxes, and total charges before placing an order.
 }
 ```
 
-**Response:**
+**Response (example):**
 ```json
 {
   "success": true,
@@ -1431,16 +1296,7 @@ Calculate brokerage, taxes, and total charges before placing an order.
     "stampDuty": 0.18,
     "totalCharges": 40.95,
     "netAmount": 6065.95,
-    "breakEvenPrice": 121.32,
-    "breakdown": {
-      "orderValue": "50 lots × 120.50 = ₹6,025.00",
-      "brokerage": "₹20.00 (flat per order)",
-      "stt": "0.025% on sell side = ₹15.06",
-      "transactionCharges": "0.00325% = ₹1.96",
-      "gst": "18% on brokerage + charges = ₹3.74",
-      "sebiCharges": "0.0001% = ₹0.01",
-      "stampDuty": "0.003% on buy side = ₹0.18"
-    }
+    "breakEvenPrice": 121.32
   }
 }
 ```
@@ -1889,8 +1745,24 @@ Backtest-like execution using the most recent trading day's historical data. Des
     "executionId": "abc123-def456-ghi789",
     "status": "ACTIVE",
     "orders": [
-      { "orderId": "...", "tradingSymbol": "...", "optionType": "CE", "strike": 24000.0, "quantity": 50, "entryPrice": 120.50, "status": "COMPLETE" },
-      { "orderId": "...", "tradingSymbol": "...", "optionType": "PE", "strike": 24000.0, "quantity": 50, "entryPrice": 115.75, "status": "COMPLETE" }
+      {
+        "orderId": "221108000123456",
+        "tradingSymbol": "NIFTY2511024000CE",
+        "optionType": "CE",
+        "strike": 24000.0,
+        "quantity": 50,
+        "entryPrice": 120.50,
+        "status": "COMPLETE"
+      },
+      {
+        "orderId": "221108000123457",
+        "tradingSymbol": "NIFTY2511024000PE",
+        "optionType": "PE",
+        "strike": 24000.0,
+        "quantity": 50,
+        "entryPrice": 115.75,
+        "status": "COMPLETE"
+      }
     ],
     "totalPremium": 11812.50,
     "currentValue": 11812.50,
@@ -1908,6 +1780,12 @@ Backtest-like execution using the most recent trading day's historical data. Des
 ---
 
 ## Changelog
+
+- 2.3.2 (2025-11-16)
+  - Updated docs to match implemented endpoints: `GET /api/orders/charges`, `GET /api/account/margins/{segment}`.
+  - Added Swagger UI and OpenAPI paths.
+  - Added Historical Replay speed configuration.
+  - Clarified Paper Trading endpoints and routing behavior.
 
 - 2.3.1 (2025-11-15)
   - Made `X-User-Id` optional for `/api/auth/session`; userId inferred from Kite when header omitted.

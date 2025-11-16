@@ -13,6 +13,7 @@ This comprehensive guide includes:
 - Trading Strategies documentation
 - Paper Trading guide
 - Position Monitoring with WebSocket
+- Historical Replay (backtest-like)
 - Configuration options
 - Code examples in JavaScript/TypeScript and Python
 - Error handling and troubleshooting
@@ -27,7 +28,8 @@ This comprehensive guide includes:
 - **Trading Strategies**: ATM Straddle, ATM Strangle with auto SL/Target
 - **Position Monitoring**: Real-time WebSocket-based monitoring (per-user)
 - **Paper Trading**: Risk-free testing with real market data
-- **Order Charges**: Calculate brokerage and charges before placing orders
+- **Historical Replay**: Backtest-like execution using recent day's data (per-second replay)
+- **Order Charges**: Fetch brokerage/charges for executed orders today
 - **API Documentation**: Interactive Swagger UI
 - **Multi-User Support**: Per-user sessions, WebSockets, and paper trading via `X-User-Id` header
 
@@ -121,10 +123,12 @@ Open Swagger UI: `http://localhost:8080/swagger-ui.html`
 - Realistic order execution with slippage
 - Complete position and P&L tracking
 
+### 💾 Historical Replay
+- Run strategies on the most recent trading day using per-second replay derived from minute candles
+- Fast, asynchronous replay; uses the same monitoring and exit logic as live mode
+
 ### 💰 Order Charges
-- Calculate brokerage before placing orders
-- STT, transaction charges, GST breakdown
-- Break-even price calculation
+- Fetch brokerage and statutory charges for all executed orders today (from Kite charges API)
 
 ## API Endpoints Overview
 
@@ -132,7 +136,7 @@ Open Swagger UI: `http://localhost:8080/swagger-ui.html`
 - **Orders**: `/api/orders/*`
 - **Portfolio**: `/api/portfolio/*`
 - **Market Data**: `/api/market/*`
-- **Account**: `/api/account/*`
+- **Account**: `/api/account/*` (e.g., `margins/{segment}`)
 - **GTT Orders**: `/api/gtt/*`
 - **Strategies**: `/api/strategies/*`
 - **Monitoring**: `/api/monitoring/*`
@@ -154,6 +158,9 @@ strategy:
   default-stop-loss-points: 10.0  # Default SL in points
   default-target-points: 15.0      # Default target in points
 ```
+
+Security note:
+- Prefer environment variables for `KITE_API_KEY` and `KITE_API_SECRET`. Do not commit real credentials.
 
 ## Multi-User Support and X-User-Id header
 
