@@ -1,6 +1,6 @@
 # Zerodha Trading Bot - Complete API & Functionality Documentation
 
-**Version:** 2.3.2  
+**Version:** 2.4.0  
 **Last Updated:** November 16, 2025  
 **Base URL (Development):** `http://localhost:8080`  
 **Base URL (Production):** `https://your-app.onrender.com`
@@ -26,13 +26,14 @@
 15. [Error Handling](#error-handling)
 16. [Code Examples](#code-examples)
 17. [Historical Replay APIs](#historical-replay-apis)
-18. [Changelog](#changelog)
+18. [Trading Mode Toggle API](#trading-mode-toggle-api)
+19. [Changelog](#changelog)
 
 ---
 
 ## Overview
 
-A comprehensive Spring Boot backend application for automated trading using Zerodha's Kite Connect API. The application supports both live trading and paper trading modes, with sophisticated strategy execution and real-time position monitoring capabilities.
+A comprehensive Spring Boot backend application for automated trading using Zerodha's Kite Connect API. The application supports both live trading and paper trading modes, with sophisticated strategy execution, auto-reentry, and real-time position monitoring capabilities.
 
 ### Key Features
 
@@ -42,12 +43,14 @@ A comprehensive Spring Boot backend application for automated trading using Zero
 ✅ **Market Data**: Real-time quotes, OHLC, LTP, and historical data  
 ✅ **GTT Orders**: Good Till Triggered order management  
 ✅ **Trading Strategies**: Pre-built strategies (ATM Straddle, ATM Strangle)  
+✅ **Auto-Reentry for ATM Straddle**: When SL/Target is hit, automatically schedule a new ATM straddle at the next 5-min candle (configurable)  
 ✅ **Position Monitoring**: Real-time WebSocket-based monitoring with SL/Target  
 ✅ **Paper Trading**: Risk-free strategy testing with real market data  
 ✅ **Order Charges**: Calculate brokerage and charges before placing orders  
 ✅ **Individual Leg Exit**: Close individual legs of multi-leg strategies  
 ✅ **Delta-Based Strike Selection**: Accurate ATM strike selection using Black-Scholes  
-✅ **Historical Replay (Backtest-like)**: Execute strategies over the most recent day's data with per-second replay derived from minute candles  
+✅ **Historical Replay (Backtest-like)**: Execute strategies over the most recent day's data with per-second replay derived from minute candles, using the same monitoring/exit/auto-reentry logic  
+✅ **Runtime Trading Mode Toggle**: Switch between paper and live trading at runtime via API  
 ✅ **Multi-User Isolation**: All runtime state (sessions, WebSockets, orders, positions) is segregated per user via the `X-User-Id` header
 
 ---
@@ -795,51 +798,43 @@ Create a new GTT order.
 
 ## Trading Strategies APIs
 
-### Overview
+### Strategy Types
 
-Pre-built algorithmic trading strategies with automated execution, risk management, and real-time monitoring.
+Currently implemented strategies:
 
-#### Available Strategies
+- `ATM_STRADDLE` (supported)
+- `ATM_STRANGLE` (supported)
 
-1. **ATM Straddle** - Buy 1 ATM Call + Buy 1 ATM Put
-2. **ATM Strangle** - Buy 1 OTM Call + Buy 1 OTM Put
-
----
+Other strategy types may be defined in the `StrategyType` enum but not yet implemented; the `/api/strategies/types` endpoint indicates implementation status.
 
 ### 1. Execute Strategy
 
-Execute a trading strategy with configurable parameters.
+Execute a trading strategy such as ATM Straddle or ATM Strangle.
 
 **Endpoint:** `POST /api/strategies/execute`
+
+**Headers:**
+```
+X-User-Id: <your-user-id>
+Content-Type: application/json
+```
 
 **Request Body:**
 ```json
 {
   "strategyType": "ATM_STRADDLE",
   "instrumentType": "NIFTY",
-  "expiry": "WEEKLY",
+  "expiry": "2025-11-27",
   "lots": 1,
   "orderType": "MARKET",
-  "strikeGap": 100,
-  "stopLossPoints": 10.0,
-  "targetPoints": 15.0,
-  "autoSquareOff": false
+  "strikeGap": null,
+  "autoSquareOff": false,
+  "stopLossPoints": 20.0,
+  "targetPoints": 30.0
 }
 ```
 
-**Request Fields:**
-
-| Field | Type | Required | Description | Default |
-|-------|------|----------|-------------|---------|
-| strategyType | String | Yes | Strategy type | ATM_STRADDLE, ATM_STRANGLE |
-| instrumentType | String | Yes | Index to trade | NIFTY, BANKNIFTY, FINNIFTY |
-| expiry | String | Yes | Option expiry | WEEKLY, MONTHLY, or yyyy-MM-dd |
-| lots | Integer | No | Number of lots | 1 |
-| orderType | String | No | Order type | MARKET (default), LIMIT |
-| strikeGap | Double | No | Strike gap for strangle | Auto-calculated |
-| stopLossPoints | Double | No | Stop loss in points | 10.0 (from config) |
-| targetPoints | Double | No | Target profit in points | 15.0 (from config) |
-| autoSquareOff | Boolean | No | Auto exit at 3:15 PM | false |
+> NOTE: If `strategyType` is omitted or null, the backend defaults to `ATM_STRADDLE` for `/api/strategies/execute`.
 
 **Response:**
 ```json
@@ -847,319 +842,105 @@ Execute a trading strategy with configurable parameters.
   "success": true,
   "message": "Strategy executed successfully",
   "data": {
-    "executionId": "abc123-def456-ghi789",
+    "executionId": "a1b2c3d4-...",
     "status": "ACTIVE",
-    "strategyType": "ATM_STRADDLE",
-    "instrumentType": "NIFTY",
-    "expiry": "2025-11-14",
-    "atmStrike": 24000.0,
+    "message": "[PAPER] Strategy started with SL=20.0pts, Target=30.0pts",
     "orders": [
       {
         "orderId": "221108000123456",
-        "tradingSymbol": "NIFTY2511024000CE",
+        "tradingSymbol": "NIFTY25NOV18000CE",
         "optionType": "CE",
-        "strike": 24000.0,
+        "strike": 18000.0,
         "quantity": 50,
-        "entryPrice": 120.50,
+        "price": 120.5,
         "status": "COMPLETE"
       },
       {
         "orderId": "221108000123457",
-        "tradingSymbol": "NIFTY2511024000PE",
+        "tradingSymbol": "NIFTY25NOV18000PE",
         "optionType": "PE",
-        "strike": 24000.0,
+        "strike": 18000.0,
         "quantity": 50,
-        "entryPrice": 115.75,
+        "price": 115.2,
         "status": "COMPLETE"
       }
     ],
-    "totalPremium": 11812.50,
-    "currentValue": 11812.50,
+    "totalPremium": 11785.0,
+    "currentValue": 11785.0,
     "profitLoss": 0.0,
-    "profitLossPercentage": 0.0,
-    "stopLoss": 10.0,
-    "target": 15.0,
-    "timestamp": "2025-11-09 09:15:00"
+    "profitLossPercentage": 0.0
   }
 }
 ```
 
----
+### ATM Straddle Auto-Reentry Behavior
 
-### 2. Get Active Strategies
+For `ATM_STRADDLE`, when enabled in config (`strategy.auto-restart-*`), the backend can automatically restart the strategy when SL/Target is hit:
 
-Retrieve all currently active strategy executions.
+1. The current ATM straddle is monitored in real-time.
+2. When either stop-loss or target is triggered, both legs are exited and the strategy execution is marked `COMPLETED` with reason `STOPLOSS_HIT` or `TARGET_HIT`.
+3. If auto-restart is enabled and limits are not exceeded, a new ATM straddle is scheduled at the start of the **next 5-minute candle** using the current underlying price to compute the new ATM.
+4. Each auto-reentry creates a new `StrategyExecution` linked to the previous one, allowing the UI to visualize chains.
 
-**Endpoint:** `GET /api/strategies/active`
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Success",
-  "data": [
-    {
-      "executionId": "abc123-def456-ghi789",
-      "strategyType": "ATM_STRADDLE",
-      "instrumentType": "NIFTY",
-      "expiry": "2025-11-14",
-      "status": "ACTIVE",
-      "entryPrice": 11812.50,
-      "currentPrice": 12500.00,
-      "profitLoss": 687.50,
-      "profitLossPercentage": 5.82,
-      "stopLoss": 10.0,
-      "target": 15.0,
-      "timestamp": "2025-11-09 09:15:00"
-    }
-  ]
-}
-```
-
----
-
-### 3. Get Strategy Details
-
-Get details of a specific strategy execution.
-
-**Endpoint:** `GET /api/strategies/{executionId}`
-
-**Path Parameters:**
-- `executionId` - Unique execution identifier
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Success",
-  "data": {
-    "executionId": "abc123-def456-ghi789",
-    "strategyType": "ATM_STRADDLE",
-    "status": "ACTIVE",
-    "orders": [
-      {
-        "orderId": "221108000123456",
-        "tradingSymbol": "NIFTY2511024000CE",
-        "optionType": "CE",
-        "strike": 24000.0,
-        "quantity": 50,
-        "entryPrice": 120.50,
-        "status": "COMPLETE"
-      }
-    ],
-    "profitLoss": 687.50
-  }
-}
-```
-
----
-
-### 4. Stop Strategy
-
-Stop a specific active strategy by closing all legs at market price.
-
-**Endpoint:** `DELETE /api/strategies/stop/{executionId}`
-
-**Path Parameters:**
-- `executionId` - Unique execution identifier
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Strategy stopped successfully",
-  "data": {
-    "executionId": "abc123-def456-ghi789",
-    "totalLegs": 2,
-    "successCount": 2,
-    "failureCount": 0,
-    "status": "SUCCESS",
-    "exitOrders": [
-      {
-        "tradingSymbol": "NIFTY2511024000CE",
-        "optionType": "CE",
-        "quantity": "50",
-        "exitOrderId": "221108000789012",
-        "status": "SUCCESS",
-        "message": "Order placed successfully"
-      },
-      {
-        "tradingSymbol": "NIFTY2511024000PE",
-        "optionType": "PE",
-        "quantity": "50",
-        "exitOrderId": "221108000789013",
-        "status": "SUCCESS",
-        "message": "Order placed successfully"
-      }
-    ]
-  }
-}
-```
-
----
-
-### 5. Stop All Active Strategies
-
-Stop all currently active strategies in one operation.
-
-**Endpoint:** `DELETE /api/strategies/stop-all`
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "All strategies stopped successfully",
-  "data": {
-    "totalStrategies": 2,
-    "totalLegs": 4,
-    "successCount": 4,
-    "failureCount": 0,
-    "strategies": [
-      {
-        "executionId": "abc123-def456-ghi789",
-        "status": "SUCCESS",
-        "legsExited": 2
-      },
-      {
-        "executionId": "xyz789-uvw456-rst123",
-        "status": "SUCCESS",
-        "legsExited": 2
-      }
-    ]
-  }
-}
-```
-
----
-
-### 6. Get Available Strategy Types
-
-Get list of all available strategy types.
-
-**Endpoint:** `GET /api/strategies/types`
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Success",
-  "data": [
-    {
-      "name": "ATM_STRADDLE",
-      "description": "Buy ATM Call + Buy ATM Put (Non-directional strategy)",
-      "implemented": true
-    },
-    {
-      "name": "ATM_STRANGLE",
-      "description": "Buy OTM Call + Buy OTM Put (Lower cost than straddle)",
-      "implemented": true
-    }
-  ]
-}
-```
-
----
-
-### 7. Get Available Instruments
-
-Get list of tradeable instruments with details.
-
-**Endpoint:** `GET /api/strategies/instruments`
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Success",
-  "data": [
-    {
-      "code": "NIFTY",
-      "name": "NIFTY 50",
-      "lotSize": 50,
-      "strikeInterval": 50.0
-    },
-    {
-      "code": "BANKNIFTY",
-      "name": "BANK NIFTY",
-      "lotSize": 25,
-      "strikeInterval": 100.0
-    },
-    {
-      "code": "FINNIFTY",
-      "name": "NIFTY FINANCIAL SERVICES",
-      "lotSize": 40,
-      "strikeInterval": 50.0
-    }
-  ]
-}
-```
-
----
-
-## Position Monitoring APIs
-
-- `GET /api/monitoring/status`
-- `POST /api/monitoring/connect`
-- `POST /api/monitoring/disconnect`
-- `DELETE /api/monitoring/{executionId}`
-
-All protected endpoints require `X-User-Id`.
-
----
-
-## Paper Trading
-
-### Overview
-
-Paper trading allows testing strategies with **real-time market data** without risking actual money. All orders are simulated in-memory while using live prices from Kite API.
-
-### Features
-
-✅ Real-time market data from Kite API  
-✅ Realistic order execution with slippage  
-✅ Margin management (CNC, MIS, NRML)  
-✅ Brokerage and tax calculations  
-✅ Position & P&L tracking  
-✅ Virtual account balance management  
-
----
-
-### Configuration
-
-Edit `application.yml`:
+**Config flags controlling auto-reentry** (in `application.yml`):
 
 ```yaml
-trading:
-  # Enable/disable paper trading
-  paper-trading-enabled: true
-  
-  # Virtual account settings
-  initial-balance: 1000000.0  # ₹10 Lakhs
-  
-  # Charges simulation
-  apply-brokerage-charges: true
-  brokerage-per-order: 20.0
-  stt-percentage: 0.025
-  transaction-charges: 0.00325
-  gst-percentage: 18.0
-  sebi-charges: 0.0001
-  stamp-duty: 0.003
-  
-  # Execution simulation
-  slippage-percentage: 0.05  # 0.05% on market orders
-  enable-execution-delay: true
-  execution-delay-ms: 500
-  enable-order-rejection: false
-  rejection-probability: 0.02
+strategy:
+  auto-restart-enabled: true           # master switch
+  auto-restart-paper-enabled: true     # enable for paper mode
+  auto-restart-live-enabled: false     # enable for live mode (use with care)
+  max-auto-restarts: 0                 # 0 or negative -> unlimited, positive -> max count per chain
 ```
 
-**Important:** Restart the application after changing this setting.
+Auto-reentry applies to both live and paper strategies, and the same mechanism is used when running via historical replay (see [Historical Replay APIs](#historical-replay-apis)).
 
 ---
 
-### API Endpoints
+## Historical Replay APIs
 
-#### 1. Check Trading Mode
+Historical replay lets you execute a strategy in **paper mode** and then replay the most recent trading day tick-by-tick (derived from minute candles) to simulate intraday behavior.
+
+### 1. Execute Strategy with Historical Replay
+
+**Endpoint:** `POST /api/historical/execute`
+
+**Headers:**
+```
+X-User-Id: <your-user-id>
+Content-Type: application/json
+```
+
+**Request Body:** (same as `/api/strategies/execute`)
+```json
+{
+  "strategyType": "ATM_STRADDLE",
+  "instrumentType": "BANKNIFTY",
+  "expiry": "2025-11-27",
+  "lots": 1,
+  "orderType": "MARKET",
+  "stopLossPoints": 40.0,
+  "targetPoints": 60.0
+}
+```
+
+**Behavior:**
+
+1. The strategy is executed in **paper trading mode** (live subscriptions temporarily disabled).  
+2. A `PositionMonitor` is created for the execution.  
+3. Historical second-wise prices for all legs are fetched for the most recent trading day.  
+4. A background task replays ticks into the monitor, applying the same SL/Target and exit logic as live mode.  
+5. When SL/Target is hit during replay, the execution is marked `COMPLETED` with the structured completion reason.  
+6. Once replay finishes, the system uses the same auto-reentry mechanism as live strategies to optionally schedule a **new ATM straddle** at the next 5-minute candle (if auto-restart is enabled in config).
+
+This allows you to test how auto-reentry chains would behave on recent historical data without risking real capital.
+
+---
+
+## Trading Mode Toggle API
+
+The backend can run in **paper trading mode** or **live trading mode**. While `trading.paper-trading-enabled` in configuration sets the default at startup, you can also switch modes at runtime via an API.
+
+### 1. Get Current Mode
 
 **Endpoint:** `GET /api/paper-trading/status`
 
@@ -1167,619 +948,89 @@ trading:
 ```json
 {
   "success": true,
-  "message": "Trading mode retrieved",
   "data": {
     "paperTradingEnabled": true,
     "mode": "PAPER_TRADING",
-    "description": "Simulated trading with virtual money",
-    "balance": 1000000.0,
-    "availableBalance": 988187.50,
-    "usedMargin": 11812.50,
-    "totalBrokerage": 40.0,
-    "totalTax": 45.30,
-    "totalTrades": 2
+    "description": "Simulated trading with virtual money"
   }
 }
 ```
 
----
+### 2. Toggle Paper/Live Mode
 
-#### 2. Get Paper Trading Account
+**Endpoint:** `POST /api/paper-trading/mode`
 
-**Endpoint:** `GET /api/paper-trading/account`
+**Headers:**
+```
+X-User-Id: <admin-or-user-id>
+Content-Type: application/json
+```
+
+**Query Parameters:**
+- `paperTradingEnabled` (boolean): `true` for paper mode, `false` for live mode
+
+**Example:**
+
+```http
+POST /api/paper-trading/mode?paperTradingEnabled=false
+X-User-Id: admin-user
+```
 
 **Response:**
 ```json
 {
   "success": true,
-  "message": "Account details retrieved",
+  "message": "Trading mode updated successfully",
   "data": {
-    "initialBalance": 1000000.0,
-    "currentBalance": 1000687.50,
-    "availableBalance": 988187.50,
-    "usedMargin": 11812.50,
-    "totalPnL": 687.50,
-    "realizedPnL": 0.0,
-    "unrealizedPnL": 687.50,
-    "totalBrokerage": 40.0,
-    "totalTax": 45.30,
-    "totalTrades": 2,
-    "winningTrades": 1,
-    "losingTrades": 0,
-    "winRate": 100.0
+    "paperTradingEnabled": false,
+    "mode": "LIVE_TRADING",
+    "description": "Real trading with actual money"
   }
 }
 ```
 
----
+If mode is already the requested value, the endpoint returns a success response indicating that no change was made:
 
-#### 3. Reset Paper Trading Account
-
-Reset account to initial state (useful for testing).
-
-**Endpoint:** `POST /api/paper-trading/account/reset`
-
-**Response:**
 ```json
 {
   "success": true,
-  "message": "Paper trading account reset successfully"
-}
-```
-
----
-
-#### 4. Get Trading Statistics
-
-**Endpoint:** `GET /api/paper-trading/statistics`
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Trading statistics",
-  "data": { /* stats map */ }
-}
-```
-
----
-
-#### 5. Get Paper Trading Info
-
-Aggregated info including mode and, if enabled, account snapshot.
-
-**Endpoint:** `GET /api/paper-trading/info`
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Success",
-  "data": { /* info map */ }
-}
-```
-
----
-
-## Order Charges APIs
-
-### Calculate Order Charges (Planned)
-
-Note: The backend currently exposes `GET /api/orders/charges` to fetch charges for executed orders today. A pre-trade calculation endpoint is planned and not yet implemented.
-
-**Endpoint:** `POST /api/orders/charges` (not implemented)
-
-**Request Body (example):**
-```json
-{
-  "tradingSymbol": "NIFTY2511024000CE",
-  "exchange": "NFO",
-  "transactionType": "BUY",
-  "quantity": 50,
-  "price": 120.50,
-  "product": "MIS"
-}
-```
-
-**Response (example):**
-```json
-{
-  "success": true,
-  "message": "Order charges calculated",
   "data": {
-    "orderValue": 6025.00,
-    "brokerage": 20.00,
-    "stt": 15.06,
-    "transactionCharges": 1.96,
-    "gst": 3.74,
-    "sebiCharges": 0.01,
-    "stampDuty": 0.18,
-    "totalCharges": 40.95,
-    "netAmount": 6065.95,
-    "breakEvenPrice": 121.32
+    "paperTradingEnabled": true,
+    "mode": "PAPER_TRADING",
+    "message": "Trading mode is already set to PAPER_TRADING"
   }
 }
 ```
 
----
+### Audit Logging
 
-## Configuration
+Every time the trading mode is toggled via this endpoint, the backend writes a structured audit log entry including:
 
-### Application Configuration
+- Timestamp (UTC `Instant`)
+- User id (from `X-User-Id` / `CurrentUserContext` if available)
+- Previous mode
+- New mode
 
-Edit `src/main/resources/application.yml`:
+Example log line:
 
-```yaml
-# Server Configuration
-server:
-  port: 8080
-
-# Kite Connect Configuration
-kite:
-  api-key: ${KITE_API_KEY:your_api_key}
-  api-secret: ${KITE_API_SECRET:your_api_secret}
-
-# Trading Mode Configuration
-trading:
-  paper-trading-enabled: true  # false for live trading
-  initial-balance: 1000000.0
-  apply-brokerage-charges: true
-  brokerage-per-order: 20.0
-  stt-percentage: 0.025
-  transaction-charges: 0.00325
-  gst-percentage: 18.0
-  sebi-charges: 0.0001
-  stamp-duty: 0.003
-  slippage-percentage: 0.05
-  enable-execution-delay: true
-  execution-delay-ms: 500
-  enable-order-rejection: false
-  rejection-probability: 0.02
-
-# Strategy Configuration
-strategy:
-  default-stop-loss-points: 10.0
-  default-target-points: 15.0
-  auto-square-off-enabled: false
-  auto-square-off-time: "15:15"
-
-# Logging Configuration
-logging:
-  level:
-    com.tradingbot: DEBUG
-    com.zerodhatech.kiteconnect: INFO
+```text
+[AUDIT] Trading mode toggled at 2025-11-16T17:25:42.123Z by user=admin-user from PAPER_TRADING to LIVE_TRADING
 ```
 
----
-
-### Environment Variables
-
-You can override configuration using environment variables:
-
-```cmd
-set KITE_API_KEY=your_api_key
-set KITE_API_SECRET=your_api_secret
-set PAPER_TRADING_ENABLED=true
-set INITIAL_BALANCE=1000000
-set DEFAULT_STOP_LOSS=10
-set DEFAULT_TARGET=15
-```
-
----
-
-## Error Handling
-
-### Common Error Response Format
-
-```json
-{
-  "success": false,
-  "message": "Error description",
-  "data": null
-}
-```
-
----
-
-### Error Codes
-
-| HTTP Code | Error Type | Description |
-|-----------|------------|-------------|
-| 400 | Bad Request | Invalid request parameters |
-| 401 | Unauthorized | Invalid or missing access token |
-| 403 | Forbidden | Insufficient permissions |
-| 404 | Not Found | Resource not found |
-| 409 | Conflict | Resource already exists |
-| 500 | Internal Server Error | Server-side error |
-| 503 | Service Unavailable | External service (Kite) unavailable |
-
----
-
-### Common Errors
-
-#### 1. Session Expired
-```json
-{
-  "success": false,
-  "message": "Session expired. Please login again.",
-  "data": null
-}
-```
-**Solution:** Call `/api/auth/login-url` and generate a new session.
-
----
-
-#### 2. Insufficient Funds
-```json
-{
-  "success": false,
-  "message": "Insufficient funds to place order",
-  "data": null
-}
-```
-**Solution:** Check available margin using `/api/account/margins`.
-
----
-
-#### 3. Invalid Order Parameters
-```json
-{
-  "success": false,
-  "message": "Price is required for LIMIT orders",
-  "data": null
-}
-```
-**Solution:** Provide all required fields based on order type.
-
----
-
-#### 4. Strategy Already Active
-```json
-{
-  "success": false,
-  "message": "Strategy already active for this instrument",
-  "data": null
-}
-```
-**Solution:** Stop the existing strategy before starting a new one.
-
----
-
-#### 5. Market Closed
-```json
-{
-  "success": false,
-  "message": "Market is currently closed",
-  "data": null
-}
-```
-**Solution:** Wait for market hours (9:15 AM - 3:30 PM IST).
-
----
-
-## Code Examples
-
-### JavaScript/TypeScript Examples
-
-#### 1. Authentication Flow
-
-```javascript
-// Step 1: Get login URL
-async function getLoginUrl() {
-  const response = await fetch('http://localhost:8080/api/auth/login-url');
-  const data = await response.json();
-  
-  if (data.success) {
-    // Redirect user to login URL
-    window.location.href = data.data;
-  }
-}
-
-// Step 2: After redirect, extract request_token from URL
-const urlParams = new URLSearchParams(window.location.search);
-const requestToken = urlParams.get('request_token');
-
-// Step 3: Generate session
-async function generateSession(requestToken) {
-  const response = await fetch('http://localhost:8080/api/auth/session', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-User-Id': 'your-user-id'
-    },
-    body: JSON.stringify({ requestToken }),
-  });
-  
-  const data = await response.json();
-  
-  if (data.success) {
-    console.log('Logged in:', data.data);
-    // Store access token if needed
-    localStorage.setItem('accessToken', data.data.accessToken);
-  }
-}
-```
-
----
-
-#### 2. Place Order
-
-```javascript
-async function placeOrder() {
-  const orderRequest = {
-    tradingSymbol: 'INFY',
-    exchange: 'NSE',
-    transactionType: 'BUY',
-    quantity: 1,
-    product: 'CNC',
-    orderType: 'MARKET',
-  };
-  
-  const response = await fetch('http://localhost:8080/api/orders', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-User-Id': 'your-user-id'
-    },
-    body: JSON.stringify(orderRequest),
-  });
-  
-  const data = await response.json();
-  
-  if (data.success) {
-    console.log('Order placed:', data.data.orderId);
-  } else {
-    console.error('Order failed:', data.message);
-  }
-}
-```
-
----
-
-#### 3. Execute Strategy
-
-```javascript
-async function executeATMStraddle() {
-  const strategyRequest = {
-    strategyType: 'ATM_STRADDLE',
-    instrumentType: 'NIFTY',
-    expiry: 'WEEKLY',
-    lots: 1,
-    stopLossPoints: 10.0,
-    targetPoints: 15.0,
-    autoSquareOff: false,
-  };
-  
-  const response = await fetch('http://localhost:8080/api/strategies/execute', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-User-Id': 'your-user-id'
-    },
-    body: JSON.stringify(strategyRequest),
-  });
-  
-  const data = await response.json();
-  
-  if (data.success) {
-    console.log('Strategy executed:', data.data);
-    console.log('Execution ID:', data.data.executionId);
-    console.log('Total Premium:', data.data.totalPremium);
-  } else {
-    console.error('Strategy failed:', data.message);
-  }
-}
-```
-
----
-
-#### 4. Monitor Active Strategies
-
-```javascript
-async function monitorStrategies() {
-  const response = await fetch('http://localhost:8080/api/strategies/active');
-  const data = await response.json();
-  
-  if (data.success) {
-    data.data.forEach(strategy => {
-      console.log(`Strategy: ${strategy.strategyType}`);
-      console.log(`P&L: ₹${strategy.profitLoss} (${strategy.profitLossPercentage}%)`);
-      console.log(`Status: ${strategy.status}`);
-    });
-  }
-}
-
-// Poll every 5 seconds
-setInterval(monitorStrategies, 5000);
-```
-
----
-
-#### 5. Stop Strategy
-
-```javascript
-async function stopStrategy(executionId) {
-  const response = await fetch(
-    `http://localhost:8080/api/strategies/stop/${executionId}`,
-    { method: 'DELETE' }
-  );
-  
-  const data = await response.json();
-  
-  if (data.success) {
-    console.log('Strategy stopped successfully');
-    console.log('Exit orders:', data.data.exitOrders);
-  } else {
-    console.error('Failed to stop strategy:', data.message);
-  }
-}
-```
-
----
-
-#### 6. Get Positions
-
-```javascript
-async function getPositions() {
-  const response = await fetch('http://localhost:8080/api/portfolio/positions');
-  const data = await response.json();
-  
-  if (data.success) {
-    const positions = data.data.net;
-    
-    positions.forEach(position => {
-      console.log(`Symbol: ${position.tradingSymbol}`);
-      console.log(`Quantity: ${position.quantity}`);
-      console.log(`P&L: ₹${position.pnl}`);
-    });
-  }
-}
-```
-
----
-
-#### 7. Calculate Order Charges
-
-```javascript
-async function calculateCharges() {
-  const chargesRequest = {
-    tradingSymbol: 'NIFTY2511024000CE',
-    exchange: 'NFO',
-    transactionType: 'BUY',
-    quantity: 50,
-    price: 120.50,
-    product: 'MIS',
-  };
-  
-  const response = await fetch('http://localhost:8080/api/orders/charges', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-User-Id': 'your-user-id'
-    },
-    body: JSON.stringify(chargesRequest),
-  });
-  
-  const data = await response.json();
-  
-  if (data.success) {
-    console.log('Order Value:', data.data.orderValue);
-    console.log('Total Charges:', data.data.totalCharges);
-    console.log('Net Amount:', data.data.netAmount);
-    console.log('Break Even:', data.data.breakEvenPrice);
-  }
-}
-```
-
----
-
-#### 8. Execute Strategy with Historical Replay (JavaScript)
-
-```javascript
-async function executeHistoricalReplay() {
-  const payload = {
-    strategyType: 'ATM_STRADDLE',
-    instrumentType: 'NIFTY',
-    expiry: 'WEEKLY',
-    lots: 1,
-    orderType: 'MARKET',
-    stopLossPoints: 10.0,
-    targetPoints: 15.0
-  };
-
-  const response = await fetch('http://localhost:8080/api/historical/execute', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-
-  const data = await response.json();
-  if (data.success) {
-    console.log('Historical execution started:', data.data.executionId);
-  } else {
-    console.error('Historical execution failed:', data.message);
-  }
-}
-```
-
----
-
-## Historical Replay APIs
-
-Backtest-like execution using the most recent trading day's historical data. Designed to reuse existing strategy and monitoring flows in paper mode while replaying prices per-second.
-
-### 1. Execute Strategy with Historical Replay
-
-**Endpoint:** `POST /api/historical/execute`
-
-**Prerequisites:**
-- Paper trading must be enabled (`trading.paper-trading-enabled: true`).
-- A valid Kite session (access token) must be active.
-
-**How it works:**
-- The system executes the selected strategy in paper mode (same request shape as live execute).
-- It then replays the most recent trading day's session (09:15–15:30 IST) for the option legs involved.
-- Second-wise prices are synthesized by linearly interpolating minute candles from Kite Historical API.
-- Monitoring and exits (SL/Target/leg thresholds) run as usual; replay runs asynchronously.
-
-**Request Body (same as /api/strategies/execute):**
-```json
-{
-  "strategyType": "ATM_STRADDLE",
-  "instrumentType": "NIFTY",
-  "expiry": "WEEKLY",
-  "lots": 1,
-  "orderType": "MARKET",
-  "stopLossPoints": 10.0,
-  "targetPoints": 15.0,
-  "autoSquareOff": false
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Historical execution started",
-  "data": {
-    "executionId": "abc123-def456-ghi789",
-    "status": "ACTIVE",
-    "orders": [
-      {
-        "orderId": "221108000123456",
-        "tradingSymbol": "NIFTY2511024000CE",
-        "optionType": "CE",
-        "strike": 24000.0,
-        "quantity": 50,
-        "entryPrice": 120.50,
-        "status": "COMPLETE"
-      },
-      {
-        "orderId": "221108000123457",
-        "tradingSymbol": "NIFTY2511024000PE",
-        "optionType": "PE",
-        "strike": 24000.0,
-        "quantity": 50,
-        "entryPrice": 115.75,
-        "status": "COMPLETE"
-      }
-    ],
-    "totalPremium": 11812.50,
-    "currentValue": 11812.50,
-    "profitLoss": 0.0,
-    "profitLossPercentage": 0.0
-  }
-}
-```
-
-**Notes & Limitations:**
-- Replay uses minute candles for the latest trading day and derives second-wise prices by interpolation; this is not tick-by-tick accuracy.
-- Replay is accelerated (milliseconds per simulated second) to complete in reasonable time.
-- Endpoint is only available in paper mode; requests in live mode will be rejected.
+> **Security Recommendation:** Restrict access to `/api/paper-trading/mode` to administrative users at the API gateway / auth layer, since it determines whether orders are simulated or sent to the live exchange.
 
 ---
 
 ## Changelog
+
+### v2.4.0 (November 16, 2025)
+
+- Added auto-reentry mechanism for ATM Straddle strategies:
+  - When SL/Target is hit, exit both legs, mark execution `COMPLETED`, and optionally schedule a new ATM straddle at the next 5-minute candle.
+  - Configurable via `strategy.auto-restart-*` flags and `max-auto-restarts`.
+- Extended historical replay to use the same auto-reentry behavior after simulated runs.
+- Added runtime trading mode toggle API: `POST /api/paper-trading/mode`.
+- Added audit logging for trading mode changes including user id and timestamp.
 
 - 2.3.2 (2025-11-16)
   - Updated docs to match implemented endpoints: `GET /api/orders/charges`, `GET /api/account/margins/{segment}`.

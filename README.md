@@ -14,6 +14,7 @@ This comprehensive guide includes:
 - Paper Trading guide
 - Position Monitoring with WebSocket
 - Historical Replay (backtest-like)
+- Auto-reentry behavior for ATM strategies (live & historical)
 - Configuration options
 - Code examples in JavaScript/TypeScript and Python
 - Error handling and troubleshooting
@@ -25,13 +26,14 @@ This comprehensive guide includes:
 - **Portfolio Management**: View positions, holdings, and trades
 - **Market Data**: Real-time quotes, OHLC, LTP, and historical data
 - **GTT Orders**: Good Till Triggered order management
-- **Trading Strategies**: ATM Straddle, ATM Strangle with auto SL/Target
+- **Trading Strategies**: ATM Straddle, ATM Strangle with auto SL/Target and optional auto-reentry
 - **Position Monitoring**: Real-time WebSocket-based monitoring (per-user)
 - **Paper Trading**: Risk-free testing with real market data
-- **Historical Replay**: Backtest-like execution using recent day's data (per-second replay)
+- **Historical Replay**: Backtest-like execution using recent day's data (per-second replay) with the same auto-reentry logic
 - **Order Charges**: Fetch brokerage/charges for executed orders today
 - **API Documentation**: Interactive Swagger UI
 - **Multi-User Support**: Per-user sessions, WebSockets, and paper trading via `X-User-Id` header
+- **Runtime Mode Toggle**: Switch between paper and live trading via `/api/paper-trading/mode`
 
 ## Technology Stack
 
@@ -110,6 +112,7 @@ Open Swagger UI: `http://localhost:8080/swagger-ui.html`
 - Configurable Stop-Loss and Target
 - Individual leg exit capability
 - Delta-based strike selection using Black-Scholes model
+- **Auto-Reentry**: Optional automatic reentry for ATM strategies on SL/Target hit
 
 ### 📈 Position Monitoring
 - Real-time price updates via WebSocket (per-user connections)
@@ -126,6 +129,7 @@ Open Swagger UI: `http://localhost:8080/swagger-ui.html`
 ### 💾 Historical Replay
 - Run strategies on the most recent trading day using per-second replay derived from minute candles
 - Fast, asynchronous replay; uses the same monitoring and exit logic as live mode
+- **Auto-Reentry**: Strategies automatically reenter positions based on historical data
 
 ### 💰 Order Charges
 - Fetch brokerage and statutory charges for all executed orders today (from Kite charges API)
@@ -141,6 +145,7 @@ Open Swagger UI: `http://localhost:8080/swagger-ui.html`
 - **Strategies**: `/api/strategies/*`
 - **Monitoring**: `/api/monitoring/*`
 - **Paper Trading**: `/api/paper-trading/*`
+- **Trading Mode**: `/api/paper-trading/mode` (new)
 
 For complete API documentation with request/response examples, see [COMPLETE_API_DOCUMENTATION.md](COMPLETE_API_DOCUMENTATION.md)
 

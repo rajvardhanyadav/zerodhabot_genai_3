@@ -1,8 +1,10 @@
 package com.tradingbot.controller;
 
+import com.tradingbot.config.PaperTradingConfig;
 import com.tradingbot.dto.ApiResponse;
 import com.tradingbot.paper.PaperAccount;
 import com.tradingbot.service.UnifiedTradingService;
+import com.tradingbot.util.CurrentUserContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -25,6 +28,7 @@ import java.util.Map;
 public class PaperTradingController {
 
     private final UnifiedTradingService unifiedTradingService;
+    private final PaperTradingConfig paperTradingConfig;
 
     @GetMapping("/status")
     @Operation(summary = "Check if paper trading is enabled",
@@ -115,6 +119,43 @@ public class PaperTradingController {
         }
 
         return ResponseEntity.ok(ApiResponse.success(info));
+    }
+
+    @PostMapping("/mode")
+    @Operation(summary = "Toggle paper/live trading mode",
+               description = "Enable or disable paper trading mode. When disabled, the system uses live trading for eligible operations.")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> setTradingMode(@RequestParam("paperTradingEnabled") boolean paperTradingEnabled) {
+        boolean current = unifiedTradingService.isPaperTradingEnabled();
+        if (current == paperTradingEnabled) {
+            Map<String, Object> status = Map.of(
+                "paperTradingEnabled", current,
+                "mode", current ? "PAPER_TRADING" : "LIVE_TRADING",
+                "message", "Trading mode is already set to " + (current ? "PAPER_TRADING" : "LIVE_TRADING")
+            );
+            return ResponseEntity.ok(ApiResponse.success(status));
+        }
+
+        paperTradingConfig.setPaperTradingEnabled(paperTradingEnabled);
+        boolean isPaperMode = unifiedTradingService.isPaperTradingEnabled();
+
+        // Audit log with user id and timestamp
+        String userId = CurrentUserContext.getUserId();
+        Instant now = Instant.now();
+        log.info("[AUDIT] Trading mode toggled at {} by user={} from {} to {}",
+                 now,
+                 userId != null ? userId : "UNKNOWN",
+                 current ? "PAPER_TRADING" : "LIVE_TRADING",
+                 isPaperMode ? "PAPER_TRADING" : "LIVE_TRADING");
+
+        Map<String, Object> status = Map.of(
+            "paperTradingEnabled", isPaperMode,
+            "mode", isPaperMode ? "PAPER_TRADING" : "LIVE_TRADING",
+            "description", isPaperMode
+                ? "Simulated trading with virtual money"
+                : "Real trading with actual money"
+        );
+
+        return ResponseEntity.ok(ApiResponse.success("Trading mode updated successfully", status));
     }
 
     /**
