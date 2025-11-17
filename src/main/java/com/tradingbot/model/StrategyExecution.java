@@ -46,6 +46,17 @@ public class StrategyExecution {
     // Optional: how many times this execution chain has auto-restarted
     private int autoRestartCount;
 
+    // Track which trading mode (PAPER or LIVE) the execution used
+    private String tradingMode;
+
+    public boolean isPaperTradingMode() {
+        return com.tradingbot.util.StrategyConstants.TRADING_MODE_PAPER.equalsIgnoreCase(tradingMode);
+    }
+
+    public boolean isLiveTradingMode() {
+        return com.tradingbot.util.StrategyConstants.TRADING_MODE_LIVE.equalsIgnoreCase(tradingMode);
+    }
+
     // Financial metrics
     private Double entryPrice;
     private Double currentPrice;

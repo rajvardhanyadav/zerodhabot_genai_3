@@ -1,6 +1,7 @@
 package com.tradingbot.config;
 
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
@@ -9,7 +10,8 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration
 @ConfigurationProperties(prefix = "historical.replay")
-@Data
+@Getter
+@Setter
 public class HistoricalReplayConfig {
     /**
      * Sleep duration (in milliseconds) between each simulated second during historical replay.
@@ -17,4 +19,3 @@ public class HistoricalReplayConfig {
      */
     private long sleepMillisPerSecond = 2L;
 }
-

@@ -7,7 +7,6 @@ import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyStatus;
 import com.tradingbot.model.StrategyType;
 import com.tradingbot.service.StrategyService;
-import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.util.CandleUtils;
 import com.tradingbot.util.CurrentUserContext;
 import com.tradingbot.util.StrategyConstants;
@@ -22,7 +21,6 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.Date;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -31,6 +29,7 @@ import java.util.concurrent.ScheduledFuture;
 /**
  * Schedules auto-restart of strategies at the start of the next 5-minute candle
  * when the current strategy closes due to target/stoploss being hit.
+ * Listens to StrategyCompletionEvent and uses execution's stored trading mode.
  */
 @Component
 @RequiredArgsConstructor
@@ -42,14 +41,27 @@ public class StrategyRestartScheduler {
     private final StrategyConfig strategyConfig;
     @Lazy
     private final StrategyService strategyService;
-    private final UnifiedTradingService unifiedTradingService;
     private final TaskScheduler taskScheduler;
 
     // Track scheduled restarts to avoid duplicates per executionId
     private final Map<String, ScheduledFuture<?>> scheduledRestarts = new ConcurrentHashMap<>();
 
     /**
+     * Listen to strategy completion events and schedule restart if conditions are met.
+     */
+    @EventListener
+    public void onStrategyCompletion(StrategyService.StrategyCompletionEvent event) {
+        StrategyExecution execution = event.execution();
+        if (execution != null) {
+            log.debug("Received completion event for execution {}: reason={}, mode={}",
+                    execution.getExecutionId(), execution.getCompletionReason(), execution.getTradingMode());
+            scheduleRestart(execution);
+        }
+    }
+
+    /**
      * Schedule an auto-restart for the given execution if conditions are met.
+     * Uses execution's stored tradingMode to determine paper vs live behavior.
      */
     public void scheduleRestart(StrategyExecution execution) {
         if (execution == null) {
@@ -61,7 +73,10 @@ public class StrategyRestartScheduler {
             return;
         }
 
-        boolean isPaper = unifiedTradingService.isPaperTradingEnabled();
+        // Use execution's stored trading mode instead of querying global state
+        String tradingMode = execution.getTradingMode();
+        boolean isPaper = StrategyConstants.TRADING_MODE_PAPER.equalsIgnoreCase(tradingMode);
+
         if (isPaper && !strategyConfig.isAutoRestartPaperEnabled()) {
             log.info("Auto-restart for PAPER mode disabled; skipping for execution {}", execution.getExecutionId());
             return;
@@ -98,7 +113,6 @@ public class StrategyRestartScheduler {
         Duration delay = CandleUtils.durationUntilNextFiveMinuteCandle(now);
         ZonedDateTime nextCandle = now.plus(delay);
 
-        String tradingMode = isPaper ? StrategyConstants.TRADING_MODE_PAPER : StrategyConstants.TRADING_MODE_LIVE;
         log.info("[{} MODE] Scheduling auto-restart for execution {} (user={}) at next 5m candle {} (delay={}s), reason={}, strategyType={}, instrument={}, expiry={}",
                  tradingMode,
                  executionId,
@@ -157,7 +171,7 @@ public class StrategyRestartScheduler {
             }
         };
 
-        ScheduledFuture<?> future = taskScheduler.schedule(task, Date.from(nextCandle.toInstant()));
+        ScheduledFuture<?> future = taskScheduler.schedule(task, nextCandle.toInstant());
         scheduledRestarts.put(executionId, future);
     }
 

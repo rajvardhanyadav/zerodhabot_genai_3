@@ -218,30 +218,56 @@ public class ATMStrangleStrategy extends BaseStrategy {
     /**
      * Exit all legs when SL or Target is hit
      */
+    /**
+     * Exit all legs when SL or Target is hit
+     * Only exits legs that are still active/being monitored to avoid duplicate exit orders
+     */
     private void exitAllLegs(String executionId, String callSymbol, String putSymbol,
                             int quantity, String reason, StrategyCompletionCallback completionCallback) {
         try {
             String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? StrategyConstants.TRADING_MODE_PAPER : StrategyConstants.TRADING_MODE_LIVE;
             log.info("[{} MODE] Exiting all legs for execution {}: {}", tradingMode, executionId, reason);
 
-            // Place sell orders for both legs using UnifiedTradingService
-            OrderRequest callExitOrder = createOrderRequest(callSymbol, StrategyConstants.TRANSACTION_SELL, quantity, StrategyConstants.ORDER_TYPE_MARKET);
-            OrderResponse callExitResponse = unifiedTradingService.placeOrder(callExitOrder);
+            // Get the monitor to check which legs are still active
+            webSocketService.getMonitor(executionId).ifPresent(monitor -> {
+                // Only exit Call leg if it's still being monitored
+                if (monitor.getLegsBySymbol().containsKey(callSymbol)) {
+                    try {
+                        OrderRequest callExitOrder = createOrderRequest(callSymbol, StrategyConstants.TRANSACTION_SELL, quantity, StrategyConstants.ORDER_TYPE_MARKET);
+                        OrderResponse callExitResponse = unifiedTradingService.placeOrder(callExitOrder);
 
-            if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(callExitResponse.getStatus())) {
-                log.info("[{} MODE] Call leg exited successfully: {}", tradingMode, callExitResponse.getOrderId());
-            } else {
-                log.error("Failed to exit Call leg: {}", callExitResponse.getMessage());
-            }
+                        if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(callExitResponse.getStatus())) {
+                            log.info("[{} MODE] Call leg exited successfully: {}", tradingMode, callExitResponse.getOrderId());
+                        } else {
+                            log.error("Failed to exit Call leg: {}", callExitResponse.getMessage());
+                        }
+                    } catch (Exception | KiteException e) {
+                        log.error("Error exiting Call leg for execution {}: {}", executionId, e.getMessage(), e);
+                    }
+                } else {
+                    log.info("[{}] Call leg {} already closed for execution {}, skipping exit order",
+                            tradingMode, callSymbol, executionId);
+                }
 
-            OrderRequest putExitOrder = createOrderRequest(putSymbol, StrategyConstants.TRANSACTION_SELL, quantity, StrategyConstants.ORDER_TYPE_MARKET);
-            OrderResponse putExitResponse = unifiedTradingService.placeOrder(putExitOrder);
+                // Only exit Put leg if it's still being monitored
+                if (monitor.getLegsBySymbol().containsKey(putSymbol)) {
+                    try {
+                        OrderRequest putExitOrder = createOrderRequest(putSymbol, StrategyConstants.TRANSACTION_SELL, quantity, StrategyConstants.ORDER_TYPE_MARKET);
+                        OrderResponse putExitResponse = unifiedTradingService.placeOrder(putExitOrder);
 
-            if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(putExitResponse.getStatus())) {
-                log.info("[{} MODE] Put leg exited successfully: {}", tradingMode, putExitResponse.getOrderId());
-            } else {
-                log.error("Failed to exit Put leg: {}", putExitResponse.getMessage());
-            }
+                        if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(putExitResponse.getStatus())) {
+                            log.info("[{} MODE] Put leg exited successfully: {}", tradingMode, putExitResponse.getOrderId());
+                        } else {
+                            log.error("Failed to exit Put leg: {}", putExitResponse.getMessage());
+                        }
+                    } catch (Exception | KiteException e) {
+                        log.error("Error exiting Put leg for execution {}: {}", executionId, e.getMessage(), e);
+                    }
+                } else {
+                    log.info("[{}] Put leg {} already closed for execution {}, skipping exit order",
+                            tradingMode, putSymbol, executionId);
+                }
+            });
 
             // Stop monitoring
             webSocketService.stopMonitoring(executionId);
@@ -256,7 +282,7 @@ public class ATMStrangleStrategy extends BaseStrategy {
 
             log.info("[{} MODE] Successfully exited all legs for execution {}", tradingMode, executionId);
 
-        } catch (Exception | KiteException e) {
+        } catch (Exception e) {
             log.error("Error exiting legs for execution {}: {}", executionId, e.getMessage(), e);
         }
     }

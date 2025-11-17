@@ -16,6 +16,7 @@ import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Instrument;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -34,6 +35,7 @@ public class StrategyService {
     private final UnifiedTradingService unifiedTradingService;
     private final StrategyFactory strategyFactory;
     private final WebSocketService webSocketService;
+    private final ApplicationEventPublisher eventPublisher;
 
     // Keyed by executionId but owned by userId; maintain both maps for efficient lookups
     private final Map<String, StrategyExecution> executionsById = new ConcurrentHashMap<>();
@@ -52,6 +54,9 @@ public class StrategyService {
         execution.setExpiry(request.getExpiry());
         execution.setStatus(StrategyStatus.EXECUTING);
         execution.setTimestamp(System.currentTimeMillis());
+        execution.setTradingMode(unifiedTradingService.isPaperTradingEnabled()
+                ? StrategyConstants.TRADING_MODE_PAPER
+                : StrategyConstants.TRADING_MODE_LIVE);
 
         // Chain linkage
         execution.setParentExecutionId(parentExecutionId);
@@ -163,8 +168,7 @@ public class StrategyService {
             execution.setCompletionReason(reason);
             execution.setMessage("Strategy completed - " + reason);
             log.info("Strategy {} marked as COMPLETED: {} (user={})", executionId, reason, execution.getUserId());
-            // Removed call to strategyRestartScheduler.scheduleRestart(execution) to break circular dependency.
-            // Auto-restart will now be handled by StrategyRestartScheduler observing completions via its own mechanism.
+            eventPublisher.publishEvent(new StrategyCompletionEvent(this, execution));
         } else {
             log.warn("Attempted to mark non-existent strategy as completed: {}", executionId);
         }
@@ -175,6 +179,7 @@ public class StrategyService {
      */
     @Deprecated
     public void markStrategyAsCompleted(String executionId, String reason) {
+        log.debug("markStrategyAsCompleted invoked for {} with reason={} (deprecated path)", executionId, reason);
         handleStrategyCompletion(executionId, StrategyCompletionReason.OTHER);
     }
 
@@ -509,4 +514,9 @@ public class StrategyService {
      * DTO for instrument details
      */
     public record InstrumentDetail(String code, String name, int lotSize, double strikeInterval) {}
+
+    /**
+     * Event class for strategy completion
+     */
+    public record StrategyCompletionEvent(Object source, StrategyExecution execution) {}
 }
