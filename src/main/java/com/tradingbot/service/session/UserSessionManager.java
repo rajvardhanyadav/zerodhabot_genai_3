@@ -1,6 +1,7 @@
 package com.tradingbot.service.session;
 
 import com.tradingbot.config.KiteConfig;
+import com.tradingbot.config.PaperTradingConfig;
 import com.tradingbot.util.CurrentUserContext;
 import com.zerodhatech.kiteconnect.KiteConnect;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
@@ -19,11 +20,21 @@ import java.util.concurrent.ConcurrentHashMap;
 public class UserSessionManager {
 
     private final KiteConfig kiteConfig;
+    private final PaperTradingConfig paperTradingConfig;
 
     private final Map<String, KiteConnect> sessions = new ConcurrentHashMap<>();
 
     public String getCurrentUserIdRequired() {
-        return CurrentUserContext.getRequiredUserId();
+        String id = CurrentUserContext.getUserId();
+        if (id == null || id.isBlank()) {
+            if (paperTradingConfig.isPaperTradingEnabled()) {
+                String fallback = "PAPER_DEFAULT_USER";
+                log.warn("UserContext missing in UserSessionManager; falling back to {} in paper mode", fallback);
+                return fallback;
+            }
+            throw new IllegalStateException("User context is missing. Provide X-User-Id header.");
+        }
+        return id;
     }
 
     public boolean hasSession(String userId) {

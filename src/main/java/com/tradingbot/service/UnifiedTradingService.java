@@ -330,7 +330,19 @@ public class UnifiedTradingService {
     }
 
     private String getUserId() {
-        return CurrentUserContext.getRequiredUserId();
+        String id = CurrentUserContext.getUserId();
+        if (id == null || id.isBlank()) {
+            // Fallback for background threads like WebSocket tick handlers where ThreadLocal may be empty.
+            // In paper trading mode, we can safely default to a fixed paper user id to avoid failures.
+            if (isPaperTradingEnabled()) {
+                String fallbackUserId = "PAPER_DEFAULT_USER";
+                log.warn("User context missing on current thread; falling back to {} in paper mode", fallbackUserId);
+                return fallbackUserId;
+            }
+            // For live mode, keep the strict behavior to avoid mis-attributing orders.
+            throw new IllegalStateException("User context is missing. Provide X-User-Id header.");
+        }
+        return id;
     }
 
     private void logPaperMode(String message) {

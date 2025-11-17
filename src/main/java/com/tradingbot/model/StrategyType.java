@@ -16,6 +16,11 @@ public enum StrategyType {
     ATM_STRANGLE,
 
     /**
+     * Intraday ATM Option Scalping: Short-hold trades in ATM options with tight SL/Target.
+     */
+    INTRADAY_SCALPING_ATM,
+
+    /**
      * Bull Call Spread: Bullish strategy using two call options at different strikes
      */
     BULL_CALL_SPREAD,

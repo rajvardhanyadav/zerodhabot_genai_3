@@ -20,6 +20,17 @@ public class StrategyConfig {
     private double defaultStopLossPoints = 10.0;
     private double defaultTargetPoints = 15.0;
 
+    // Intraday scalping defaults (used when per-request values are not provided)
+    private double scalpingStopLossPoints = 5.0;
+    private double scalpingTargetPoints = 8.0;
+    private double scalpingMaxLossPerTrade = 2000.0;
+
+    /**
+     * Allow live-mode executions for scalping strategy.
+     * Recommended to keep false until validated thoroughly in paper trading.
+     */
+    private boolean scalpingEnabledInLive = false;
+
     // Auto square-off configuration
     private boolean autoSquareOffEnabled = false;
     private String autoSquareOffTime = "15:15"; // HH:mm format

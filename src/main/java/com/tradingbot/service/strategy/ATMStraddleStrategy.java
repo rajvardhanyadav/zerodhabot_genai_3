@@ -315,10 +315,45 @@ public class ATMStraddleStrategy extends BaseStrategy {
         monitor.addLeg(putOrderId, putInstrument.tradingsymbol, putInstrument.instrument_token,
                 putEntryPrice, quantity, StrategyConstants.OPTION_TYPE_PUT);
 
+        // Capture the user who started this strategy so background callbacks use the same context
+        String ownerUserId = com.tradingbot.util.CurrentUserContext.getUserId();
+
+        // Full exit callback when all-legs threshold is hit
         monitor.setExitCallback(reason -> {
-            log.warn("Exit triggered for execution {}: {}", executionId, reason);
-            exitAllLegs(executionId, callInstrument.tradingsymbol,
-                    putInstrument.tradingsymbol, quantity, reason, completionCallback);
+            String previousUser = com.tradingbot.util.CurrentUserContext.getUserId();
+            try {
+                if (ownerUserId != null && !ownerUserId.isBlank()) {
+                    com.tradingbot.util.CurrentUserContext.setUserId(ownerUserId);
+                }
+                log.warn("Exit triggered for execution {}: {}", executionId, reason);
+                exitAllLegs(executionId, callInstrument.tradingsymbol,
+                        putInstrument.tradingsymbol, quantity, reason, completionCallback);
+            } finally {
+                if (previousUser != null && !previousUser.isBlank()) {
+                    com.tradingbot.util.CurrentUserContext.setUserId(previousUser);
+                } else {
+                    com.tradingbot.util.CurrentUserContext.clear();
+                }
+            }
+        });
+
+        // Individual leg exit callback when per-leg loss threshold is hit
+        monitor.setIndividualLegExitCallback((legSymbol, reason) -> {
+            String previousUser = com.tradingbot.util.CurrentUserContext.getUserId();
+            try {
+                if (ownerUserId != null && !ownerUserId.isBlank()) {
+                    com.tradingbot.util.CurrentUserContext.setUserId(ownerUserId);
+                }
+                log.warn("Individual leg exit triggered for execution {}: leg={}, reason={}",
+                        executionId, legSymbol, reason);
+                exitIndividualLeg(executionId, legSymbol, quantity, reason, monitor, completionCallback);
+            } finally {
+                if (previousUser != null && !previousUser.isBlank()) {
+                    com.tradingbot.util.CurrentUserContext.setUserId(previousUser);
+                } else {
+                    com.tradingbot.util.CurrentUserContext.clear();
+                }
+            }
         });
 
         return monitor;

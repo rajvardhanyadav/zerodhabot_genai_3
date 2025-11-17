@@ -1,7 +1,6 @@
 package com.tradingbot.service.strategy;
 
 import com.tradingbot.model.StrategyType;
-import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -19,6 +18,7 @@ public class StrategyFactory {
 
     private final ATMStraddleStrategy atmStraddleStrategy;
     private final ATMStrangleStrategy atmStrangleStrategy;
+    private final ScalpingAtmOptionStrategy scalpingAtmOptionStrategy;
     // Add more strategies here as they are implemented
 
     /**
@@ -34,6 +34,7 @@ public class StrategyFactory {
         return switch (strategyType) {
             case ATM_STRADDLE -> atmStraddleStrategy;
             case ATM_STRANGLE -> atmStrangleStrategy;
+            case INTRADAY_SCALPING_ATM -> scalpingAtmOptionStrategy;
             // Add more strategies here as they are implemented
             // case BULL_CALL_SPREAD -> bullCallSpreadStrategy;
             // case BEAR_PUT_SPREAD -> bearPutSpreadStrategy;
@@ -50,7 +51,8 @@ public class StrategyFactory {
      */
     public boolean isStrategyImplemented(StrategyType strategyType) {
         return strategyType == StrategyType.ATM_STRADDLE ||
-               strategyType == StrategyType.ATM_STRANGLE;
+               strategyType == StrategyType.ATM_STRANGLE ||
+               strategyType == StrategyType.INTRADAY_SCALPING_ATM;
         // Add more as implemented
     }
 
@@ -63,6 +65,7 @@ public class StrategyFactory {
         Map<StrategyType, TradingStrategy> strategies = new HashMap<>();
         strategies.put(StrategyType.ATM_STRADDLE, atmStraddleStrategy);
         strategies.put(StrategyType.ATM_STRANGLE, atmStrangleStrategy);
+        strategies.put(StrategyType.INTRADAY_SCALPING_ATM, scalpingAtmOptionStrategy);
         // Add more as implemented
         return strategies;
     }
