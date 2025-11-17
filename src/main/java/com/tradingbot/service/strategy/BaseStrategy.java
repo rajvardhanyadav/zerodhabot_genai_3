@@ -143,10 +143,9 @@ public abstract class BaseStrategy implements TradingStrategy {
 
             // Round to 2 decimal places to match convention
             double roundedDelta = Math.round(delta * 100.0) / 100.0;
-            deltas.put(strike, roundedDelta);
+            deltas.put(strike, delta);
 
-            log.debug("Strike: {}, IV: {}, d1: {}, Delta: {}, Rounded Delta: {}",
-                    strike, String.format("%.4f", iv), String.format("%.4f", d1), String.format("%.4f", delta), roundedDelta);
+            log.debug("Strike: {}, IV: {}, d1: {}, Delta: {}, Rounded Delta: {}",strike, iv, d1, delta, roundedDelta);
         }
         return deltas;
     }
