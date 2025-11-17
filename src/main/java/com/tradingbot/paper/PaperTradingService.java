@@ -396,6 +396,7 @@ public class PaperTradingService {
         if (position.getBuyQuantity() > 0) {
             double realisedPnL = (executionPrice - position.getBuyPrice()) * order.getQuantity();
             position.setRealised(position.getRealised() + realisedPnL);
+            position.setPnl(position.getPnl()+realisedPnL);
 
             // Release margin
             double marginToRelease = calculateRequiredMargin(order, position.getBuyPrice());
