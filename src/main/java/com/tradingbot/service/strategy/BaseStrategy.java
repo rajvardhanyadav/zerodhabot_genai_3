@@ -32,8 +32,9 @@ public abstract class BaseStrategy implements TradingStrategy {
     protected final Map<String, Integer> lotSizeCache;
 
     // Constants for Black-Scholes calculation
-    private static final double RISK_FREE_RATE = 0.05; // 5% annual risk-free rate (approximate)
-//    private static final double VOLATILITY = 0.15; // 15% annualized volatility (approximate)
+    private static final double RISK_FREE_RATE = 0.065; // Approximate annual risk-free rate (6.5%)
+    private static final double DIVIDEND_YIELD = 0.0;   // Indices have near-zero dividend yield for short horizons
+    private static final TimeZone IST = TimeZone.getTimeZone("Asia/Kolkata");
 
     /**
      * Get current spot price for the instrument
@@ -62,6 +63,12 @@ public abstract class BaseStrategy implements TradingStrategy {
      * Calculate ATM strike based on delta values (nearest to ±0.5)
      * This method finds the strike where Call delta is closest to 0.5 (or Put delta closest to -0.5)
      *
+     * Implementation notes to match Kite Zerodha:
+     * - Use Black-Scholes with dividend yield (q) where d1 uses (r - q)
+     * - Delta(Call) = e^{-qT} * N(d1)
+     * - Time to expiry uses IST up to 15:30 on expiry day
+     * - Implied Volatility is solved from option mid-price (best bid/ask avg), fallback to LTP
+     *
      * @param spotPrice Current spot price
      * @param instrumentType Type of instrument (NIFTY, BANKNIFTY, FINNIFTY)
      * @param expiry Expiry date of the options
@@ -69,106 +76,269 @@ public abstract class BaseStrategy implements TradingStrategy {
      */
     protected double getATMStrikeByDelta(double spotPrice, String instrumentType, Date expiry) {
         double strikeInterval = getStrikeInterval(instrumentType);
-
-        // Get all unique strikes near ATM (±5 strikes)
         double approximateATM = Math.round(spotPrice / strikeInterval) * strikeInterval;
-        Set<Double> strikesToCheck = new HashSet<>();
+        Set<Double> strikesToCheck = new LinkedHashSet<>();
+        for (int i = -5; i <= 5; i++) strikesToCheck.add(approximateATM + i * strikeInterval);
+        double T = calculateTimeToExpiry(expiry);
+        if (T <= 0) return approximateATM;
 
-        for (int i = -5; i <= 5; i++) {
-            strikesToCheck.add(approximateATM + (i * strikeInterval));
-        }
-
-        // Calculate time to expiry in years
-        double timeToExpiry = calculateTimeToExpiry(expiry);
-
-        if (timeToExpiry <= 0) {
-            log.warn("Time to expiry is zero or negative, falling back to simple ATM calculation");
+        // Use improved delta computation
+        Map<Double, Double> deltas = computeCallDeltas(instrumentType, expiry, spotPrice, strikesToCheck);
+        if (deltas.isEmpty()) {
+            log.warn("Delta computation failed, fallback to simple ATM strike");
             return approximateATM;
         }
+        double bestStrike = approximateATM; double minDiff = Double.MAX_VALUE;
+        for (Map.Entry<Double, Double> e : deltas.entrySet()) {
+            double diff = Math.abs(e.getValue() - 0.5);
+            log.debug("Strike: {}, Forward-based Call Δ: {} |Δ-0.5|: {}", e.getKey(), e.getValue(), String.format("%.4f", diff));
+            if (diff < minDiff) {minDiff = diff; bestStrike = e.getKey();}
+        }
+        log.info("Selected strike {} (Δ = {}) using forward-based method", bestStrike, deltas.get(bestStrike));
+        return bestStrike;
+    }
 
-        // Find strike with delta closest to 0.5 for Call options
-        double bestStrike = approximateATM;
-        double minDeltaDifference = Double.MAX_VALUE;
+    // Helper container for CE/PE mid prices
+    private static final class MidPrices {
+        final Double callMid; final Double putMid; MidPrices(Double c, Double p){this.callMid=c;this.putMid=p;}
+        boolean valid(){return callMid!=null && callMid>0 && putMid!=null && putMid>0;}
+    }
 
-        for (Double strike : strikesToCheck) {
-            double callDelta = calculateCallDelta(spotPrice, strike, timeToExpiry, instrumentType, expiry);
-            double deltaDifference = Math.abs(callDelta - 0.5);
+    // Fetch both CE and PE mid prices for a strike
+    private MidPrices getBothMidPrices(String instrumentType, double strike, Date expiry) {
+        Double ce = getOptionMidPrice(instrumentType, strike, expiry, "CE");
+        Double pe = getOptionMidPrice(instrumentType, strike, expiry, "PE");
+        return new MidPrices(ce, pe);
+    }
 
-            log.debug("Strike: {}, Call Delta: {}, Delta Diff from 0.5: {}",
-                    strike, callDelta, deltaDifference);
+    // Improved delta computation leveraging put-call parity and per-strike IV
+    private Map<Double, Double> computeCallDeltas(String instrumentType, Date expiry, double spotPrice, Set<Double> strikes) {
+        double T = calculateTimeToExpiryPrecise(expiry);
+        if (T <= 0) return Collections.emptyMap();
 
-            if (deltaDifference < minDeltaDifference) {
-                minDeltaDifference = deltaDifference;
-                bestStrike = strike;
+        Map<Double, MidPrices> midMap = new HashMap<>();
+        for (Double k : strikes) midMap.put(k, getBothMidPrices(instrumentType, k, expiry));
+
+        // Filter strikes with valid prices
+        List<Double> liquidStrikes = midMap.entrySet().stream()
+                .filter(e -> e.getValue().valid())
+                .map(Map.Entry::getKey)
+                .sorted()
+                .toList();
+        if (liquidStrikes.isEmpty()) return Collections.emptyMap();
+
+        // Calculate forward using put-call parity: C - P = (F - K) * e^(-rT)
+        // Rearranged: F = K + (C - P) * e^(rT)
+        // Use median of nearby strikes (within ±2 intervals from spot) for stability
+        double strikeInterval = getStrikeInterval(instrumentType);
+        List<Double> nearbyForwards = new ArrayList<>();
+        for (Double k : liquidStrikes) {
+            if (Math.abs(k - spotPrice) <= 2 * strikeInterval) {
+                MidPrices mp = midMap.get(k);
+                double Fk = k + (mp.callMid - mp.putMid) * Math.exp(RISK_FREE_RATE * T);
+                nearbyForwards.add(Fk);
             }
         }
 
-        log.info("Selected strike {} with delta nearest to 0.5 (difference: {})",
-                bestStrike, minDeltaDifference);
+        // Use median forward for robustness
+        Collections.sort(nearbyForwards);
+        double forward = nearbyForwards.isEmpty() ? spotPrice :
+                        nearbyForwards.size() % 2 == 0 ?
+                        (nearbyForwards.get(nearbyForwards.size()/2 - 1) + nearbyForwards.get(nearbyForwards.size()/2)) / 2.0 :
+                        nearbyForwards.get(nearbyForwards.size()/2);
 
-        return bestStrike;
+        log.debug("Forward price: {}, Spot: {}, T: {} years", forward, spotPrice, T);
+
+        // Compute delta for each strike using per-strike IV
+        Map<Double, Double> deltas = new HashMap<>();
+        for (Double k : strikes) {
+            MidPrices mp = midMap.get(k);
+            if (!mp.valid()) continue;
+
+            // Solve IV for this specific strike using its call price
+            double strikeIV = solveIVForwardPerStrike(mp.callMid, forward, k, T);
+            if (Double.isNaN(strikeIV) || strikeIV <= 0 || strikeIV > 3.0) {
+                log.debug("Invalid IV {} for strike {}, skipping", strikeIV, k);
+                continue;
+            }
+
+            // Calculate d1 using forward price: d1 = [ln(F/K) + 0.5*σ²*T] / (σ*√T)
+            double sqrtT = Math.sqrt(T);
+            double d1 = (Math.log(forward / k) + 0.5 * strikeIV * strikeIV * T) / (strikeIV * sqrtT);
+
+            // Delta = N(d1) for forward-based pricing (no dividend adjustment needed in d1)
+            double callDelta = cumulativeNormalDistribution(d1);
+
+            // Truncate delta to 2 decimal places (floor) to match Kite Zerodha format
+            double roundedDelta = Math.floor(callDelta * 100.0) / 100.0;
+
+            deltas.put(k, roundedDelta);
+            log.debug("Strike: {}, CE: {}, PE: {}, IV: {}, d1: {}, Delta: {}",
+                     k, mp.callMid, mp.putMid, strikeIV, d1, roundedDelta);
+        }
+        return deltas;
+    }
+
+    // Calculate time to expiry with second-level precision
+    private double calculateTimeToExpiryPrecise(Date expiry) {
+        Calendar now = Calendar.getInstance(IST);
+        Calendar expiryCalendar = Calendar.getInstance(IST);
+        expiryCalendar.setTime(expiry);
+        expiryCalendar.set(Calendar.HOUR_OF_DAY, 15);
+        expiryCalendar.set(Calendar.MINUTE, 30);
+        expiryCalendar.set(Calendar.SECOND, 0);
+        expiryCalendar.set(Calendar.MILLISECOND, 0);
+
+        long diffInMillis = expiryCalendar.getTimeInMillis() - now.getTimeInMillis();
+        // Use 365.2422 days per year for precision
+        double diffInYears = diffInMillis / (365.2422 * 24.0 * 60.0 * 60.0 * 1000.0);
+        return Math.max(diffInYears, 0.0);
+    }
+
+    // IV solver for a specific strike using forward pricing
+    // Call price formula: C = e^(-rT) * [F * N(d1) - K * N(d2)]
+    private double solveIVForwardPerStrike(double callPrice, double forward, double strike, double T) {
+        if (T <= 0 || callPrice <= 0) return 0.0;
+
+        double discountFactor = Math.exp(-RISK_FREE_RATE * T);
+        double intrinsic = Math.max(0, forward - strike) * discountFactor;
+
+        // If call price is at intrinsic, IV is very low
+        if (callPrice <= intrinsic * 1.001) return 0.01;
+
+        double sigma = 0.2; // initial guess
+        double sqrtT = Math.sqrt(T);
+
+        for (int i = 0; i < 100; i++) {
+            double d1 = (Math.log(forward / strike) + 0.5 * sigma * sigma * T) / (sigma * sqrtT);
+            double d2 = d1 - sigma * sqrtT;
+
+            double nd1 = cumulativeNormalDistribution(d1);
+            double nd2 = cumulativeNormalDistribution(d2);
+
+            // Theoretical call price
+            double theoreticalPrice = discountFactor * (forward * nd1 - strike * nd2);
+
+            // Vega (derivative with respect to sigma)
+            double vega = discountFactor * forward * normalPDF(d1) * sqrtT;
+
+            double priceDiff = theoreticalPrice - callPrice;
+
+            // Check convergence
+            if (Math.abs(priceDiff) < 0.0001) {
+                return sigma;
+            }
+
+            // Avoid division by very small vega
+            if (vega < 1e-10) break;
+
+            // Newton-Raphson step with damping factor 0.5 for stability
+            double step = priceDiff / vega;
+            sigma = sigma - 0.5 * step;
+
+            // Keep sigma in reasonable bounds
+            sigma = Math.max(0.01, Math.min(3.0, sigma));
+        }
+
+        return sigma;
+    }
+
+    /**
+     * Compute mid price for an option using Quote depth; fallback to last traded price.
+     * Returns null if quote unavailable or price invalid.
+     */
+    private Double getOptionMidPrice(String instrumentType, double strike, Date expiry, String optionType) {
+        String instrumentIdentifier = buildOptionInstrumentIdentifier(instrumentType, strike, expiry, optionType);
+        try {
+            Map<String, Quote> quotes;
+            try {
+                quotes = tradingService.getQuote(new String[]{instrumentIdentifier});
+            } catch (KiteException ke) {
+                log.warn("KiteException fetching quote for {}: {}", instrumentIdentifier, ke.getMessage());
+                return null;
+            }
+            Quote quote = quotes != null ? quotes.get(instrumentIdentifier) : null;
+            if (quote == null) return null;
+            try {
+                Double bestBid = null, bestAsk = null;
+                if (quote.depth != null) {
+                    if (quote.depth.buy != null && !quote.depth.buy.isEmpty() && quote.depth.buy.get(0) != null) {
+                        try { bestBid = quote.depth.buy.get(0).getPrice(); } catch (Throwable t) {
+                            try { bestBid = (Double) quote.depth.buy.get(0).getClass().getField("price").get(quote.depth.buy.get(0)); } catch (Throwable ignore) {}
+                        }
+                    }
+                    if (quote.depth.sell != null && !quote.depth.sell.isEmpty() && quote.depth.sell.get(0) != null) {
+                        try { bestAsk = quote.depth.sell.get(0).getPrice(); } catch (Throwable t) {
+                            try { bestAsk = (Double) quote.depth.sell.get(0).getClass().getField("price").get(quote.depth.sell.get(0)); } catch (Throwable ignore) {}
+                        }
+                    }
+                }
+                if (bestBid != null && bestAsk != null && bestBid > 0 && bestAsk > 0) {
+                    return (bestBid + bestAsk) / 2.0;
+                }
+                if (quote.lastPrice > 0) return quote.lastPrice;
+            } catch (Exception ignored) {
+            }
+        } catch (Exception e) {
+            log.warn("Failed to fetch quote for {}: {}", instrumentIdentifier, e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Build instrument identifier like NFO:NIFTY25NOV19650CE
+     */
+    private String buildOptionInstrumentIdentifier(String instrumentType, double strike, Date expiry, String optionType) {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyMMM");
+        sdf.setTimeZone(IST);
+        String expiryStr = sdf.format(expiry).toUpperCase();
+        String tradingSymbol = instrumentType.toUpperCase() + expiryStr + (int) strike + optionType.toUpperCase();
+        return "NFO:" + tradingSymbol;
     }
 
     /**
      * Calculate time to expiry in years
      */
     private double calculateTimeToExpiry(Date expiry) {
-        Calendar now = Calendar.getInstance();
-        Calendar expiryCalendar = Calendar.getInstance();
+        Calendar now = Calendar.getInstance(IST);
+        Calendar expiryCalendar = Calendar.getInstance(IST);
         expiryCalendar.setTime(expiry);
 
         // Set to market close time (3:30 PM IST) for expiry day
         expiryCalendar.set(Calendar.HOUR_OF_DAY, 15);
         expiryCalendar.set(Calendar.MINUTE, 30);
         expiryCalendar.set(Calendar.SECOND, 0);
+        expiryCalendar.set(Calendar.MILLISECOND, 0);
 
         long diffInMillis = expiryCalendar.getTimeInMillis() - now.getTimeInMillis();
-        double diffInYears = diffInMillis / (1000.0 * 60 * 60 * 24 * 365.25);
-
+        double diffInYears = diffInMillis / (1000.0 * 60 * 60 * 24 * 365.0);
         return Math.max(diffInYears, 0.0);
     }
 
     /**
-     * Calculate Call option delta using Black-Scholes model
-     * Delta = N(d1) where N is the cumulative normal distribution
+     * Calculate Call option delta using Black-Scholes model with dividend yield (q)
+     * Delta(Call) = e^{-qT} * N(d1)
      *
      * @param spotPrice Current spot price
      * @param strikePrice Strike price
      * @param timeToExpiry Time to expiry in years
      * @return Call option delta (0 to 1)
      */
-    private double calculateCallDelta(double spotPrice, double strikePrice, double timeToExpiry, String instrumentType, Date expiry) {
+    private double calculateCallDelta(double spotPrice, double strikePrice, double timeToExpiry, double volatility) {
         if (timeToExpiry <= 0) {
             return spotPrice >= strikePrice ? 1.0 : 0.0;
         }
-
-        double optionPrice = getOptionPrice(instrumentType, strikePrice, expiry, "CE");
-        if (optionPrice <= 0) {
-            log.warn("Invalid option price ({}), unable to calculate delta for strike {}.", optionPrice, strikePrice);
-            return 0.0; // Cannot calculate delta without a valid price.
-        }
-
-        // Calculate Implied Volatility
-        double volatility = calculateImpliedVolatility(optionPrice, spotPrice, strikePrice, timeToExpiry, "CE");
-        if (volatility <= 0 || Double.isNaN(volatility)) {
-            log.warn("Invalid volatility ({}) calculated for strike {}. Using fallback.", volatility, strikePrice);
-            volatility = 0.15; // Fallback to a default value if IV calculation fails
-        }
-
-
         double d1 = calculateD1(spotPrice, strikePrice, timeToExpiry, volatility);
-        log.info("Calculating Call Delta - Strike: {}, Spot: {}, TTE: {}, Vol: {}, d1: {}", strikePrice, spotPrice, timeToExpiry, volatility, d1);
-        return cumulativeNormalDistribution(d1);
+        return Math.exp(-DIVIDEND_YIELD * timeToExpiry) * cumulativeNormalDistribution(d1);
     }
 
     /**
-     * Calculate d1 for Black-Scholes formula
+     * Calculate d1 for Black-Scholes formula with dividend yield (q)
      */
     private double calculateD1(double spotPrice, double strikePrice, double timeToExpiry, double volatility) {
         double numerator = Math.log(spotPrice / strikePrice) +
-                (RISK_FREE_RATE + 0.5 * volatility * volatility) * timeToExpiry;
-        double denominator = volatility * Math.sqrt(timeToExpiry);
-
+                (RISK_FREE_RATE - DIVIDEND_YIELD + 0.5 * volatility * volatility) * timeToExpiry;
+        double denominator = Math.max(volatility, 1e-9) * Math.sqrt(Math.max(timeToExpiry, 1e-9));
         return numerator / denominator;
     }
 
@@ -206,61 +376,67 @@ public abstract class BaseStrategy implements TradingStrategy {
 
     /**
      * Calculate Implied Volatility using Newton-Raphson method.
-     *
-     * @param marketPrice    The market price of the option.
-     * @param spotPrice      The current price of the underlying asset.
-     * @param strikePrice    The strike price of the option.
-     * @param timeToExpiry   Time to expiration in years.
-     * @param optionType     "CE" for Call or "PE" for Put.
-     * @return The implied volatility.
+     * Uses Black-Scholes with dividend yield (q). Bounds and damping are applied for stability.
      */
     private double calculateImpliedVolatility(double marketPrice, double spotPrice, double strikePrice, double timeToExpiry, String optionType) {
         final int MAX_ITERATIONS = 100;
         final double ACCURACY = 1.0e-5;
-        double volatility = 0.5; // Initial guess
+        double sigma = 0.2; // initial guess
 
-        for (int i = 0; i < MAX_ITERATIONS; i++) {
-            double theoreticalPrice = calculateBlackScholesPrice(spotPrice, strikePrice, timeToExpiry, volatility, optionType);
-            double vega = calculateVega(spotPrice, strikePrice, timeToExpiry, volatility);
-
-            double difference = theoreticalPrice - marketPrice;
-
-            if (Math.abs(difference) < ACCURACY) {
-                return volatility;
-            }
-
-            if (vega == 0) { // Avoid division by zero
-                break;
-            }
-
-            volatility -= difference / vega;
+        // Clamp market price to avoid arbitrage edge cases
+        if (optionType.equalsIgnoreCase("CE")) {
+            double intrinsic = Math.max(0.0, spotPrice - strikePrice);
+            marketPrice = Math.max(marketPrice, intrinsic * 0.999);
+        } else {
+            double intrinsic = Math.max(0.0, strikePrice - spotPrice);
+            marketPrice = Math.max(marketPrice, intrinsic * 0.999);
         }
 
-        return volatility; // Return last calculated value even if accuracy not reached
+        for (int i = 0; i < MAX_ITERATIONS; i++) {
+            double theoreticalPrice = calculateBlackScholesPrice(spotPrice, strikePrice, timeToExpiry, sigma, optionType);
+            double vega = calculateVega(spotPrice, strikePrice, timeToExpiry, sigma);
+            double diff = theoreticalPrice - marketPrice;
+
+            if (Math.abs(diff) < ACCURACY) {
+                return Math.max(1e-6, Math.min(sigma, 5.0));
+            }
+            if (vega < 1e-8) {
+                break; // can't proceed
+            }
+            // Damped Newton step
+            double step = diff / vega;
+            sigma = Math.max(1e-6, Math.min(5.0, sigma - 0.7 * step));
+        }
+        return Math.max(1e-6, Math.min(sigma, 5.0));
     }
 
     /**
-     * Calculate the theoretical price of an option using the Black-Scholes model.
+     * Calculate the theoretical price of an option using the Black-Scholes model with dividend yield (q).
      */
     private double calculateBlackScholesPrice(double spotPrice, double strikePrice, double timeToExpiry, double volatility, String optionType) {
         double d1 = calculateD1(spotPrice, strikePrice, timeToExpiry, volatility);
         double d2 = d1 - volatility * Math.sqrt(timeToExpiry);
+        double discountR = Math.exp(-RISK_FREE_RATE * timeToExpiry);
+        double discountQ = Math.exp(-DIVIDEND_YIELD * timeToExpiry);
 
         if ("CE".equalsIgnoreCase(optionType)) {
-            return spotPrice * cumulativeNormalDistribution(d1) - strikePrice * Math.exp(-RISK_FREE_RATE * timeToExpiry) * cumulativeNormalDistribution(d2);
+            return spotPrice * discountQ * cumulativeNormalDistribution(d1)
+                    - strikePrice * discountR * cumulativeNormalDistribution(d2);
         } else if ("PE".equalsIgnoreCase(optionType)) {
-            return strikePrice * Math.exp(-RISK_FREE_RATE * timeToExpiry) * cumulativeNormalDistribution(-d2) - spotPrice * cumulativeNormalDistribution(-d1);
+            return strikePrice * discountR * cumulativeNormalDistribution(-d2)
+                    - spotPrice * discountQ * cumulativeNormalDistribution(-d1);
         } else {
             return 0.0;
         }
     }
 
     /**
-     * Calculate Vega, the sensitivity of option price to volatility.
+     * Calculate Vega (sensitivity to volatility) with dividend yield adjustment.
      */
     private double calculateVega(double spotPrice, double strikePrice, double timeToExpiry, double volatility) {
         double d1 = calculateD1(spotPrice, strikePrice, timeToExpiry, volatility);
-        return spotPrice * normalPDF(d1) * Math.sqrt(timeToExpiry);
+        double discountQ = Math.exp(-DIVIDEND_YIELD * timeToExpiry);
+        return spotPrice * discountQ * normalPDF(d1) * Math.sqrt(timeToExpiry);
     }
 
     /**
@@ -278,6 +454,7 @@ public abstract class BaseStrategy implements TradingStrategy {
         try {
             // Format expiry date for trading symbol
             SimpleDateFormat sdf = new SimpleDateFormat("yyMMM");
+            sdf.setTimeZone(IST);
             String expiryStr = sdf.format(expiry).toUpperCase();
             log.debug("Formatted expiry date string: {}", expiryStr);
 
@@ -287,23 +464,21 @@ public abstract class BaseStrategy implements TradingStrategy {
             instrumentIdentifier = exchange + ":" + tradingSymbol;
             log.info("Constructed instrument identifier: {}", instrumentIdentifier);
 
-            // Fetch quote to get Implied Volatility
+            // Fetch quote to get price
             log.debug("Fetching quote from trading service for: {}", instrumentIdentifier);
             Map<String, Quote> quotes = tradingService.getQuote(new String[]{instrumentIdentifier});
             Quote quote = quotes.get(instrumentIdentifier);
 
             if (quote != null) {
-                log.debug("Successfully fetched quote for {}. OI: {}, Sell depth available: {}",
-                        instrumentIdentifier, quote.oi, quote.depth != null && quote.depth.sell != null && !quote.depth.sell.isEmpty());
-
-                if (quote.oi > 0 && quote.depth != null && quote.depth.sell != null && !quote.depth.sell.isEmpty()) {
+                log.debug("Successfully fetched quote for {}. OI: {}, Depth available: {}",
+                        instrumentIdentifier, quote.oi, quote.depth != null);
+                if (quote.lastPrice > 0) {
                     double price = quote.lastPrice;
                     log.info("Returning option price: {} for {}", price, instrumentIdentifier);
                     return price;
                 } else {
-                    log.warn("Could not fetch valid price for {}. OI: {}, Depth: {}",
-                            instrumentIdentifier, quote.oi, quote.depth);
-                    return 0.0; // Fallback to 0
+                    log.warn("Invalid last price for {}. Returning 0.", instrumentIdentifier);
+                    return 0.0;
                 }
             } else {
                 log.warn("Could not fetch quote for {}. The quote object is null.", instrumentIdentifier);
