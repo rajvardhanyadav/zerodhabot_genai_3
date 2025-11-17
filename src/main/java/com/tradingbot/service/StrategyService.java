@@ -16,7 +16,9 @@ import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Instrument;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -36,6 +38,11 @@ public class StrategyService {
     private final StrategyFactory strategyFactory;
     private final WebSocketService webSocketService;
     private final ApplicationEventPublisher eventPublisher;
+
+    // Field injection with @Lazy to break circular dependency
+    @Autowired
+    @Lazy
+    private com.tradingbot.service.strategy.StrategyRestartScheduler strategyRestartScheduler;
 
     // Keyed by executionId but owned by userId; maintain both maps for efficient lookups
     private final Map<String, StrategyExecution> executionsById = new ConcurrentHashMap<>();
@@ -443,9 +450,14 @@ public class StrategyService {
         execution.setStatus(StrategyStatus.COMPLETED);
         execution.setMessage(String.format("Strategy stopped manually - %d legs closed successfully, %d failed", successCount, failureCount));
 
+        // Cancel any scheduled auto-restart for this execution
+        boolean restartCancelled = strategyRestartScheduler.cancelScheduledRestart(executionId);
+        result.put("scheduledRestartCancelled", restartCancelled);
+
         String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? StrategyConstants.TRADING_MODE_PAPER : StrategyConstants.TRADING_MODE_LIVE;
-        log.info("[{} MODE] Strategy {} stopped - {} legs closed successfully, {} failed (user={})",
-                 tradingMode, executionId, successCount, failureCount, userId);
+        log.info("[{} MODE] Strategy {} stopped - {} legs closed successfully, {} failed, scheduled restart cancelled: {} (user={})",
+                 tradingMode, executionId, successCount, failureCount, restartCancelled, userId);
+
 
         return result;
     }
@@ -464,9 +476,14 @@ public class StrategyService {
 
         if (activeList.isEmpty()) {
             log.info("No active strategies found for user {}", userId);
+
+            // Still cancel any scheduled restarts even if no active strategies
+            int cancelledRestarts = strategyRestartScheduler.cancelScheduledRestartsForUser(userId);
+
             Map<String, Object> result = new HashMap<>();
             result.put("message", "No active strategies to stop");
             result.put("totalStrategies", 0);
+            result.put("cancelledScheduledRestarts", cancelledRestarts);
             result.put("results", new ArrayList<>());
             return result;
         }
@@ -498,14 +515,19 @@ public class StrategyService {
             }
         }
 
+        // Cancel all scheduled auto-restarts for this user
+        int cancelledRestarts = strategyRestartScheduler.cancelScheduledRestartsForUser(userId);
+
         Map<String, Object> summary = new HashMap<>();
         summary.put("message", String.format("Stopped %d strategies", activeList.size()));
         summary.put("totalStrategies", activeList.size());
         summary.put("totalLegsClosedSuccessfully", totalSuccess);
         summary.put("totalLegsFailed", totalFailures);
+        summary.put("cancelledScheduledRestarts", cancelledRestarts);
         summary.put("results", results);
 
-        log.info("Stopped all active strategies for user {} - {} legs closed successfully, {} failed", userId, totalSuccess, totalFailures);
+        log.info("Stopped all active strategies for user {} - {} legs closed successfully, {} failed, {} scheduled restarts cancelled",
+                userId, totalSuccess, totalFailures, cancelledRestarts);
 
         return summary;
     }

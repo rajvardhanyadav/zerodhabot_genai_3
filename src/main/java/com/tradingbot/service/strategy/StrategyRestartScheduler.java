@@ -21,6 +21,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -193,5 +194,116 @@ public class StrategyRestartScheduler {
         request.setExpiry(execution.getExpiry());
         // Other fields (like quantity, SL/target) will rely on defaults or client-provided values or config defaults
         return request;
+    }
+
+    /**
+     * Cancel a scheduled restart for a specific execution.
+     *
+     * @param executionId The execution ID whose restart should be cancelled
+     * @return true if a restart was cancelled, false if no restart was scheduled
+     */
+    public boolean cancelScheduledRestart(String executionId) {
+        ScheduledFuture<?> future = scheduledRestarts.remove(executionId);
+        if (future != null) {
+            boolean cancelled = future.cancel(false);
+            log.info("Cancelled scheduled auto-restart for execution {}: {}", executionId, cancelled);
+            return cancelled;
+        }
+        return false;
+    }
+
+    /**
+     * Cancel all scheduled restarts for a specific user.
+     * This is useful when stopping all strategies for a user.
+     *
+     * @param userId The user ID whose scheduled restarts should be cancelled
+     * @return count of cancelled restarts
+     */
+    public int cancelScheduledRestartsForUser(String userId) {
+        if (userId == null || userId.isBlank()) {
+            log.warn("Cannot cancel restarts for null/blank userId");
+            return 0;
+        }
+
+        int cancelledCount = 0;
+        // Get all executions for this user from StrategyService and cancel their scheduled restarts
+        List<StrategyExecution> userExecutions = strategyService.getActiveStrategies();
+
+        for (StrategyExecution execution : userExecutions) {
+            if (userId.equals(execution.getUserId())) {
+                if (cancelScheduledRestart(execution.getExecutionId())) {
+                    cancelledCount++;
+                }
+            }
+        }
+
+        // Also check completed executions that might have scheduled restarts
+        // We need to iterate through all scheduled restarts and match by looking up the execution
+        for (String executionId : List.copyOf(scheduledRestarts.keySet())) {
+            StrategyExecution execution = strategyService.getStrategy(executionId);
+            if (execution != null && userId.equals(execution.getUserId())) {
+                if (cancelScheduledRestart(executionId)) {
+                    cancelledCount++;
+                }
+            }
+        }
+
+        if (cancelledCount > 0) {
+            log.info("Cancelled {} scheduled auto-restarts for user {}", cancelledCount, userId);
+        }
+
+        return cancelledCount;
+    }
+
+    /**
+     * Cancel all scheduled restarts (admin/system function).
+     *
+     * @return count of cancelled restarts
+     */
+    public int cancelAllScheduledRestarts() {
+        int cancelledCount = 0;
+        for (Map.Entry<String, ScheduledFuture<?>> entry : scheduledRestarts.entrySet()) {
+            if (entry.getValue().cancel(false)) {
+                cancelledCount++;
+                log.debug("Cancelled scheduled restart for execution {}", entry.getKey());
+            }
+        }
+        scheduledRestarts.clear();
+
+        if (cancelledCount > 0) {
+            log.info("Cancelled {} scheduled auto-restarts (all users)", cancelledCount);
+        }
+
+        return cancelledCount;
+    }
+
+    /**
+     * Get count of currently scheduled restarts.
+     *
+     * @return number of scheduled restarts
+     */
+    public int getScheduledRestartsCount() {
+        return scheduledRestarts.size();
+    }
+
+    /**
+     * Get count of scheduled restarts for a specific user.
+     *
+     * @param userId The user ID to check
+     * @return number of scheduled restarts for this user
+     */
+    public int getScheduledRestartsCountForUser(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return 0;
+        }
+
+        int count = 0;
+        for (String executionId : scheduledRestarts.keySet()) {
+            StrategyExecution execution = strategyService.getStrategy(executionId);
+            if (execution != null && userId.equals(execution.getUserId())) {
+                count++;
+            }
+        }
+        return count;
     }
 }
