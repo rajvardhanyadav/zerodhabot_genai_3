@@ -1,6 +1,6 @@
 # Zerodha Trading Bot - Architecture Overview
 
-Last updated: 2025-11-16 (IST)
+Last updated: 2025-11-18 (IST)
 
 This document captures the high-level architecture, key modules, data flows, and extension points of the backend.
 It’s meant to preserve shared context for future contributors and to accelerate onboarding and changes.
@@ -31,7 +31,7 @@ It’s meant to preserve shared context for future contributors and to accelerat
   - `PortfolioController`: positions, holdings (live only), trades (live only), convert position, day P&L.
   - `MarketDataController`: quote/ohlc/ltp/historical data, instruments.
   - `GTTController`: list/place/get/modify/cancel GTTs.
-  - `StrategyController`: execute strategy, list active, get details by id, stop one/all, list types, instruments, expiries.
+  - `StrategyController`: execute strategy, list active, get details by id, stop one/all, list types, instruments, expiries, bot status.
   - `MonitoringController`: per-user WebSocket connect/disconnect/status, stop monitoring for id. Connect requires a valid per-user access token.
   - `HistoricalController`: execute a strategy with historical replay (paper mode).
   - `HealthController`: liveness endpoint.
@@ -43,6 +43,7 @@ It’s meant to preserve shared context for future contributors and to accelerat
   - `PaperTradingService` (paper): In-memory order execution, positions, account P&L, brokerage/taxes, simple price fetch via LTP; all state is keyed per user (accounts, positions, order history).
   - `HistoricalDataService`: Minute candles -> per-second linear interpolation in IST trading window.
   - `HistoricalReplayService`: Executes a strategy in paper mode, disables live WS temporarily, fetches second-wise prices for legs, replays as synthetic ticks to monitor.
+  - `BotStatusService`: Holds an in-memory `RUNNING`/`STOPPED` status with `lastUpdated`; flipped on `/api/strategies/execute` and `/api/strategies/stop-all`.
   - `strategy/*`:
     - `StrategyService`: lifecycle, registry of active executions, exits for stop/stop-all, instruments meta, expiries.
     - `StrategyFactory`: returns implementation for `ATM_STRADDLE`, `ATM_STRANGLE`.
@@ -54,6 +55,7 @@ It’s meant to preserve shared context for future contributors and to accelerat
 - `dto/` and `model/`
   - `StrategyRequest`, `StrategyExecutionResponse`, `OrderRequest`, `OrderResponse`, `DayPnLResponse`, etc.
   - `StrategyExecution`, `StrategyStatus`, `StrategyType`.
+  - `BotStatusResponse`, `BotStatus`.
 
 - `util/` and `service/TradingConstants`
   - Centralized constants for exchanges, products, order types/status, messages, and strategy messages.
@@ -98,7 +100,7 @@ It’s meant to preserve shared context for future contributors and to accelerat
 - Market Data: `/api/market/*`
 - Account: `/api/account/*`
 - GTT: `/api/gtt/*`
-- Strategies: `/api/strategies/*`
+- Strategies: `/api/strategies/*` (includes `/api/strategies/bot-status`)
 - Monitoring: `/api/monitoring/*` (connect/disconnect/status are per-user)
 - Paper trading: `/api/paper-trading/*`
 - Health: `/api/health`

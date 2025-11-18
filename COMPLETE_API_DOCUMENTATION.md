@@ -1,7 +1,7 @@
 # Zerodha Trading Bot - Complete API & Functionality Documentation
 
-**Version:** 2.4.0  
-**Last Updated:** November 16, 2025  
+**Version:** 2.5.0  
+**Last Updated:** November 18, 2025  
 **Base URL (Development):** `http://localhost:8080`  
 **Base URL (Production):** `https://your-app.onrender.com`
 
@@ -12,22 +12,17 @@
 1. [Overview](#overview)
 2. [Technology Stack](#technology-stack)
 3. [Quick Start Guide](#quick-start-guide)
-4. [Authentication APIs](#authentication-apis)
-5. [Order Management APIs](#order-management-apis)
-6. [Portfolio APIs](#portfolio-apis)
-7. [Market Data APIs](#market-data-apis)
-8. [Account APIs](#account-apis)
+4. [Multi-User Model and Required Headers](#multi-user-model-and-required-headers)
+5. [Authentication APIs](#authentication-apis)
+6. [Order Management APIs](#order-management-apis)
+7. [Portfolio APIs](#portfolio-apis)
+8. [Market Data APIs](#market-data-apis)
 9. [GTT (Good Till Triggered) APIs](#gtt-good-till-triggered-apis)
 10. [Trading Strategies APIs](#trading-strategies-apis)
-11. [Position Monitoring APIs](#position-monitoring-apis)
-12. [Paper Trading](#paper-trading)
-13. [Order Charges APIs](#order-charges-apis)
-14. [Configuration](#configuration)
-15. [Error Handling](#error-handling)
-16. [Code Examples](#code-examples)
-17. [Historical Replay APIs](#historical-replay-apis)
-18. [Trading Mode Toggle API](#trading-mode-toggle-api)
-19. [Changelog](#changelog)
+11. [Historical Replay APIs](#historical-replay-apis)
+12. [Trading Mode Toggle API](#trading-mode-toggle-api)
+13. [Bot Status API](#bot-status-api)
+14. [Changelog](#changelog)
 
 ---
 
@@ -51,7 +46,8 @@ A comprehensive Spring Boot backend application for automated trading using Zero
 ✅ **Delta-Based Strike Selection**: Accurate ATM strike selection using Black-Scholes  
 ✅ **Historical Replay (Backtest-like)**: Execute strategies over the most recent day's data with per-second replay derived from minute candles, using the same monitoring/exit/auto-reentry logic  
 ✅ **Runtime Trading Mode Toggle**: Switch between paper and live trading at runtime via API  
-✅ **Multi-User Isolation**: All runtime state (sessions, WebSockets, orders, positions) is segregated per user via the `X-User-Id` header
+✅ **Multi-User Isolation**: All runtime state (sessions, WebSockets, orders, positions) is segregated per user via the `X-User-Id` header  
+✅ **Bot Status**: In-memory RUNNING/STOPPED status flipped on strategy execute/stop-all and queryable via API
 
 ---
 
@@ -705,7 +701,7 @@ Get instruments for a specific exchange.
 {
   "success": true,
   "message": "Success",
-  "data": [ /* Instrument[] */ ]
+  "data": []
 }
 ```
 
@@ -724,7 +720,7 @@ Get all active GTT orders.
 {
   "success": true,
   "message": "Success",
-  "data": [ /* GTT[] */ ]
+  "data": []
 }
 ```
 
@@ -743,7 +739,7 @@ Create a new GTT order.
 {
   "success": true,
   "message": "GTT order placed successfully",
-  "data": { /* GTT */ }
+  "data": {}
 }
 ```
 
@@ -758,7 +754,7 @@ Create a new GTT order.
 {
   "success": true,
   "message": "Success",
-  "data": { /* GTT */ }
+  "data": {}
 }
 ```
 
@@ -775,7 +771,7 @@ Create a new GTT order.
 {
   "success": true,
   "message": "GTT order modified successfully",
-  "data": { /* GTT */ }
+  "data": {}
 }
 ```
 
@@ -790,7 +786,7 @@ Create a new GTT order.
 {
   "success": true,
   "message": "GTT order cancelled successfully",
-  "data": { /* GTT */ }
+  "data": {}
 }
 ```
 
@@ -872,6 +868,8 @@ Content-Type: application/json
   }
 }
 ```
+
+> Bot Status Semantics: The bot status flips to RUNNING only after a successful `POST /api/strategies/execute` response, and flips back to STOPPED only after a successful `DELETE /api/strategies/stop-all`. Stopping an individual execution does not change the bot status.
 
 ### ATM Straddle Auto-Reentry Behavior
 
@@ -1021,7 +1019,39 @@ Example log line:
 
 ---
 
+## Bot Status API
+
+Query the current bot status.
+
+### 1. Get Bot Status
+
+**Endpoint:** `GET /api/strategies/bot-status`
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "status": "RUNNING",
+    "lastUpdated": "2025-11-18T09:30:00Z"
+  }
+}
+```
+
+**Notes:**
+- Status is maintained in-memory and is not persisted across restarts.
+- Status changes only on `/api/strategies/execute` (RUNNING) and `/api/strategies/stop-all` (STOPPED).
+
+---
+
 ## Changelog
+
+### v2.5.0 (November 18, 2025)
+- Added Bot Status feature:
+  - In-memory status with timestamp, flipped to RUNNING on `/api/strategies/execute` and to STOPPED on `/api/strategies/stop-all`.
+  - New endpoint: `GET /api/strategies/bot-status` returning `{ status, lastUpdated }`.
+- Documentation updated (README, Architecture, Complete API).
 
 ### v2.4.0 (November 16, 2025)
 

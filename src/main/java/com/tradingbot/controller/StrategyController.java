@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
 public class StrategyController {
 
     private final StrategyService strategyService;
+    private final com.tradingbot.service.BotStatusService botStatusService;
 
     @PostMapping("/execute")
     @Operation(summary = "Execute a trading strategy",
@@ -45,6 +46,7 @@ public class StrategyController {
         log.info(ApiConstants.LOG_EXECUTE_STRATEGY_REQUEST, request.getStrategyType(), request.getInstrumentType());
         StrategyExecutionResponse response = strategyService.executeStrategy(request);
         log.info(ApiConstants.LOG_EXECUTE_STRATEGY_RESPONSE, response.getExecutionId(), response.getStatus());
+        botStatusService.markRunning();
         return ResponseEntity.ok(ApiResponse.success(ApiConstants.MSG_STRATEGY_EXECUTED_SUCCESS, response));
     }
 
@@ -130,7 +132,18 @@ public class StrategyController {
                description = "Stop all active strategies by closing all open positions")
     public ResponseEntity<ApiResponse<Map<String, Object>>> stopAllStrategies() throws KiteException {
         Map<String, Object> result = strategyService.stopAllActiveStrategies();
+        botStatusService.markStopped();
         return ResponseEntity.ok(ApiResponse.success("All active strategies stopped", result));
+    }
+
+    @GetMapping("/bot-status")
+    @Operation(summary = "Get bot status",
+               description = "Returns current bot status based on execute/stop-all lifecycle")
+    public ResponseEntity<ApiResponse<com.tradingbot.dto.BotStatusResponse>> getBotStatus() {
+        log.debug(ApiConstants.LOG_GET_BOT_STATUS_REQUEST);
+        var status = botStatusService.getStatus();
+        log.debug(ApiConstants.LOG_GET_BOT_STATUS_RESPONSE, status.getStatus(), status.getLastUpdated());
+        return ResponseEntity.ok(ApiResponse.success(status));
     }
 
     private boolean isImplemented(StrategyType type) {

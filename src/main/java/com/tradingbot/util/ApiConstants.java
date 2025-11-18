@@ -20,5 +20,7 @@ public final class ApiConstants {
     public static final String LOG_GET_STRATEGY_TYPES_REQUEST = "API Request - Get available strategy types";
     public static final String LOG_GET_STRATEGY_TYPES_RESPONSE = "API Response - Returning {} strategy types";
     public static final String LOG_GET_INSTRUMENTS_REQUEST = "API Request - Get available instruments";
+    // Added for bot status
+    public static final String LOG_GET_BOT_STATUS_REQUEST = "API Request - Get bot status";
+    public static final String LOG_GET_BOT_STATUS_RESPONSE = "API Response - Bot status: {} updated at {}";
 }
-

@@ -34,6 +34,7 @@ This comprehensive guide includes:
 - **API Documentation**: Interactive Swagger UI
 - **Multi-User Support**: Per-user sessions, WebSockets, and paper trading via `X-User-Id` header
 - **Runtime Mode Toggle**: Switch between paper and live trading via `/api/paper-trading/mode`
+- **Bot Status**: In-memory RUNNING/STOPPED status toggled on strategy execute and stop-all, exposed via `/api/strategies/bot-status`
 
 ## Technology Stack
 
@@ -134,6 +135,22 @@ Open Swagger UI: `http://localhost:8080/swagger-ui.html`
 ### 💰 Order Charges
 - Fetch brokerage and statutory charges for all executed orders today (from Kite charges API)
 
+### 🤖 Bot Status
+- The bot keeps an in-memory status that flips to `RUNNING` on successful `POST /api/strategies/execute` and to `STOPPED` on successful `DELETE /api/strategies/stop-all`.
+- Read the status at:
+  - `GET /api/strategies/bot-status`
+- Example response:
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "status": "RUNNING",
+    "lastUpdated": "2025-11-18T09:30:00Z"
+  }
+}
+```
+
 ## API Endpoints Overview
 
 - **Authentication**: `/api/auth/*`
@@ -143,6 +160,7 @@ Open Swagger UI: `http://localhost:8080/swagger-ui.html`
 - **Account**: `/api/account/*` (e.g., `margins/{segment}`)
 - **GTT Orders**: `/api/gtt/*`
 - **Strategies**: `/api/strategies/*`
+- **Bot Status**: `GET /api/strategies/bot-status`
 - **Monitoring**: `/api/monitoring/*`
 - **Paper Trading**: `/api/paper-trading/*`
 - **Trading Mode**: `/api/paper-trading/mode` (new)
