@@ -21,6 +21,11 @@ public enum StrategyType {
     INTRADAY_SCALPING_ATM,
 
     /**
+     * Sell At-The-Money Straddle: Selling both Call and Put options at the same strike price (ATM)
+     */
+    SELL_ATM_STRADDLE,
+
+    /**
      * Bull Call Spread: Bullish strategy using two call options at different strikes
      */
     BULL_CALL_SPREAD,

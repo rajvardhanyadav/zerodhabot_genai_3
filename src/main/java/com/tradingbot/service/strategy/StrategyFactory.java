@@ -19,6 +19,7 @@ public class StrategyFactory {
     private final ATMStraddleStrategy atmStraddleStrategy;
     private final ATMStrangleStrategy atmStrangleStrategy;
     private final ScalpingAtmOptionStrategy scalpingAtmOptionStrategy;
+    private final SellATMStraddleStrategy sellAtmStraddleStrategy;
     // Add more strategies here as they are implemented
 
     /**
@@ -35,6 +36,7 @@ public class StrategyFactory {
             case ATM_STRADDLE -> atmStraddleStrategy;
             case ATM_STRANGLE -> atmStrangleStrategy;
             case INTRADAY_SCALPING_ATM -> scalpingAtmOptionStrategy;
+            case SELL_ATM_STRADDLE -> sellAtmStraddleStrategy;
             // Add more strategies here as they are implemented
             // case BULL_CALL_SPREAD -> bullCallSpreadStrategy;
             // case BEAR_PUT_SPREAD -> bearPutSpreadStrategy;
@@ -52,7 +54,8 @@ public class StrategyFactory {
     public boolean isStrategyImplemented(StrategyType strategyType) {
         return strategyType == StrategyType.ATM_STRADDLE ||
                strategyType == StrategyType.ATM_STRANGLE ||
-               strategyType == StrategyType.INTRADAY_SCALPING_ATM;
+               strategyType == StrategyType.INTRADAY_SCALPING_ATM ||
+               strategyType == StrategyType.SELL_ATM_STRADDLE;
         // Add more as implemented
     }
 
@@ -66,6 +69,7 @@ public class StrategyFactory {
         strategies.put(StrategyType.ATM_STRADDLE, atmStraddleStrategy);
         strategies.put(StrategyType.ATM_STRANGLE, atmStrangleStrategy);
         strategies.put(StrategyType.INTRADAY_SCALPING_ATM, scalpingAtmOptionStrategy);
+        strategies.put(StrategyType.SELL_ATM_STRADDLE, sellAtmStraddleStrategy);
         // Add more as implemented
         return strategies;
     }

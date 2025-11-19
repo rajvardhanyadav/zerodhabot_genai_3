@@ -358,10 +358,12 @@ public class StrategyService {
         // Close all legs at market price
         for (StrategyExecution.OrderLeg leg : orderLegs) {
             try {
+                String exitTransactionType = determineExitTransactionType(leg);
+
                 OrderRequest exitOrder = new OrderRequest();
                 exitOrder.setTradingSymbol(leg.getTradingSymbol());
                 exitOrder.setExchange(EXCHANGE_NFO);
-                exitOrder.setTransactionType(TRANSACTION_SELL);
+                exitOrder.setTransactionType(exitTransactionType);
                 exitOrder.setQuantity(leg.getQuantity());
                 exitOrder.setProduct(PRODUCT_MIS);
                 exitOrder.setOrderType(ORDER_TYPE_MARKET);
@@ -419,6 +421,21 @@ public class StrategyService {
                  tradingMode, executionId, successCount, failureCount);
 
         return result;
+    }
+
+    /**
+     * Determine the correct exit side (BUY/SELL) for a given leg.
+     * For now, assume strategies using this method are long-only, except short strategies
+     * which mark their optionType with a "_SHORT" suffix (e.g., CALL_SHORT/PUT_SHORT).
+     */
+    private String determineExitTransactionType(StrategyExecution.OrderLeg leg) {
+        String optionType = leg.getOptionType();
+        if (optionType != null && optionType.toUpperCase().contains("SHORT")) {
+            // Leg was opened with a SELL, so we need a BUY to close
+            return TRANSACTION_BUY;
+        }
+        // Default: leg was opened with a BUY, close with SELL
+        return TRANSACTION_SELL;
     }
 
     /**
