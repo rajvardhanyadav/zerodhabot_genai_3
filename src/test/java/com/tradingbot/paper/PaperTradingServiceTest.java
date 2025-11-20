@@ -60,6 +60,18 @@ public class PaperTradingServiceTest {
                 .build();
     }
 
+    private OrderRequest marketSell(String symbol, int qty) {
+        return OrderRequest.builder()
+                .tradingSymbol(symbol)
+                .exchange("NFO")
+                .transactionType("SELL")
+                .quantity(qty)
+                .product("MIS")
+                .orderType("MARKET")
+                .validity("DAY")
+                .build();
+    }
+
     @Test
     void positionsArePerUserAndResetIsScoped() throws Exception {
         stubLtp(100.0);
@@ -83,5 +95,30 @@ public class PaperTradingServiceTest {
 
         assertTrue(u1AfterReset.isEmpty(), "U1 positions should be cleared after reset");
         assertEquals(1, u2AfterReset.size(), "U2 positions should remain intact after U1 reset");
+    }
+
+    @Test
+    void realisedPnLIsCorrectWhenClosingShortPositionWithBuy() throws Exception {
+        String userId = "U_SHORT";
+
+        // 1) Open short: SELL at 110
+        stubLtp(110.0);
+        paperTradingService.placeOrder(marketSell("TESTSYM", 50), userId);
+
+        // 2) Close short: BUY at 100
+        stubLtp(100.0);
+        paperTradingService.placeOrder(marketBuy("TESTSYM", 50), userId);
+
+        List<PaperPosition> positions = paperTradingService.getPositions(userId);
+        assertEquals(1, positions.size(), "User should have one position record");
+
+        PaperPosition pos = positions.get(0);
+
+        // Net quantity should be zero after fully closing the short
+        assertEquals(0, pos.getQuantity());
+
+        // Realised PnL for short: (entrySellPrice - exitBuyPrice) * qty = (110 - 100) * 50 = 500
+        assertEquals(500.0, pos.getRealised(), 1e-6, "Realised PnL for closed short should be positive 500");
+        assertEquals(500.0, pos.getPnl(), 1e-6, "Total PnL should match realised PnL for closed short");
     }
 }

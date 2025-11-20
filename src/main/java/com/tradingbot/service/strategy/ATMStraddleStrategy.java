@@ -307,7 +307,9 @@ public class ATMStraddleStrategy extends BaseStrategy {
                                                   int quantity,
                                                   StrategyCompletionCallback completionCallback) {
 
-        PositionMonitor monitor = new PositionMonitor(executionId, stopLossPoints, targetPoints);
+        // BUY ATM straddle: long volatility exposure -> use LONG direction
+        PositionMonitor monitor = new PositionMonitor(executionId, stopLossPoints, targetPoints,
+                PositionMonitor.PositionDirection.LONG);
 
         monitor.addLeg(callOrderId, callInstrument.tradingsymbol, callInstrument.instrument_token,
                 callEntryPrice, quantity, StrategyConstants.OPTION_TYPE_CALL);

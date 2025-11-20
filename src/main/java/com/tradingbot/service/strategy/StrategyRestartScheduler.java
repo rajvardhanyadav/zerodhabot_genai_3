@@ -189,7 +189,7 @@ public class StrategyRestartScheduler {
     private StrategyRequest buildRestartRequestFromExecution(StrategyExecution execution) {
         StrategyRequest request = new StrategyRequest();
         // Always restart as ATM_STRADDLE as per new requirement, regardless of original type
-        request.setStrategyType(StrategyType.ATM_STRADDLE);
+        request.setStrategyType(execution.getStrategyType());
         request.setInstrumentType(execution.getInstrumentType());
         request.setExpiry(execution.getExpiry());
         // Other fields (like quantity, SL/target) will rely on defaults or client-provided values or config defaults

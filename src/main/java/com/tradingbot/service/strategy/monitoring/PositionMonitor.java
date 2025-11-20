@@ -25,11 +25,22 @@ public class PositionMonitor {
     private static final String EXIT_REASON_PRICE_DIFF_ALL_LEGS = "PRICE_DIFF_ALL_LEGS (Triggered by: %s)";
     private static final String EXIT_REASON_PRICE_DIFF_INDIVIDUAL = "PRICE_DIFF_INDIVIDUAL (Leg: %s, Diff: %.2f points)";
 
+    public enum PositionDirection {
+        LONG,  // e.g., BUY ATM straddle
+        SHORT  // e.g., SELL ATM straddle
+    }
+
     private final String executionId;
     private final Map<String, LegMonitor> legsBySymbol = new ConcurrentHashMap<>();
     private final Map<Long, LegMonitor> legsByInstrumentToken = new ConcurrentHashMap<>();
     private final double stopLossPoints;
     private final double targetPoints;
+    /**
+     * Direction of the overall strategy:
+     * LONG  -> profit when prices move up from entry (e.g., long options)
+     * SHORT -> profit when prices move down from entry (e.g., short options)
+     */
+    private final PositionDirection direction;
     @Setter
     private Consumer<String> exitCallback;
     @Setter
@@ -38,10 +49,19 @@ public class PositionMonitor {
     private volatile boolean active = true;
     private String exitReason;
 
+    // Backwards-compatible constructor defaults to LONG behaviour (used by existing tests/strategies)
     public PositionMonitor(String executionId, double stopLossPoints, double targetPoints) {
+        this(executionId, stopLossPoints, targetPoints, PositionDirection.LONG);
+    }
+
+    public PositionMonitor(String executionId,
+                           double stopLossPoints,
+                           double targetPoints,
+                           PositionDirection direction) {
         this.executionId = executionId;
         this.stopLossPoints = stopLossPoints;
         this.targetPoints = targetPoints;
+        this.direction = direction != null ? direction : PositionDirection.LONG;
     }
 
     /**
@@ -111,20 +131,22 @@ public class PositionMonitor {
     }
 
     private boolean checkAndTriggerAllLegsExit() {
-        double maxDifference = Double.NEGATIVE_INFINITY;
+        double maxSignal = Double.NEGATIVE_INFINITY;
         String triggerLegSymbol = null;
 
         for (LegMonitor leg : legsBySymbol.values()) {
-            double priceDifference = leg.getCurrentPrice() - leg.getEntryPrice();
-            if (priceDifference > maxDifference) {
-                maxDifference = priceDifference;
+            double rawDiff = leg.getCurrentPrice() - leg.getEntryPrice();
+            // For SHORT positions, profit is when price goes down, so invert the sign
+            double directionalDiff = (direction == PositionDirection.SHORT) ? -rawDiff : rawDiff;
+            if (directionalDiff > maxSignal) {
+                maxSignal = directionalDiff;
                 triggerLegSymbol = leg.getSymbol();
             }
         }
 
-        if (maxDifference >= ALL_LEGS_CLOSE_THRESHOLD) {
-            log.warn("Price difference threshold (3+) hit for {}: Diff={} points - Closing ALL legs",
-                    triggerLegSymbol, maxDifference);
+        if (maxSignal >= ALL_LEGS_CLOSE_THRESHOLD) {
+            log.warn("Directional threshold hit for {}: Signal={} points (dir={}) - Closing ALL legs",
+                    triggerLegSymbol, maxSignal, direction);
             triggerExitAllLegs(triggerLegSymbol);
             return true;
         }
@@ -134,20 +156,23 @@ public class PositionMonitor {
     private void checkAndTriggerIndividualLegExits() {
         List<String> legsToClose = new ArrayList<>();
         for (LegMonitor leg : legsBySymbol.values()) {
-            double priceDifference = leg.getCurrentPrice() - leg.getEntryPrice();
-            if (priceDifference <= INDIVIDUAL_LEG_CLOSE_THRESHOLD) {
+            double rawDiff = leg.getCurrentPrice() - leg.getEntryPrice();
+            double directionalDiff = (direction == PositionDirection.SHORT) ? -rawDiff : rawDiff;
+            if (directionalDiff <= INDIVIDUAL_LEG_CLOSE_THRESHOLD) {
                 legsToClose.add(leg.getSymbol());
-                log.info("Leg {} marked for closure (loss): Diff={} points", leg.getSymbol(), priceDifference);
+                log.info("Leg {} marked for closure (loss) - rawDiff={}, dirDiff={}, direction={}",
+                         leg.getSymbol(), rawDiff, directionalDiff, direction);
             }
         }
 
         for (String legSymbol : legsToClose) {
             LegMonitor leg = legsBySymbol.get(legSymbol);
             if (leg != null) {
-                double diff = leg.getCurrentPrice() - leg.getEntryPrice();
-                log.warn("Price difference threshold (-1.5 or less) hit for {}: Entry={}, Current={}, Diff={} points - Closing individual leg",
-                        legSymbol, leg.getEntryPrice(), leg.getCurrentPrice(), diff);
-                triggerIndividualLegExit(legSymbol, diff);
+                double rawDiff = leg.getCurrentPrice() - leg.getEntryPrice();
+                double directionalDiff = (direction == PositionDirection.SHORT) ? -rawDiff : rawDiff;
+                log.warn("Directional loss threshold hit for {}: Entry={}, Current={}, rawDiff={}, dirDiff={}, direction={} - Closing individual leg",
+                        legSymbol, leg.getEntryPrice(), leg.getCurrentPrice(), rawDiff, directionalDiff, direction);
+                triggerIndividualLegExit(legSymbol, directionalDiff);
             }
         }
     }

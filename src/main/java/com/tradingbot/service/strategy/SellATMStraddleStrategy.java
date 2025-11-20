@@ -304,7 +304,9 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                                   int quantity,
                                                   StrategyCompletionCallback completionCallback) {
 
-        PositionMonitor monitor = new PositionMonitor(executionId, stopLossPoints, targetPoints);
+        // SELL ATM straddle: short volatility exposure -> use SHORT direction
+        PositionMonitor monitor = new PositionMonitor(executionId, stopLossPoints, targetPoints,
+                PositionMonitor.PositionDirection.SHORT);
 
         monitor.addLeg(callOrderId, callInstrument.tradingsymbol, callInstrument.instrument_token,
                 callEntryPrice, quantity, StrategyConstants.OPTION_TYPE_CALL);

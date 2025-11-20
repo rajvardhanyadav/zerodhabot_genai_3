@@ -335,8 +335,10 @@ public class PaperTradingService {
         position.setLastUpdated(LocalDateTime.now());
 
         if (TRANSACTION_BUY.equals(order.getTransactionType())) {
-            updateBuyPosition(position, order, executionPrice);
+            // BUY could either open/extend a long or close an existing short
+            updateBuyPosition(position, order, executionPrice, account);
         } else {
+            // SELL could either open/extend a short or close an existing long
             updateSellPosition(position, order, executionPrice, account);
         }
 
@@ -346,11 +348,36 @@ public class PaperTradingService {
     }
 
     /**
-     * Update position for buy orders
+     * Update position for buy orders (including closing shorts)
      */
-    private void updateBuyPosition(PaperPosition position, PaperOrder order, Double executionPrice) {
-        int totalBuyQty = position.getBuyQuantity() + order.getQuantity();
-        double totalBuyValue = position.getBuyValue() + (executionPrice * order.getQuantity());
+    private void updateBuyPosition(PaperPosition position, PaperOrder order, Double executionPrice, PaperAccount account) {
+        int buyQty = order.getQuantity();
+        int existingSellQty = position.getSellQuantity() != null ? position.getSellQuantity() : 0;
+
+        // First, realise P&L for any portion of this BUY that closes an existing short position
+        int offsetQty = Math.min(existingSellQty, buyQty);
+        if (offsetQty > 0 && existingSellQty > 0) {
+            double avgSellPrice = position.getSellPrice() != null ? position.getSellPrice() : 0.0;
+            double realisedPnL = (avgSellPrice - executionPrice) * offsetQty;
+
+            position.setRealised(position.getRealised() + realisedPnL);
+            position.setPnl(position.getPnl() + realisedPnL);
+
+            if (account != null) {
+                // Update account P&L and trade statistics
+                account.updatePnL(realisedPnL, 0.0);
+                account.recordTrade(realisedPnL);
+
+                // Release margin for the closed short portion (use avg sell price as reference)
+                double marginToRelease = calculateRequiredMargin(order, avgSellPrice);
+                account.releaseMargin(marginToRelease);
+            }
+        }
+
+        // Then update aggregate BUY-side quantities and values as before
+        int totalBuyQty = (position.getBuyQuantity() != null ? position.getBuyQuantity() : 0) + buyQty;
+        double totalBuyValue = (position.getBuyValue() != null ? position.getBuyValue() : 0.0)
+                + (executionPrice * buyQty);
 
         log.info("[PAPER TRADING] Updating BUY position: PrevQty={}, NewQty={}, PrevValue={}, NewValue={}",
                  position.getBuyQuantity(), totalBuyQty, position.getBuyValue(), totalBuyValue);
@@ -362,17 +389,18 @@ public class PaperTradingService {
         position.setDayBuyValue(totalBuyValue);
         position.setDayBuyPrice(position.getBuyPrice());
 
-        // Update net quantity
-        int netQty = totalBuyQty - position.getSellQuantity();
+        // Update net quantity: positive means net long, negative means net short
+        int netQty = totalBuyQty - existingSellQty;
         position.setQuantity(netQty);
 
         if (netQty > 0) {
+            // Net long - average price based on buys
             position.setAveragePrice(totalBuyValue / totalBuyQty);
         }
     }
 
     /**
-     * Update position for sell orders
+     * Update position for sell orders (including closing longs)
      */
     private void updateSellPosition(PaperPosition position, PaperOrder order, Double executionPrice, PaperAccount account) {
         int totalSellQty = position.getSellQuantity() + order.getQuantity();
@@ -392,20 +420,18 @@ public class PaperTradingService {
         int netQty = position.getBuyQuantity() - totalSellQty;
         position.setQuantity(netQty);
 
-        // Calculate realised P&L
+        // Calculate realised P&L when selling against existing longs
         if (position.getBuyQuantity() > 0) {
             double realisedPnL = (executionPrice - position.getBuyPrice()) * order.getQuantity();
             position.setRealised(position.getRealised() + realisedPnL);
-            position.setPnl(position.getPnl()+realisedPnL);
+            position.setPnl(position.getPnl() + realisedPnL);
 
-            // Release margin
+            // Release margin for the closed long portion
             double marginToRelease = calculateRequiredMargin(order, position.getBuyPrice());
             account.releaseMargin(marginToRelease);
 
-            // Update account P&L
+            // Update account P&L and trade statistics
             account.updatePnL(realisedPnL, 0.0);
-
-            // Update trade statistics using new method
             account.recordTrade(realisedPnL);
         }
     }
