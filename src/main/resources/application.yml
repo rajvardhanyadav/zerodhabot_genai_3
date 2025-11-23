@@ -49,6 +49,23 @@ strategy:
   auto-square-off-time: "15:15"
   auto-restart-enabled: true
   auto-restart-paper-enabled: true
+
+# Backtesting Configuration
+backtesting:
+  # Enable or disable backtesting feature
+  enabled: true
+
+  # Default replay speed (0 = fastest, 1 = real-time, 2 = 2x speed, etc.)
+  default-replay-speed: 0
+
+  # Include detailed tick-by-tick logs by default
+  default-include-detailed-logs: false
+
+  # Maximum concurrent batch backtests
+  max-concurrent-batch-backtests: 10
+
+  # Thread pool size for batch backtesting
+  batch-executor-pool-size: 10
   auto-restart-live-enabled: true  # optional, you can keep live off
   max-auto-restarts: 50
 

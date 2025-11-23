@@ -30,6 +30,7 @@ This comprehensive guide includes:
 - **Position Monitoring**: Real-time WebSocket-based monitoring (per-user)
 - **Paper Trading**: Risk-free testing with real market data
 - **Historical Replay**: Backtest-like execution using recent day's data (per-second replay) with the same auto-reentry logic
+- **Backtesting**: Comprehensive backtesting framework with detailed performance metrics, batch testing, and aggregate statistics
 - **Order Charges**: Fetch brokerage/charges for executed orders today
 - **API Documentation**: Interactive Swagger UI
 - **Multi-User Support**: Per-user sessions, WebSockets, and paper trading via `X-User-Id` header
@@ -98,6 +99,26 @@ macOS/Linux (bash):
 # Run the application
 ./mvnw spring-boot:run
 ```
+
+## Backtesting (NEW ⭐)
+
+Test your strategies on historical data before going live:
+
+```bash
+curl -X POST http://localhost:8080/api/backtest/execute \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: testuser" \
+  -d '{
+    "strategyType": "ATM_STRADDLE",
+    "instrumentType": "NIFTY",
+    "expiry": "2025-11-28",
+    "lots": 1,
+    "stopLossPoints": 10.0,
+    "targetPoints": 15.0
+  }'
+```
+
+**📖 For detailed backtesting documentation:** [docs/BACKTESTING_QUICK_START.md](docs/BACKTESTING_QUICK_START.md)
 
 The application will start on `http://localhost:8080`
 

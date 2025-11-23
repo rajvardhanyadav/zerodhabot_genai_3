@@ -93,7 +93,7 @@ It’s meant to preserve shared context for future contributors and to accelerat
   - `strategy.default-stop-loss-points`, `strategy.default-target-points`, and square-off flags.
   - Swagger UI at `/swagger-ui.html` (OpenAPI at `/api-docs`) with global header parameter `X-User-Id`.
 
-## 7. Exposed API surface (by group)
+## 8. Exposed API surface (by group)
 - Auth: `/api/auth/*` (`/api/auth/session` does NOT require `X-User-Id`; if absent the Kite `user.userId` is inferred and returned. Subsequent protected calls must include `X-User-Id`.)
 - Orders: `/api/orders/*`
 - Portfolio: `/api/portfolio/*`

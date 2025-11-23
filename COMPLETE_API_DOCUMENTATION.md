@@ -45,6 +45,7 @@ A comprehensive Spring Boot backend application for automated trading using Zero
 ✅ **Individual Leg Exit**: Close individual legs of multi-leg strategies  
 ✅ **Delta-Based Strike Selection**: Accurate ATM strike selection using Black-Scholes  
 ✅ **Historical Replay (Backtest-like)**: Execute strategies over the most recent day's data with per-second replay derived from minute candles, using the same monitoring/exit/auto-reentry logic  
+✅ **Backtesting Framework** ⭐ NEW: Comprehensive backtesting with detailed performance metrics, batch testing, and aggregate statistics  
 ✅ **Runtime Trading Mode Toggle**: Switch between paper and live trading at runtime via API  
 ✅ **Multi-User Isolation**: All runtime state (sessions, WebSockets, orders, positions) is segregated per user via the `X-User-Id` header  
 ✅ **Bot Status**: In-memory RUNNING/STOPPED status flipped on strategy execute/stop-all and queryable via API
@@ -1046,6 +1047,27 @@ Query the current bot status.
 ---
 
 ## Changelog
+
+### v3.0.0 (November 23, 2025) ⭐ NEW
+- **Added comprehensive Backtesting Framework:**
+  - New endpoints: `POST /api/backtest/execute`, `POST /api/backtest/batch`, `GET /api/backtest/{backtestId}`, `GET /api/backtest/health`
+  - Single backtest execution on latest previous trading day (automatic) or custom date
+  - Batch backtesting for parameter optimization and strategy comparison
+  - Detailed performance metrics:
+    - Total premium paid/received, gross/net P&L
+    - Return percentage, ROI
+    - Max profit, max drawdown during trade
+    - Holding duration, number of trades
+    - All trading charges (brokerage, STT, transaction charges, GST, SEBI, stamp duty)
+  - Trade event timeline (entry, price updates, exit)
+  - Aggregate statistics for batch tests (win rate, average P&L, best/worst returns)
+  - Configurable replay speed (0=fastest, 1=real-time)
+  - Optional detailed tick-by-tick logging
+- New DTOs: `BacktestRequest`, `BacktestResponse`, `BatchBacktestRequest`, `BatchBacktestResponse`
+- New services: `BacktestingService`, `BatchBacktestingService`
+- Comprehensive documentation: 4 new documentation files in `docs/` folder
+- Configuration added to `application.yml` for backtesting settings
+- Compilation errors fixed in batch backtesting service
 
 ### v2.5.0 (November 18, 2025)
 - Added Bot Status feature:
