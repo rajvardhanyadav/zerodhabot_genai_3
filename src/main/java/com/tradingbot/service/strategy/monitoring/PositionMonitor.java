@@ -100,6 +100,8 @@ public class PositionMonitor {
             return;
         }
 
+        log.info("Updating prices with {} ticks", ticks.size());
+
         updateLegPrices(ticks);
 
         // First check cumulative directional points across all legs and trigger full exit
@@ -123,9 +125,9 @@ public class PositionMonitor {
             LegMonitor leg = legsByInstrumentToken.get(e.getKey());
             if (leg != null && e.getValue() != null) {
                 leg.setCurrentPrice(BigDecimal.valueOf(e.getValue()));
-                BigDecimal cumulative = computeCumulativeDirectionalPoints();
-                log.info("Execution {}: Token={} Symbol={} updated price={} -> cumulativePoints={}",
-                        executionId, e.getKey(), leg.getSymbol(), leg.getCurrentPrice().toPlainString(), cumulative.toPlainString());
+//                BigDecimal cumulative = computeCumulativeDirectionalPoints();
+//                log.info("Execution {}: Token={} Symbol={} updated price={} -> cumulativePoints={}",
+//                        executionId, e.getKey(), leg.getSymbol(), leg.getCurrentPrice().toPlainString(), cumulative.toPlainString());
             }
         }
         if (checkAndTriggerCumulativeExit()) {
@@ -140,8 +142,7 @@ public class PositionMonitor {
                 leg.setCurrentPrice(BigDecimal.valueOf(tick.getLastTradedPrice()));
                 // Log the update and the cumulative directional points after this token update
 //                BigDecimal cumulative = computeCumulativeDirectionalPoints();
-//                log.info("Execution {}: Token={} Symbol={} updated price={} -> cumulativePoints={}",
-//                        executionId, tick.getInstrumentToken(), leg.getSymbol(), leg.getCurrentPrice().toPlainString(), cumulative.toPlainString());
+                log.info("Symbol={} entry price={} updated price={}",leg.getSymbol(), leg.getEntryPrice().toPlainString(), leg.getCurrentPrice().toPlainString());
             }
         }
     }

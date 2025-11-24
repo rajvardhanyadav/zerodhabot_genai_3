@@ -361,6 +361,7 @@ public class WebSocketService implements DisposableBean {
     }
 
     private void processTicks(UserWSContext c, ArrayList<Tick> ticks) {
+        log.info("New ticks received: count={}", ticks.size());
         for (Tick tick : ticks) {
             long token = tick.getInstrumentToken();
             Set<String> executions = c.instrumentToExecutions.get(token);
@@ -368,9 +369,11 @@ public class WebSocketService implements DisposableBean {
                 for (String executionId : executions) {
                     PositionMonitor monitor = c.activeMonitors.get(executionId);
                     if (monitor != null && monitor.isActive()) {
-                        monitor.updatePriceWithDifferenceCheck(new ArrayList<>(Collections.singletonList(tick)));
+                        monitor.updatePriceWithDifferenceCheck(ticks);
                     }
+                    break;
                 }
+                break;
             }
         }
     }
