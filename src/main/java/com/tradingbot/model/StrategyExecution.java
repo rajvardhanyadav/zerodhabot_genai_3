@@ -89,5 +89,36 @@ public class StrategyExecution {
 
         /** Entry price of this leg */
         private Double entryPrice;
+
+        /** BUY/SELL used to enter the leg */
+        private String entryTransactionType;
+
+        /** Epoch millis when the entry order was acknowledged */
+        private Long entryTimestamp;
+
+        /** Current lifecycle state of the leg */
+        @Builder.Default
+        private LegLifecycleState lifecycleState = LegLifecycleState.OPEN;
+
+        /** Metadata captured when the leg is closed */
+        private String exitOrderId;
+        private String exitTransactionType;
+        private Integer exitQuantity;
+        private Double exitPrice;
+        private Long exitRequestedAt;
+        private Long exitTimestamp;
+        private String exitStatus;
+        private String exitMessage;
+        private Double realizedPnl;
+    }
+
+    /**
+     * Lifecycle states tracked for each order leg.
+     */
+    public enum LegLifecycleState {
+        OPEN,
+        EXIT_PENDING,
+        EXITED,
+        EXIT_FAILED
     }
 }

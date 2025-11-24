@@ -583,6 +583,17 @@ public class PaperTradingService {
             k -> PaperAccount.createNew(userId, config.getInitialBalance()));
     }
 
+    public Optional<PaperOrder> getOrderById(String orderId, String userId) {
+        PaperOrder order = orders.get(orderId);
+        if (order == null) {
+            return Optional.empty();
+        }
+        if (userId != null && !userId.equals(order.getPlacedBy())) {
+            return Optional.empty();
+        }
+        return Optional.of(order.copy());
+    }
+
     private void addToHistory(String orderId, PaperOrder order) {
         orderHistory.computeIfAbsent(orderId, k -> new ArrayList<>()).add(order.copy());
     }

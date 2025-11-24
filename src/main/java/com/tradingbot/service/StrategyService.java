@@ -7,12 +7,14 @@ import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.StrategyCompletionReason;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyStatus;
+import com.tradingbot.model.StrategyExecution.LegLifecycleState;
 import com.tradingbot.service.strategy.StrategyFactory;
 import com.tradingbot.service.strategy.TradingStrategy;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import com.tradingbot.util.CurrentUserContext;
 import com.tradingbot.util.StrategyConstants;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
+import com.zerodhatech.models.Order;
 import com.zerodhatech.models.Instrument;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,8 +27,11 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 import static com.tradingbot.service.TradingConstants.*;
+import static com.tradingbot.util.StrategyConstants.TRANSACTION_BUY;
+import static com.tradingbot.util.StrategyConstants.TRANSACTION_SELL;
 
 @Service
 @RequiredArgsConstructor
@@ -329,14 +334,16 @@ public class StrategyService {
         StrategyExecution execution = executionsById.get(executionId);
         if (execution != null) {
             List<StrategyExecution.OrderLeg> orderLegs = orderDetails.stream()
-                .map(od -> new StrategyExecution.OrderLeg(
-                    od.getOrderId(),
-                    od.getTradingSymbol(),
-                    od.getOptionType(),
-                    od.getQuantity(),
-                    od.getPrice()
-                ))
-                .toList();
+                .map(od -> StrategyExecution.OrderLeg.builder()
+                    .orderId(od.getOrderId())
+                    .tradingSymbol(od.getTradingSymbol())
+                    .optionType(od.getOptionType())
+                    .quantity(od.getQuantity())
+                    .entryPrice(od.getPrice())
+                    .entryTransactionType(resolveEntryTransactionType(od))
+                    .entryTimestamp(System.currentTimeMillis())
+                    .build())
+                .collect(Collectors.toList());
             execution.setOrderLegs(orderLegs);
             log.info("Updated order legs for execution {}: {} legs (user={})", executionId, orderLegs.size(), execution.getUserId());
         } else {
@@ -357,44 +364,61 @@ public class StrategyService {
 
         // Close all legs at market price
         for (StrategyExecution.OrderLeg leg : orderLegs) {
+            StrategyExecution.OrderLeg workingLeg = leg;
             try {
-                String exitTransactionType = determineExitTransactionType(leg);
+                workingLeg.setLifecycleState(LegLifecycleState.EXIT_PENDING);
+                workingLeg.setExitRequestedAt(System.currentTimeMillis());
+
+                String exitTransactionType = determineExitTransactionType(workingLeg);
 
                 OrderRequest exitOrder = new OrderRequest();
-                exitOrder.setTradingSymbol(leg.getTradingSymbol());
+                exitOrder.setTradingSymbol(workingLeg.getTradingSymbol());
                 exitOrder.setExchange(EXCHANGE_NFO);
                 exitOrder.setTransactionType(exitTransactionType);
-                exitOrder.setQuantity(leg.getQuantity());
+                exitOrder.setQuantity(workingLeg.getQuantity());
                 exitOrder.setProduct(PRODUCT_MIS);
                 exitOrder.setOrderType(ORDER_TYPE_MARKET);
                 exitOrder.setValidity(VALIDITY_DAY);
 
                 OrderResponse response = unifiedTradingService.placeOrder(exitOrder);
 
+                workingLeg.setExitOrderId(response.getOrderId());
+                workingLeg.setExitTransactionType(exitTransactionType);
+                workingLeg.setExitQuantity(workingLeg.getQuantity());
+                workingLeg.setExitStatus(response.getStatus());
+                workingLeg.setExitMessage(response.getMessage());
+                workingLeg.setExitTimestamp(System.currentTimeMillis());
+
+                Double exitPrice = resolveOrderFillPrice(response.getOrderId());
+                if (exitPrice != null) {
+                    workingLeg.setExitPrice(exitPrice);
+                    workingLeg.setRealizedPnl(calculateRealizedPnl(workingLeg, exitPrice));
+                }
+
                 Map<String, String> orderResult = new HashMap<>();
-                orderResult.put("tradingSymbol", leg.getTradingSymbol());
-                orderResult.put("optionType", leg.getOptionType());
-                orderResult.put("quantity", String.valueOf(leg.getQuantity()));
+                orderResult.put("tradingSymbol", workingLeg.getTradingSymbol());
+                orderResult.put("optionType", workingLeg.getOptionType());
                 orderResult.put("exitOrderId", response.getOrderId());
                 orderResult.put("status", response.getStatus());
                 orderResult.put("message", response.getMessage());
-
                 exitOrders.add(orderResult);
 
                 if (STATUS_SUCCESS.equals(response.getStatus())) {
                     successCount++;
-                    log.info("[{} MODE] Successfully closed {} leg: {}", tradingMode, leg.getOptionType(), leg.getTradingSymbol());
+                    workingLeg.setLifecycleState(LegLifecycleState.EXITED);
                 } else {
                     failureCount++;
-                    log.error("Failed to close {} leg: {} - {}", leg.getOptionType(), leg.getTradingSymbol(), response.getMessage());
+                    workingLeg.setLifecycleState(LegLifecycleState.EXIT_FAILED);
+                    log.error("Failed to close {} leg: {} - {}", workingLeg.getOptionType(), workingLeg.getTradingSymbol(), response.getMessage());
                 }
 
             } catch (Exception e) {
                 failureCount++;
-                log.error("Error closing {} leg: {}", leg.getOptionType(), leg.getTradingSymbol(), e);
+                workingLeg.setLifecycleState(LegLifecycleState.EXIT_FAILED);
+                log.error("Error closing {} leg: {}", workingLeg.getOptionType(), workingLeg.getTradingSymbol(), e);
                 Map<String, String> orderResult = new HashMap<>();
-                orderResult.put("tradingSymbol", leg.getTradingSymbol());
-                orderResult.put("optionType", leg.getOptionType());
+                orderResult.put("tradingSymbol", workingLeg.getTradingSymbol());
+                orderResult.put("optionType", workingLeg.getOptionType());
                 orderResult.put("status", STATUS_FAILED);
                 orderResult.put("message", "Exception: " + e.getMessage());
                 exitOrders.add(orderResult);
@@ -415,7 +439,12 @@ public class StrategyService {
         result.put("successCount", successCount);
         result.put("failureCount", failureCount);
         result.put("exitOrders", exitOrders);
-        result.put("status", failureCount == 0 ? STATUS_SUCCESS : STATUS_PARTIAL);
+
+        // Persist updated leg state on execution for downstream consumers
+        StrategyExecution execution = executionsById.get(executionId);
+        if (execution != null) {
+            execution.setOrderLegs(orderLegs);
+        }
 
         log.info("[{} MODE] Exited all legs for execution {} - {} closed successfully, {} failed",
                  tradingMode, executionId, successCount, failureCount);
@@ -423,11 +452,6 @@ public class StrategyService {
         return result;
     }
 
-    /**
-     * Determine the correct exit side (BUY/SELL) for a given leg.
-     * For now, assume strategies using this method are long-only, except short strategies
-     * which mark their optionType with a "_SHORT" suffix (e.g., CALL_SHORT/PUT_SHORT).
-     */
     private String determineExitTransactionType(StrategyExecution.OrderLeg leg) {
         String optionType = leg.getOptionType();
         if (optionType != null && optionType.toUpperCase().contains("SHORT")) {
@@ -436,6 +460,66 @@ public class StrategyService {
         }
         // Default: leg was opened with a BUY, close with SELL
         return TRANSACTION_SELL;
+    }
+
+    private String resolveEntryTransactionType(StrategyExecutionResponse.OrderDetail orderDetail) {
+        if (orderDetail.getStatus() != null) {
+            String normalized = orderDetail.getStatus().toUpperCase(Locale.ROOT);
+            if (normalized.contains("SELL")) {
+                return TRANSACTION_SELL;
+            }
+            if (normalized.contains("BUY")) {
+                return TRANSACTION_BUY;
+            }
+        }
+        String optionType = orderDetail.getOptionType();
+        if (optionType != null && optionType.toUpperCase(Locale.ROOT).contains("SHORT")) {
+            return TRANSACTION_SELL;
+        }
+        return TRANSACTION_BUY;
+    }
+
+    private Double resolveOrderFillPrice(String orderId) {
+        if (orderId == null) {
+            return null;
+        }
+        try {
+            List<Order> history = unifiedTradingService.getOrderHistory(orderId);
+            if (history == null || history.isEmpty()) {
+                return null;
+            }
+            Order latest = history.get(history.size() - 1);
+            if (latest.averagePrice != null && !latest.averagePrice.isEmpty()) {
+                try {
+                    return Double.parseDouble(latest.averagePrice);
+                } catch (NumberFormatException ignored) {
+                    log.warn("Invalid averagePrice '{}' for order {}", latest.averagePrice, orderId);
+                }
+            }
+            if (latest.price != null && !latest.price.isEmpty()) {
+                try {
+                    return Double.parseDouble(latest.price);
+                } catch (NumberFormatException ignored) {
+                    log.warn("Invalid price '{}' for order {}", latest.price, orderId);
+                }
+            }
+        } catch (KiteException | IOException e) {
+            log.warn("Unable to resolve fill price for order {}: {}", orderId, e.getMessage());
+        }
+        return null;
+    }
+
+    private Double calculateRealizedPnl(StrategyExecution.OrderLeg leg, Double exitPrice) {
+        if (leg.getEntryPrice() == null || exitPrice == null || leg.getQuantity() == null) {
+            return null;
+        }
+        double quantity = leg.getQuantity();
+        double entryPrice = leg.getEntryPrice();
+        boolean wasBuy = TRANSACTION_BUY.equalsIgnoreCase(leg.getEntryTransactionType());
+        double pnl = wasBuy
+                ? (exitPrice - entryPrice) * quantity
+                : (entryPrice - exitPrice) * quantity;
+        return Math.round(pnl * 100.0) / 100.0;
     }
 
     /**
