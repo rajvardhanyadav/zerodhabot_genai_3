@@ -275,8 +275,10 @@ public class BacktestingService {
         Map<String, Double> entryPrices = new HashMap<>();
         double totalEntryPremium = 0.0;
         for (PositionMonitor.LegMonitor leg : legs) {
-            entryPrices.put(leg.getSymbol(), leg.getEntryPrice());
-            totalEntryPremium += leg.getEntryPrice() * leg.getQuantity();
+            // Leg entryPrice is BigDecimal in the monitor; convert to double for DTOs
+            double entryPriceDouble = leg.getEntryPrice() != null ? leg.getEntryPrice().doubleValue() : 0.0;
+            entryPrices.put(leg.getSymbol(), entryPriceDouble);
+            totalEntryPremium += entryPriceDouble * leg.getQuantity();
         }
 
         LocalDateTime entryTime = LocalDateTime.ofInstant(
@@ -425,8 +427,8 @@ public class BacktestingService {
                     ? strategyResponse.getOrders().get(i)
                     : null;
 
-            double entryPrice = leg.getEntryPrice();
-            double exitPrice = leg.getCurrentPrice();
+            double entryPrice = leg.getEntryPrice() != null ? leg.getEntryPrice().doubleValue() : 0.0;
+            double exitPrice = leg.getCurrentPrice() != null ? leg.getCurrentPrice().doubleValue() : entryPrice;
             double pnl = (exitPrice - entryPrice) * leg.getQuantity();
             double pnlPercentage = entryPrice > 0 ? (pnl / (entryPrice * leg.getQuantity())) * 100 : 0;
 
@@ -548,4 +550,3 @@ public class BacktestingService {
         private BacktestResponse response;
     }
 }
-

@@ -39,10 +39,10 @@ trading:
 # Strategy Configuration
 strategy:
   # Default stop loss in points (can be overridden via API request)
-  default-stop-loss-points: 10.0
+  default-stop-loss-points: 2.0
 
   # Default target in points (can be overridden via API request)
-  default-target-points: 15.0
+  default-target-points: 2.0
 
   # Auto square off settings
   auto-square-off-enabled: false

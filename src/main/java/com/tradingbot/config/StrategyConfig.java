@@ -17,8 +17,8 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 public class StrategyConfig {
 
     // Default strategy parameters (can be overridden per execution)
-    private double defaultStopLossPoints = 10.0;
-    private double defaultTargetPoints = 15.0;
+    private double defaultStopLossPoints = 2.0;
+    private double defaultTargetPoints = 2.0;
 
     // Intraday scalping defaults (used when per-request values are not provided)
     private double scalpingStopLossPoints = 5.0;

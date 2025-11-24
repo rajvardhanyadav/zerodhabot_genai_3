@@ -12,6 +12,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.function.BiConsumer;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 /**
  * Position monitor for tracking individual legs of a strategy
@@ -20,9 +22,11 @@ import java.util.function.BiConsumer;
 @Data
 public class PositionMonitor {
 
-    private static final double INDIVIDUAL_LEG_CLOSE_THRESHOLD = -2.0; // points
-    private static final double ALL_LEGS_CLOSE_THRESHOLD = 4.5; // points
-    private static final String EXIT_REASON_PRICE_DIFF_ALL_LEGS = "PRICE_DIFF_ALL_LEGS (Triggered by: %s)";
+    // Use configurable cumulative thresholds (provided via constructor arguments)
+    private final BigDecimal cumulativeTargetPointsBD;
+    private final BigDecimal cumulativeStopPointsBD;
+    private static final String EXIT_REASON_CUMULATIVE_TARGET = "CUMULATIVE_TARGET_HIT (Signal: %s points)";
+    private static final String EXIT_REASON_CUMULATIVE_STOPLOSS = "CUMULATIVE_STOPLOSS_HIT (Signal: %s points)";
     private static final String EXIT_REASON_PRICE_DIFF_INDIVIDUAL = "PRICE_DIFF_INDIVIDUAL (Leg: %s, Diff: %.2f points)";
 
     public enum PositionDirection {
@@ -62,6 +66,11 @@ public class PositionMonitor {
         this.stopLossPoints = stopLossPoints;
         this.targetPoints = targetPoints;
         this.direction = direction != null ? direction : PositionDirection.LONG;
+        // Initialize BigDecimal thresholds; if provided values are non-positive, fall back to 2.0
+        double effectiveTarget = targetPoints > 0 ? targetPoints : 2.0;
+        double effectiveStop = stopLossPoints > 0 ? stopLossPoints : 2.0;
+        this.cumulativeTargetPointsBD = BigDecimal.valueOf(effectiveTarget).setScale(8, RoundingMode.HALF_UP);
+        this.cumulativeStopPointsBD = BigDecimal.valueOf(effectiveStop).setScale(8, RoundingMode.HALF_UP);
     }
 
     /**
@@ -69,8 +78,9 @@ public class PositionMonitor {
      */
     public void addLeg(String orderId, String symbol, long instrumentToken,
                        double entryPrice, int quantity, String type) {
+        // Accept double entryPrice for backwards compatibility, but store as BigDecimal
         LegMonitor leg = new LegMonitor(orderId, symbol, instrumentToken,
-                                        entryPrice, quantity, type);
+                                        BigDecimal.valueOf(entryPrice), quantity, type);
         legsBySymbol.put(symbol, leg);
         legsByInstrumentToken.put(instrumentToken, leg);
         log.info("Added leg to monitor: {} at entry price: {}", symbol, entryPrice);
@@ -92,11 +102,13 @@ public class PositionMonitor {
 
         updateLegPrices(ticks);
 
-        if (checkAndTriggerAllLegsExit()) {
-            return; // Exit if all legs are closed
+        // First check cumulative directional points across all legs and trigger full exit
+        if (checkAndTriggerCumulativeExit()) {
+            return; // Exit if all legs are closed due to cumulative target/stoploss
         }
 
-        checkAndTriggerIndividualLegExits();
+        // Note: individual leg exit-on-loss logic has been intentionally left out to enforce
+        // cumulative-only exit behaviour as per updated requirements.
     }
 
     // --- New helper for historical replay ---
@@ -110,83 +122,95 @@ public class PositionMonitor {
         for (Map.Entry<Long, Double> e : tokenPrices.entrySet()) {
             LegMonitor leg = legsByInstrumentToken.get(e.getKey());
             if (leg != null && e.getValue() != null) {
-                leg.setCurrentPrice(e.getValue());
-                log.debug("Price updated for {}: {}", leg.getSymbol(), leg.getCurrentPrice());
+                leg.setCurrentPrice(BigDecimal.valueOf(e.getValue()));
+                BigDecimal cumulative = computeCumulativeDirectionalPoints();
+                log.info("Execution {}: Token={} Symbol={} updated price={} -> cumulativePoints={}",
+                        executionId, e.getKey(), leg.getSymbol(), leg.getCurrentPrice().toPlainString(), cumulative.toPlainString());
             }
         }
-        if (checkAndTriggerAllLegsExit()) {
+        if (checkAndTriggerCumulativeExit()) {
             return;
         }
-        checkAndTriggerIndividualLegExits();
     }
 
     private void updateLegPrices(ArrayList<Tick> ticks) {
         for (Tick tick : ticks) {
             LegMonitor leg = legsByInstrumentToken.get(tick.getInstrumentToken());
             if (leg != null) {
-                leg.setCurrentPrice(tick.getLastTradedPrice());
-                log.debug("Price updated for {}: {}", leg.getSymbol(), leg.getCurrentPrice());
-            }
-        }
-    }
-
-    private boolean checkAndTriggerAllLegsExit() {
-        double maxSignal = Double.NEGATIVE_INFINITY;
-        String triggerLegSymbol = null;
-
-        for (LegMonitor leg : legsBySymbol.values()) {
-            double rawDiff = leg.getCurrentPrice() - leg.getEntryPrice();
-            // For SHORT positions, profit is when price goes down, so invert the sign
-            double directionalDiff = (direction == PositionDirection.SHORT) ? -rawDiff : rawDiff;
-            if (directionalDiff > maxSignal) {
-                maxSignal = directionalDiff;
-                triggerLegSymbol = leg.getSymbol();
-            }
-        }
-
-        if (maxSignal >= ALL_LEGS_CLOSE_THRESHOLD) {
-            log.warn("Directional threshold hit for {}: Signal={} points (dir={}) - Closing ALL legs",
-                    triggerLegSymbol, maxSignal, direction);
-            triggerExitAllLegs(triggerLegSymbol);
-            return true;
-        }
-        return false;
-    }
-
-    private void checkAndTriggerIndividualLegExits() {
-        List<String> legsToClose = new ArrayList<>();
-        for (LegMonitor leg : legsBySymbol.values()) {
-            double rawDiff = leg.getCurrentPrice() - leg.getEntryPrice();
-            double directionalDiff = (direction == PositionDirection.SHORT) ? -rawDiff : rawDiff;
-            if (directionalDiff <= INDIVIDUAL_LEG_CLOSE_THRESHOLD) {
-                legsToClose.add(leg.getSymbol());
-                log.info("Leg {} marked for closure (loss) - rawDiff={}, dirDiff={}, direction={}",
-                         leg.getSymbol(), rawDiff, directionalDiff, direction);
-            }
-        }
-
-        for (String legSymbol : legsToClose) {
-            LegMonitor leg = legsBySymbol.get(legSymbol);
-            if (leg != null) {
-                double rawDiff = leg.getCurrentPrice() - leg.getEntryPrice();
-                double directionalDiff = (direction == PositionDirection.SHORT) ? -rawDiff : rawDiff;
-                log.warn("Directional loss threshold hit for {}: Entry={}, Current={}, rawDiff={}, dirDiff={}, direction={} - Closing individual leg",
-                        legSymbol, leg.getEntryPrice(), leg.getCurrentPrice(), rawDiff, directionalDiff, direction);
-                triggerIndividualLegExit(legSymbol, directionalDiff);
+                leg.setCurrentPrice(BigDecimal.valueOf(tick.getLastTradedPrice()));
+                // Log the update and the cumulative directional points after this token update
+//                BigDecimal cumulative = computeCumulativeDirectionalPoints();
+//                log.info("Execution {}: Token={} Symbol={} updated price={} -> cumulativePoints={}",
+//                        executionId, tick.getInstrumentToken(), leg.getSymbol(), leg.getCurrentPrice().toPlainString(), cumulative.toPlainString());
             }
         }
     }
 
     /**
+     * Compute cumulative directional points across all monitored legs (helper used for logging).
+     */
+    private BigDecimal computeCumulativeDirectionalPoints() {
+        BigDecimal cumulative = BigDecimal.ZERO;
+        for (LegMonitor leg : legsBySymbol.values()) {
+            BigDecimal rawDiff = leg.getCurrentPrice().subtract(leg.getEntryPrice());
+            BigDecimal directionalDiff = (direction == PositionDirection.SHORT) ? rawDiff.negate() : rawDiff;
+            cumulative = cumulative.add(directionalDiff);
+        }
+        return cumulative.setScale(8, RoundingMode.HALF_UP);
+    }
+
+    private boolean checkAndTriggerAllLegsExit() {
+        // Deprecated: retained for reference but not used.
+        return false;
+    }
+
+    /**
+     * Compute cumulative directional points across all legs and trigger a full exit when
+     * the configured target or stoploss is reached.
+     *
+     * @return true if an exit was triggered
+     */
+    private boolean checkAndTriggerCumulativeExit() {
+        BigDecimal cumulative = computeCumulativeDirectionalPoints();
+
+        // Log cumulative on each evaluation for observability
+        log.info("Evaluated cumulativePoints={} (target={}, stop={})",
+                cumulative.toPlainString(), cumulativeTargetPointsBD.toPlainString(), cumulativeStopPointsBD.toPlainString());
+
+        // Check target hit (using configured cumulative target)
+        if (cumulative.compareTo(cumulativeTargetPointsBD) >= 0) {
+            log.warn("Cumulative target hit for execution {}: cumulative={} points, target={} - Closing ALL legs",
+                    executionId, cumulative.toPlainString(), cumulativeTargetPointsBD.toPlainString());
+            triggerExitAllLegs(String.format(EXIT_REASON_CUMULATIVE_TARGET, cumulative.toPlainString()));
+            return true;
+        }
+
+        // Check stoploss hit (cumulative negative direction, using configured stop)
+        if (cumulative.compareTo(cumulativeStopPointsBD.negate()) <= 0) {
+            log.warn("Cumulative stoploss hit for execution {}: cumulative={} points, stopLoss={} - Closing ALL legs",
+                    executionId, cumulative.toPlainString(), cumulativeStopPointsBD.toPlainString());
+            triggerExitAllLegs(String.format(EXIT_REASON_CUMULATIVE_STOPLOSS, cumulative.toPlainString()));
+            return true;
+        }
+
+        return false;
+    }
+
+    private void checkAndTriggerIndividualLegExits() {
+        // Intentionally left blank: individual-leg exits by per-leg point-diff are disabled to
+        // enforce cumulative-only exit behaviour (all legs exit together on cumulative thresholds).
+    }
+
+    /**
      * Trigger exit for all legs
      */
-    private void triggerExitAllLegs(String triggerLeg) {
+    private void triggerExitAllLegs(String reason) {
         if (!active) {
             return;
         }
 
         active = false;
-        exitReason = String.format(EXIT_REASON_PRICE_DIFF_ALL_LEGS, triggerLeg);
+        exitReason = reason;
 
         log.warn("Triggering exit for execution {} - Reason: {}", executionId, exitReason);
 
@@ -254,22 +278,22 @@ public class PositionMonitor {
         private final String orderId;
         private final String symbol;
         private final long instrumentToken;
-        private final double entryPrice;
+        private final BigDecimal entryPrice;
         private final int quantity;
         private final String type; // CE or PE
-        private volatile double currentPrice;
-        private volatile double pnl;
+        private volatile BigDecimal currentPrice;
+        private volatile BigDecimal pnl;
 
         public LegMonitor(String orderId, String symbol, long instrumentToken,
-                         double entryPrice, int quantity, String type) {
+                         BigDecimal entryPrice, int quantity, String type) {
             this.orderId = orderId;
             this.symbol = symbol;
             this.instrumentToken = instrumentToken;
-            this.entryPrice = entryPrice;
+            this.entryPrice = entryPrice.setScale(8, RoundingMode.HALF_UP);
             this.quantity = quantity;
             this.type = type;
-            this.currentPrice = entryPrice;
-            this.pnl = 0.0;
+            this.currentPrice = this.entryPrice;
+            this.pnl = BigDecimal.ZERO.setScale(8, RoundingMode.HALF_UP);
         }
     }
 }
