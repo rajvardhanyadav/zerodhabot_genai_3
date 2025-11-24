@@ -1,6 +1,6 @@
 # Zerodha Trading Bot - Architecture Overview
 
-Last updated: 2025-11-18 (IST)
+Last updated: 2025-11-23 (IST)
 
 This document captures the high-level architecture, key modules, data flows, and extension points of the backend.
 It’s meant to preserve shared context for future contributors and to accelerate onboarding and changes.
@@ -35,6 +35,7 @@ It’s meant to preserve shared context for future contributors and to accelerat
   - `MonitoringController`: per-user WebSocket connect/disconnect/status, stop monitoring for id. Connect requires a valid per-user access token.
   - `HistoricalController`: execute a strategy with historical replay (paper mode).
   - `HealthController`: liveness endpoint.
+  - `BacktestController`: Runs single or batch backtests and exposes execution history/health endpoints.
 
 - `service/`
   - `UserSessionManager`: Manages per-user `KiteConnect` sessions (create/replace/invalidate) keyed by `X-User-Id`.
@@ -51,6 +52,8 @@ It’s meant to preserve shared context for future contributors and to accelerat
     - `ATMStraddleStrategy`, `ATMStrangleStrategy`: two-leg option buy strategies with monitoring and exits.
     - `monitoring/WebSocketService`: Per-user KiteTicker connections, per-user instrument subscriptions and resubscription on reconnect, routes live ticks to that user’s monitors; can disable live subscription during historical replay.
     - `monitoring/PositionMonitor`: Tracks legs, prices, triggers exits and callbacks.
+  - `BacktestingService`: Spins up strategy executions against historical data, drives PositionMonitor with replay ticks, and stores metrics / trade timelines.
+  - `BatchBacktestingService`: Parallel/sequential orchestration for multiple backtests plus aggregate stats.
 
 - `dto/` and `model/`
   - `StrategyRequest`, `StrategyExecutionResponse`, `OrderRequest`, `OrderResponse`, `DayPnLResponse`, etc.
@@ -84,13 +87,24 @@ It’s meant to preserve shared context for future contributors and to accelerat
 - Feeds synthetic prices to the `PositionMonitor`.
 - Temporarily disables live WebSocket subscription while registering monitoring, then re-enables afterwards. Replay runs asynchronously.
 - Replay speed is configurable via `historical.replay.sleep-millis-per-second` (0 for fastest).
+- Backtesting builds on this pipeline but precomputes full metrics, leg details, and trade timelines; see Section 6.
 
-## 6. Configuration
+## 6. Backtesting flow
+1) Client posts to `/api/backtest/execute` (or batch equivalent) with strategy params + optional `backtestDate`.
+2) `BacktestingService` validates paper-trading mode, determines trading day window (latest prior day if none provided), and converts the request into a regular `StrategyRequest`.
+3) Live WebSocket subscriptions pause; strategy execution runs in paper mode to register legs and monitors.
+4) Historical second-wise prices load for each leg via `HistoricalDataService`; `PositionMonitor` receives synthetic ticks at configured replay speed.
+5) Monitor exits (SL/Target/price diff) fire exactly as in live trading; completion reason is captured from `StrategyExecution`.
+6) Replay captures trade events (ENTRY, periodic PRICE_UPDATE, EXIT), leg P&L, and performance metrics (premium paid/received, gross/net P&L, ROI, charges, drawdown, holding duration, trade count).
+7) Response is cached under `backtestId`; `/api/backtest/{id}` can retrieve it later. Batch executions aggregate totals/win rate/best-worst returns, using the same engine per request.
+
+## 7. Configuration
 - `application.yml` keys of interest:
   - `kite.api-key`, `kite.api-secret` (recommend using env vars; do not commit secrets).
   - `trading.paper-trading-enabled` (switch between paper and live).
   - Charges/fees/slippage/delay/rejection parameters under `trading.*`.
   - `strategy.default-stop-loss-points`, `strategy.default-target-points`, and square-off flags.
+  - Backtesting toggles under `backtesting.*` (enable flag, replay speed default, detailed log flag, batch executor sizing) plus requirement that `trading.paper-trading-enabled=true`.
   - Swagger UI at `/swagger-ui.html` (OpenAPI at `/api-docs`) with global header parameter `X-User-Id`.
 
 ## 8. Exposed API surface (by group)
@@ -104,10 +118,11 @@ It’s meant to preserve shared context for future contributors and to accelerat
 - Monitoring: `/api/monitoring/*` (connect/disconnect/status are per-user)
 - Paper trading: `/api/paper-trading/*`
 - Health: `/api/health`
+- Backtesting: `/api/backtest/execute`, `/api/backtest/batch`, `/api/backtest/{backtestId}`, `/api/backtest/health`.
 
 For full request/response payloads, see `COMPLETE_API_DOCUMENTATION.md` and Swagger UI.
 
-## 8. Multi-user and request scoping
+## 9. Multi-user and request scoping
 - The header `X-User-Id` must be provided on protected endpoints (all except initial `/api/auth/session`).
 - If `/api/auth/session` is called without the header, the backend stores the session under the Kite `user.userId` and returns that id to the client; the client must then use it in `X-User-Id` for subsequent requests.
 - `UserSessionManager` maintains one `KiteConnect` session per user id key.
@@ -115,14 +130,14 @@ For full request/response payloads, see `COMPLETE_API_DOCUMENTATION.md` and Swag
 - `PaperTradingService` stores accounts, orders, and positions per user; resetting one user doesn’t affect others.
 - Swagger adds the `X-User-Id` parameter globally so it can be set once in the UI.
 
-## 9. Extension points (recommended next steps)
+## 10. Extension points (recommended next steps)
 - Implement additional strategies: Bull Call Spread, Bear Put Spread, Iron Condor.
 - Make monitor thresholds configurable (global + request-level override).
 - Paper mode enhancements: add trades tracking and partial fill/slippage models.
 - Security hygiene: remove fallback defaults for Kite API key/secret from `application.yml` and rely solely on environment variables.
 - Improve test coverage: unit tests for strategies, routing, and historical replay.
 
-## 10. Quickstart (dev)
+## 11. Quickstart (dev)
 - Build (Windows): `./mvnw.cmd -DskipTests=false test`
 - Build (macOS/Linux): `./mvnw -DskipTests=false test`
 - Run (Windows): `./mvnw.cmd spring-boot:run`
@@ -130,7 +145,7 @@ For full request/response payloads, see `COMPLETE_API_DOCUMENTATION.md` and Swag
 - Swagger UI: `http://localhost:8080/swagger-ui.html`
 - Toggle paper/live: set `trading.paper-trading-enabled` in `application.yml` or via env var.
 
-## 11. Glossary
+## 12. Glossary
 - ATM: At-The-Money. OTM: Out-Of-The-Money.
 - CE/PE: Call/Put European style options.
 - SL/Target: Stop-Loss/Target.

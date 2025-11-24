@@ -3,6 +3,8 @@ package com.tradingbot.paper;
 import com.tradingbot.config.PaperTradingConfig;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
+import com.tradingbot.dto.OrderChargesResponse;
+import com.tradingbot.paper.entity.OrderCharges;
 import com.tradingbot.service.TradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.LTPQuote;
@@ -11,11 +13,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static com.tradingbot.paper.ZerodhaChargeCalculator.OrderType.OPTIONS;
 import static com.tradingbot.service.TradingConstants.*;
 
 /**
@@ -28,6 +32,7 @@ public class PaperTradingService {
 
     private final PaperTradingConfig config;
     private final TradingService tradingService;
+    private final ZerodhaChargeCalculator chargeCalculator;
 
     // In-memory storage for paper trading
     private final Map<String, PaperOrder> orders = new ConcurrentHashMap<>();
@@ -286,32 +291,29 @@ public class PaperTradingService {
      */
     private void calculateCharges(PaperOrder order, Double executionPrice) {
         double orderValue = executionPrice * order.getQuantity();
-
-        // Brokerage
-        double brokerage = config.getBrokeragePerOrder();
-
-        // STT (only on sell)
-        double stt = TRANSACTION_SELL.equals(order.getTransactionType()) ?
-                     orderValue * (config.getSttPercentage() / 100.0) : 0.0;
-
-        // Transaction charges
-        double transactionCharges = orderValue * (config.getTransactionCharges() / 100.0);
-
-        // GST on brokerage
-        double gst = brokerage * (config.getGstPercentage() / 100.0);
-
-        // SEBI charges
-        double sebi = orderValue * (config.getSebiCharges() / 100.0);
-
-        // Stamp duty
-        double stampDuty = orderValue * (config.getStampDuty() / 100.0);
-
-        double totalTaxes = stt + transactionCharges + gst + sebi + stampDuty;
-        double totalCharges = brokerage + totalTaxes;
-
-        order.setBrokerageCharges(brokerage);
-        order.setTaxes(totalTaxes);
-        order.setTotalCharges(totalCharges);
+        OrderCharges charges = chargeCalculator.calculateCharges(
+                OPTIONS,
+            TRANSACTION_BUY.equals(order.getTransactionType()) ? ZerodhaChargeCalculator.TransactionType.BUY : ZerodhaChargeCalculator.TransactionType.SELL,
+            BigDecimal.valueOf(orderValue),
+            BigDecimal.valueOf(order.getQuantity())
+        );
+        order.setChargesBreakdown(charges);
+        order.setBrokerageCharges(charges.getBrokerage().doubleValue());
+        order.setTaxes(charges.getStt()
+                .add(charges.getExchangeTxnCharge())
+                .add(charges.getGst())
+                .add(charges.getSebiCharge())
+                .add(charges.getStampDuty())
+                .doubleValue());
+         order.setTotalCharges(Double.valueOf(String.valueOf(charges.getTotalCharges())));
+         log.info("[PAPER TRADING] Charges for order {}: Brokerage={}, Taxes={}, Total={}",
+                  order.getOrderId(),
+                  charges.getBrokerage(),
+                  charges.getStt().add(charges.getExchangeTxnCharge())
+                          .add(charges.getGst())
+                          .add(charges.getSebiCharge())
+                          .add(charges.getStampDuty()),
+                  charges.getTotalCharges());
     }
 
     /**
@@ -626,5 +628,72 @@ public class PaperTradingService {
         // This is a simplified implementation
         // In real scenario, you would fetch from instruments list
         return (long) (tradingSymbol + exchange).hashCode();
+    }
+
+    /**
+     * Get executed orders for a user
+     */
+    public List<PaperOrder> getExecutedOrdersForUser(String userId) {
+        return orders.values().stream()
+                .filter(o -> o.getPlacedBy().equals(userId))
+                .filter(o -> STATUS_COMPLETE.equals(o.getStatus()))
+                .toList();
+    }
+
+    /**
+     * Get per-order charges in paper mode
+     */
+    public List<OrderChargesResponse> getOrderCharges(String userId) {
+        return getExecutedOrdersForUser(userId).stream()
+                .map(this::mapToChargeResponse)
+                .toList();
+    }
+
+    private OrderChargesResponse mapToChargeResponse(PaperOrder order) {
+        OrderCharges charges = order.getChargesBreakdown();
+        OrderChargesResponse.Charges dtoCharges;
+        if (charges != null) {
+            double gstTotal = charges.getGst() != null ? charges.getGst().doubleValue() : 0.0;
+            OrderChargesResponse.GstBreakdown gst = OrderChargesResponse.GstBreakdown.builder()
+                    .igst(0.0)
+                    .cgst(gstTotal / 2)
+                    .sgst(gstTotal / 2)
+                    .total(gstTotal)
+                    .build();
+
+            dtoCharges = OrderChargesResponse.Charges.builder()
+                    .transactionTax(charges.getStt() != null ? charges.getStt().doubleValue() : 0.0)
+                    .transactionTaxType(TRANSACTION_TAX_TYPE_STT)
+                    .exchangeTurnoverCharge(charges.getExchangeTxnCharge() != null ? charges.getExchangeTxnCharge().doubleValue() : 0.0)
+                    .sebiTurnoverCharge(charges.getSebiCharge() != null ? charges.getSebiCharge().doubleValue() : 0.0)
+                    .brokerage(charges.getBrokerage() != null ? charges.getBrokerage().doubleValue() : 0.0)
+                    .stampDuty(charges.getStampDuty() != null ? charges.getStampDuty().doubleValue() : 0.0)
+                    .gst(gst)
+                    .total(charges.getTotalCharges() != null ? charges.getTotalCharges().doubleValue() : 0.0)
+                    .build();
+        } else {
+            dtoCharges = OrderChargesResponse.Charges.builder()
+                    .transactionTax(0.0)
+                    .transactionTaxType(TRANSACTION_TAX_TYPE_STT)
+                    .exchangeTurnoverCharge(0.0)
+                    .sebiTurnoverCharge(0.0)
+                    .brokerage(0.0)
+                    .stampDuty(0.0)
+                    .gst(OrderChargesResponse.GstBreakdown.builder().igst(0.0).cgst(0.0).sgst(0.0).total(0.0).build())
+                    .total(0.0)
+                    .build();
+        }
+
+        return OrderChargesResponse.builder()
+                .transactionType(order.getTransactionType())
+                .tradingsymbol(order.getTradingSymbol())
+                .exchange(order.getExchange())
+                .variety(order.getVariety())
+                .product(order.getProduct())
+                .orderType(order.getOrderType())
+                .quantity(order.getFilledQuantity())
+                .price(order.getExecutionPrice())
+                .charges(dtoCharges)
+                .build();
     }
 }

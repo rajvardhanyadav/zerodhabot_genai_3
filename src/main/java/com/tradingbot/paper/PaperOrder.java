@@ -1,5 +1,6 @@
 package com.tradingbot.paper;
 
+import com.tradingbot.paper.entity.OrderCharges;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -49,6 +50,7 @@ public class PaperOrder {
     private Double brokerageCharges;
     private Double taxes;
     private Double totalCharges;
+    private OrderCharges chargesBreakdown;
 
     /**
      * Create a new paper order from order request
@@ -85,6 +87,7 @@ public class PaperOrder {
                 .brokerageCharges(0.0)
                 .taxes(0.0)
                 .totalCharges(0.0)
+                .chargesBreakdown(null)
                 .build();
     }
 
@@ -122,6 +125,7 @@ public class PaperOrder {
                 .brokerageCharges(this.brokerageCharges)
                 .taxes(this.taxes)
                 .totalCharges(this.totalCharges)
+                .chargesBreakdown(this.chargesBreakdown)
                 .build();
     }
 }

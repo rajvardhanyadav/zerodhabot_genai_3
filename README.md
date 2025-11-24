@@ -7,6 +7,10 @@ A comprehensive Spring Boot backend application for automated trading using Zero
 **For detailed API documentation, please refer to:** [COMPLETE_API_DOCUMENTATION.md](COMPLETE_API_DOCUMENTATION.md)
 
 - Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- **NEW** Backtesting Quick Start: [docs/BACKTESTING_QUICK_START.md](docs/BACKTESTING_QUICK_START.md)
+- Backtesting Feature Reference: [docs/BACKTESTING_FEATURE.md](docs/BACKTESTING_FEATURE.md)
+- Backtesting Implementation Summary: [docs/BACKTESTING_IMPLEMENTATION_SUMMARY.md](docs/BACKTESTING_IMPLEMENTATION_SUMMARY.md)
+- Implementation Checklist & Status: [BACKTESTING_COMPLETE.md](BACKTESTING_COMPLETE.md)
 
 This comprehensive guide includes:
 - Complete API Reference for all endpoints

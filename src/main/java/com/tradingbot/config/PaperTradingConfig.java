@@ -20,7 +20,7 @@ public class PaperTradingConfig {
     // Charges configuration
     private boolean applyBrokerageCharges = true;
     private double brokeragePerOrder = 20.0;
-    private double sttPercentage = 0.025; // 0.025%
+    private double sttPercentage = 0.02; // 0.025%
     private double transactionCharges = 0.00325; // 0.00325%
     private double gstPercentage = 18.0; // 18%
     private double sebiCharges = 0.0001; // 0.0001%

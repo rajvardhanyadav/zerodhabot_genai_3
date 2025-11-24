@@ -3,6 +3,7 @@ package com.tradingbot.paper;
 import com.tradingbot.config.PaperTradingConfig;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.service.TradingService;
+import com.tradingbot.paper.ZerodhaChargeCalculator;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.LTPQuote;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,6 +22,7 @@ public class PaperTradingServiceTest {
 
     private PaperTradingService paperTradingService;
     private TradingService tradingService;
+    private ZerodhaChargeCalculator chargeCalculator;
 
     @BeforeEach
     void setup() {
@@ -32,7 +34,18 @@ public class PaperTradingServiceTest {
         config.setEnableOrderRejection(false);
 
         tradingService = Mockito.mock(TradingService.class);
-        paperTradingService = new PaperTradingService(config, tradingService);
+        chargeCalculator = Mockito.mock(ZerodhaChargeCalculator.class);
+        Mockito.when(chargeCalculator.calculateCharges(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any()))
+                .thenReturn(com.tradingbot.paper.entity.OrderCharges.builder()
+                        .brokerage(java.math.BigDecimal.ZERO)
+                        .stt(java.math.BigDecimal.ZERO)
+                        .exchangeTxnCharge(java.math.BigDecimal.ZERO)
+                        .gst(java.math.BigDecimal.ZERO)
+                        .sebiCharge(java.math.BigDecimal.ZERO)
+                        .stampDuty(java.math.BigDecimal.ZERO)
+                        .totalCharges(java.math.BigDecimal.ZERO)
+                        .build());
+        paperTradingService = new PaperTradingService(config, tradingService, chargeCalculator);
     }
 
     private void stubLtp(double price) {

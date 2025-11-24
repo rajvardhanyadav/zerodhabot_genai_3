@@ -5,7 +5,6 @@ import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.OrderChargesResponse;
 import com.tradingbot.service.UnifiedTradingService;
-import com.tradingbot.service.TradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Order;
 import io.swagger.v3.oas.annotations.Operation;
@@ -27,7 +26,6 @@ import java.util.List;
 public class OrderController {
 
     private final UnifiedTradingService unifiedTradingService;
-    private final TradingService tradingService;
 
     @PostMapping
     @Operation(summary = "Place a new order",
@@ -92,7 +90,7 @@ public class OrderController {
                            "Includes brokerage, STT, exchange charges, GST, SEBI charges, and stamp duty.")
     public ResponseEntity<ApiResponse<List<OrderChargesResponse>>> getOrderCharges() throws KiteException, IOException {
         log.info("API Request - Get order charges");
-        List<OrderChargesResponse> charges = tradingService.getOrderCharges();
+        List<OrderChargesResponse> charges = unifiedTradingService.getOrderCharges();
         log.info("API Response - Returning charges for {} orders", charges.size());
         return ResponseEntity.ok(ApiResponse.success("Order charges fetched successfully", charges));
     }

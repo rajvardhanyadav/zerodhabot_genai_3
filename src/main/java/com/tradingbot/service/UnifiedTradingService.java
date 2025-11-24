@@ -4,6 +4,7 @@ import com.tradingbot.config.PaperTradingConfig;
 import com.tradingbot.dto.DayPnLResponse;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
+import com.tradingbot.dto.OrderChargesResponse;
 import com.tradingbot.paper.PaperAccount;
 import com.tradingbot.paper.PaperOrder;
 import com.tradingbot.paper.PaperPosition;
@@ -39,8 +40,8 @@ public class UnifiedTradingService {
     private static final String LIVE_MODE = "LIVE";
 
     private final PaperTradingConfig config;
-    private final TradingService liveTradingService;
     private final PaperTradingService paperTradingService;
+    private final TradingService liveTradingService;
 
     /**
      * Place order - routes to paper or live trading based on config
@@ -236,6 +237,19 @@ public class UnifiedTradingService {
             positionCount,
             tradingMode
         );
+    }
+
+    /**
+     * Get order charges
+     */
+    public List<OrderChargesResponse> getOrderCharges() throws KiteException, IOException {
+        String userId = getUserId();
+        if (isPaperTradingEnabled()) {
+            logPaperMode("Fetching paper order charges for user=" + userId);
+            return paperTradingService.getOrderCharges(userId);
+        }
+        logLiveMode("Fetching live order charges for user=" + userId);
+        return liveTradingService.getOrderCharges();
     }
 
     // Helper methods for conversion
