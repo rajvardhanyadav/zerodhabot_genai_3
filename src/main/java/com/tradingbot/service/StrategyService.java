@@ -66,6 +66,9 @@ public class StrategyService {
         execution.setExpiry(request.getExpiry());
         execution.setStatus(StrategyStatus.EXECUTING);
         execution.setTimestamp(System.currentTimeMillis());
+        execution.setStopLossPoints(request.getStopLossPoints());
+        execution.setTargetPoints(request.getTargetPoints());
+        execution.setLots(request.getLots());
         execution.setTradingMode(unifiedTradingService.isPaperTradingEnabled()
                 ? StrategyConstants.TRADING_MODE_PAPER
                 : StrategyConstants.TRADING_MODE_LIVE);

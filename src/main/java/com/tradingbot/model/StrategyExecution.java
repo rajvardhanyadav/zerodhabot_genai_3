@@ -61,6 +61,10 @@ public class StrategyExecution {
     private Double entryPrice;
     private Double currentPrice;
     private Double profitLoss;
+    private Double stopLossPoints; // Stop loss in points (optional, uses default from config if not provided)
+
+    private Double targetPoints; // Target in points (optional, uses default from config if not provided)
+    private Integer lots;
 
     // Order tracking - initialized to empty list to avoid null checks
     @Builder.Default

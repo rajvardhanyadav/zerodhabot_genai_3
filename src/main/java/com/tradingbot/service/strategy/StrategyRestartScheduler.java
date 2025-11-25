@@ -192,6 +192,9 @@ public class StrategyRestartScheduler {
         request.setStrategyType(execution.getStrategyType());
         request.setInstrumentType(execution.getInstrumentType());
         request.setExpiry(execution.getExpiry());
+        request.setTargetPoints(execution.getTargetPoints());
+        request.setStopLossPoints(execution.getStopLossPoints());
+        request.setLots(execution.getLots());
         // Other fields (like quantity, SL/target) will rely on defaults or client-provided values or config defaults
         return request;
     }
