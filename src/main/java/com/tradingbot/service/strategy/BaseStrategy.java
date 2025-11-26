@@ -663,4 +663,8 @@ public abstract class BaseStrategy implements TradingStrategy {
     private double normalPDF(double x) {
         return (1.0 / Math.sqrt(2.0 * Math.PI)) * Math.exp(-0.5 * x * x);
     }
+
+    public void exitAllLegs(String executionId){
+
+    }
 }

@@ -455,7 +455,7 @@ public class StrategyService {
         return result;
     }
 
-    private String determineExitTransactionType(StrategyExecution.OrderLeg leg) {
+    public String determineExitTransactionType(StrategyExecution.OrderLeg leg) {
         String optionType = leg.getOptionType();
         if (optionType != null && optionType.toUpperCase().contains("SHORT")) {
             // Leg was opened with a SELL, so we need a BUY to close
@@ -482,7 +482,7 @@ public class StrategyService {
         return TRANSACTION_BUY;
     }
 
-    private Double resolveOrderFillPrice(String orderId) {
+    public Double resolveOrderFillPrice(String orderId) {
         if (orderId == null) {
             return null;
         }
@@ -512,7 +512,7 @@ public class StrategyService {
         return null;
     }
 
-    private Double calculateRealizedPnl(StrategyExecution.OrderLeg leg, Double exitPrice) {
+    public Double calculateRealizedPnl(StrategyExecution.OrderLeg leg, Double exitPrice) {
         if (leg.getEntryPrice() == null || exitPrice == null || leg.getQuantity() == null) {
             return null;
         }

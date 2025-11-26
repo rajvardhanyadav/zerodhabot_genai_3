@@ -6,22 +6,29 @@ import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.StrategyCompletionReason;
+import com.tradingbot.model.StrategyExecution;
+import com.tradingbot.model.StrategyStatus;
+import com.tradingbot.service.StrategyService;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.service.strategy.monitoring.PositionMonitor;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
+import com.tradingbot.util.CurrentUserContext;
 import com.tradingbot.util.StrategyConstants;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Instrument;
 import com.zerodhatech.models.Order;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+
+import static com.tradingbot.service.TradingConstants.*;
+import static com.tradingbot.service.TradingConstants.STATUS_FAILED;
+import static com.tradingbot.service.TradingConstants.STATUS_SUCCESS;
+import static com.tradingbot.service.TradingConstants.VALIDITY_DAY;
 
 /**
  * SELL ATM Straddle Strategy
@@ -36,15 +43,17 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
     private final WebSocketService webSocketService;
     private final StrategyConfig strategyConfig;
+    private final StrategyService strategyService;
 
     public SellATMStraddleStrategy(TradingService tradingService,
                                    UnifiedTradingService unifiedTradingService,
                                    Map<String, Integer> lotSizeCache,
                                    WebSocketService webSocketService,
-                                   StrategyConfig strategyConfig) {
+                                   StrategyConfig strategyConfig, @Lazy StrategyService strategyService) {
         super(tradingService, unifiedTradingService, lotSizeCache);
         this.webSocketService = webSocketService;
         this.strategyConfig = strategyConfig;
+        this.strategyService = strategyService;
     }
 
     @Override
@@ -370,7 +379,9 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
     private void exitAllLegs(String executionId, String callSymbol, String putSymbol,
                              int quantity, String reason, StrategyCompletionCallback completionCallback) {
-        try {
+
+        exitAllLegsAlternate(executionId, reason, completionCallback);
+        /*try {
             String tradingMode = getTradingMode();
             log.info(StrategyConstants.LOG_EXITING_LEGS, tradingMode, executionId, reason);
 
@@ -425,7 +436,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
             });
         } catch (Exception e) {
             log.error("Error during exitAllLegs for execution {}: {}", executionId, e.getMessage(), e);
-        }
+        }*/
     }
 
     private void exitIndividualLeg(String executionId, String legSymbol, int quantity, String reason,
@@ -473,5 +484,123 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         return String.format("Sell ATM Call + Sell ATM Put (Short volatility strategy with SL=%.1fpts, Target=%.1fpts) - Supports Paper & Live Trading",
                 strategyConfig.getDefaultStopLossPoints(),
                 strategyConfig.getDefaultTargetPoints());
+    }
+
+    private void exitAllLegsAlternate(String executionId, String reason, StrategyCompletionCallback completionCallback){
+        String userId = CurrentUserContext.getRequiredUserId();
+        log.info("Stopping strategy: {} by user {}", executionId, userId);
+
+        StrategyExecution execution = strategyService.getStrategy(executionId);
+        if (execution == null || !userId.equals(execution.getUserId())) {
+            throw new IllegalArgumentException("Strategy not found: " + executionId);
+        }
+
+        if (execution.getStatus() != StrategyStatus.ACTIVE) {
+            throw new IllegalStateException("Strategy is not active. Current status: " + execution.getStatus());
+        }
+
+        List<StrategyExecution.OrderLeg> orderLegs = execution.getOrderLegs();
+        if (orderLegs == null || orderLegs.isEmpty()) {
+            throw new IllegalStateException("No order legs found for strategy: " + executionId);
+        }
+
+        String tradingMode = getTradingMode();
+
+        List<Map<String, String>> exitOrders = new ArrayList<>();
+        int successCount = 0;
+        int failureCount = 0;
+
+        // Close all legs at market price
+        for (StrategyExecution.OrderLeg leg : orderLegs) {
+            StrategyExecution.OrderLeg workingLeg = leg;
+            try {
+                workingLeg.setLifecycleState(StrategyExecution.LegLifecycleState.EXIT_PENDING);
+                workingLeg.setExitRequestedAt(System.currentTimeMillis());
+
+                String exitTransactionType = strategyService.determineExitTransactionType(workingLeg);
+
+                OrderRequest exitOrder = new OrderRequest();
+                exitOrder.setTradingSymbol(workingLeg.getTradingSymbol());
+                exitOrder.setExchange(EXCHANGE_NFO);
+                exitOrder.setTransactionType(exitTransactionType);
+                exitOrder.setQuantity(workingLeg.getQuantity());
+                exitOrder.setProduct(PRODUCT_MIS);
+                exitOrder.setOrderType(ORDER_TYPE_MARKET);
+                exitOrder.setValidity(VALIDITY_DAY);
+
+                OrderResponse response = unifiedTradingService.placeOrder(exitOrder);
+
+                workingLeg.setExitOrderId(response.getOrderId());
+                workingLeg.setExitTransactionType(exitTransactionType);
+                workingLeg.setExitQuantity(workingLeg.getQuantity());
+                workingLeg.setExitStatus(response.getStatus());
+                workingLeg.setExitMessage(response.getMessage());
+                workingLeg.setExitTimestamp(System.currentTimeMillis());
+
+                Double exitPrice = strategyService.resolveOrderFillPrice(response.getOrderId());
+                if (exitPrice != null) {
+                    workingLeg.setExitPrice(exitPrice);
+                    workingLeg.setRealizedPnl(strategyService.calculateRealizedPnl(workingLeg, exitPrice));
+                }
+
+                Map<String, String> orderResult = new HashMap<>();
+                orderResult.put("tradingSymbol", workingLeg.getTradingSymbol());
+                orderResult.put("optionType", workingLeg.getOptionType());
+                orderResult.put("exitOrderId", response.getOrderId());
+                orderResult.put("status", response.getStatus());
+                orderResult.put("message", response.getMessage());
+                exitOrders.add(orderResult);
+
+                if (STATUS_SUCCESS.equals(response.getStatus())) {
+                    successCount++;
+                    workingLeg.setLifecycleState(StrategyExecution.LegLifecycleState.EXITED);
+                } else {
+                    failureCount++;
+                    workingLeg.setLifecycleState(StrategyExecution.LegLifecycleState.EXIT_FAILED);
+                    log.error("Failed to close {} leg: {} - {}", workingLeg.getOptionType(), workingLeg.getTradingSymbol(), response.getMessage());
+                }
+
+            } catch (Exception | KiteException e) {
+                failureCount++;
+                workingLeg.setLifecycleState(StrategyExecution.LegLifecycleState.EXIT_FAILED);
+                log.error("Error closing {} leg: {}", workingLeg.getOptionType(), workingLeg.getTradingSymbol(), e);
+                Map<String, String> orderResult = new HashMap<>();
+                orderResult.put("tradingSymbol", workingLeg.getTradingSymbol());
+                orderResult.put("optionType", workingLeg.getOptionType());
+                orderResult.put("status", STATUS_FAILED);
+                orderResult.put("message", "Exception: " + e.getMessage());
+                exitOrders.add(orderResult);
+            }
+        }
+
+        execution.setOrderLegs(orderLegs);
+
+        // Stop monitoring for this execution
+        try {
+            webSocketService.stopMonitoring(executionId);
+            log.info("[{} MODE] Stopped monitoring for execution {}", tradingMode, executionId);
+        } catch (Exception e) {
+            log.error("Error stopping monitoring for execution {}: {}", executionId, e.getMessage());
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("executionId", executionId);
+        result.put("totalLegs", orderLegs.size());
+        result.put("successCount", successCount);
+        result.put("failureCount", failureCount);
+        result.put("exitOrders", exitOrders);
+
+        // Persist updated leg state on execution for downstream consumers
+
+
+        if (completionCallback != null) {
+            StrategyCompletionReason mappedReason = reason != null && reason.toUpperCase().contains("STOP")
+                    ? StrategyCompletionReason.STOPLOSS_HIT
+                    : StrategyCompletionReason.TARGET_HIT;
+            completionCallback.onStrategyCompleted(executionId, mappedReason);
+        }
+
+        log.info("[{} MODE] Exited all legs for execution {} - {} closed successfully, {} failed",
+                tradingMode, executionId, successCount, failureCount);
     }
 }
