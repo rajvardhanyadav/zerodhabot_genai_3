@@ -6,42 +6,14 @@ package com.tradingbot.model;
  */
 public enum StrategyType {
     /**
-     * At-The-Money Straddle: Buying/Selling both Call and Put options at the same strike price (ATM)
+     * At-The-Money Straddle: Buying both Call and Put options at the same strike price (ATM)
+     * Non-directional strategy that profits from high volatility
      */
     ATM_STRADDLE,
 
     /**
-     * At-The-Money Strangle: Buying/Selling Call and Put options at different strike prices around ATM
-     */
-    ATM_STRANGLE,
-
-    /**
-     * Intraday ATM Option Scalping: Short-hold trades in ATM options with tight SL/Target.
-     */
-    INTRADAY_SCALPING_ATM,
-
-    /**
      * Sell At-The-Money Straddle: Selling both Call and Put options at the same strike price (ATM)
+     * Non-directional strategy that profits from low volatility and time decay
      */
-    SELL_ATM_STRADDLE,
-
-    /**
-     * Bull Call Spread: Bullish strategy using two call options at different strikes
-     */
-    BULL_CALL_SPREAD,
-
-    /**
-     * Bear Put Spread: Bearish strategy using two put options at different strikes
-     */
-    BEAR_PUT_SPREAD,
-
-    /**
-     * Iron Condor: Neutral strategy combining bull put spread and bear call spread
-     */
-    IRON_CONDOR,
-
-    /**
-     * Custom strategy defined by the user
-     */
-    CUSTOM
+    SELL_ATM_STRADDLE
 }

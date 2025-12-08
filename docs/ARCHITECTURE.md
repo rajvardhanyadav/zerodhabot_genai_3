@@ -47,10 +47,11 @@ It’s meant to preserve shared context for future contributors and to accelerat
   - `BotStatusService`: Holds an in-memory `RUNNING`/`STOPPED` status with `lastUpdated`; flipped on `/api/strategies/execute` and `/api/strategies/stop-all`.
   - `strategy/*`:
     - `StrategyService`: lifecycle, registry of active executions, exits for stop/stop-all, instruments meta, expiries.
-    - `StrategyFactory`: returns implementation for `ATM_STRADDLE`, `ATM_STRANGLE`.
+    - `StrategyFactory`: returns implementation for `ATM_STRADDLE`, `SELL_ATM_STRADDLE`.
     - `BaseStrategy`: shared helpers (spot price, ATM/delta calc w/ BS + IV estimation, lot sizes, instruments filter, order creation, entry price lookup).
-    - `ATMStraddleStrategy`, `ATMStrangleStrategy`: two-leg option buy strategies with monitoring and exits.
-    - `monitoring/WebSocketService`: Per-user KiteTicker connections, per-user instrument subscriptions and resubscription on reconnect, routes live ticks to that user’s monitors; can disable live subscription during historical replay.
+    - `ATMStraddleStrategy`: two-leg option buy strategy (Buy 1 ATM Call + Buy 1 ATM Put) with monitoring and exits.
+    - `SellATMStraddleStrategy`: two-leg option sell strategy (Sell 1 ATM Call + Sell 1 ATM Put) with monitoring and exits.
+    - `monitoring/WebSocketService`: Per-user KiteTicker connections, per-user instrument subscriptions and resubscription on reconnect, routes live ticks to that user's monitors; can disable live subscription during historical replay.
     - `monitoring/PositionMonitor`: Tracks legs, prices, triggers exits and callbacks.
   - `BacktestingService`: Spins up strategy executions against historical data, drives PositionMonitor with replay ticks, and stores metrics / trade timelines.
   - `BatchBacktestingService`: Parallel/sequential orchestration for multiple backtests plus aggregate stats.

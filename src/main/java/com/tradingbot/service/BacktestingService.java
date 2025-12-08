@@ -174,7 +174,6 @@ public class BacktestingService {
         strategyRequest.setInstrumentType(request.getInstrumentType());
         strategyRequest.setLots(request.getLots() != null ? request.getLots() : 1);
         strategyRequest.setOrderType(request.getOrderType() != null ? request.getOrderType() : "MARKET");
-        strategyRequest.setStrikeGap(request.getStrikeGap());
         strategyRequest.setStopLossPoints(request.getStopLossPoints());
         strategyRequest.setTargetPoints(request.getTargetPoints());
 

@@ -36,7 +36,7 @@ public class StrategyController {
 
     @PostMapping("/execute")
     @Operation(summary = "Execute a trading strategy",
-               description = "Execute a configured trading strategy (ATM Straddle, ATM Strangle, etc.)")
+               description = "Execute a configured trading strategy (ATM Straddle, Sell ATM Straddle)")
     public ResponseEntity<ApiResponse<StrategyExecutionResponse>> executeStrategy(
             @Valid @RequestBody StrategyRequest request) throws KiteException, IOException {
         // Default to ATM_STRADDLE when strategyType is not provided by frontend
@@ -147,14 +147,13 @@ public class StrategyController {
     }
 
     private boolean isImplemented(StrategyType type) {
-        return type == StrategyType.ATM_STRADDLE || type == StrategyType.ATM_STRANGLE;
+        return type == StrategyType.ATM_STRADDLE || type == StrategyType.SELL_ATM_STRADDLE;
     }
 
     private String getStrategyDescription(StrategyType type) {
         return switch (type) {
             case ATM_STRADDLE -> "Buy 1 ATM Call + Buy 1 ATM Put (Non-directional, profits from high volatility)";
-            case ATM_STRANGLE -> "Buy 1 OTM Call + Buy 1 OTM Put (Non-directional, cheaper than Straddle)";
-            default -> "Strategy not yet implemented";
+            case SELL_ATM_STRADDLE -> "Sell 1 ATM Call + Sell 1 ATM Put (Non-directional, profits from low volatility and time decay)";
         };
     }
 }

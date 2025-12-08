@@ -24,7 +24,6 @@ public class StrategyRequest {
 
     private String orderType; // MARKET or LIMIT (default: MARKET)
 
-    private Double strikeGap; // For strangle strategy (default: 100 for NIFTY, 200 for BANKNIFTY)
 
     private Boolean autoSquareOff; // Auto square off at 3:15 PM (default: false)
 

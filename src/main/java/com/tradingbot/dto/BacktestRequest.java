@@ -28,7 +28,6 @@ public class BacktestRequest {
 
     private String orderType; // MARKET or LIMIT (default: MARKET)
 
-    private Double strikeGap; // For strangle strategy
 
     private Double stopLossPoints; // Stop loss in points
 

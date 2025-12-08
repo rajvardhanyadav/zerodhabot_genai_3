@@ -38,7 +38,7 @@ A comprehensive Spring Boot backend application for automated trading using Zero
 ✅ **Portfolio Management**: Track positions, holdings, and P&L  
 ✅ **Market Data**: Real-time quotes, OHLC, LTP, and historical data  
 ✅ **GTT Orders**: Good Till Triggered order management  
-✅ **Trading Strategies**: Pre-built strategies (ATM Straddle, ATM Strangle)  
+✅ **Trading Strategies**: Pre-built strategies (ATM Straddle, Sell ATM Straddle)  
 ✅ **Auto-Reentry for ATM Straddle**: When SL/Target is hit, automatically schedule a new ATM straddle at the next 5-min candle (configurable)  
 ✅ **Position Monitoring**: Real-time WebSocket-based monitoring with SL/Target  
 ✅ **Paper Trading**: Risk-free strategy testing with real market data  
@@ -800,14 +800,14 @@ Create a new GTT order.
 
 Currently implemented strategies:
 
-- `ATM_STRADDLE` (supported)
-- `ATM_STRANGLE` (supported)
+- `ATM_STRADDLE` (supported) - Buy 1 ATM Call + Buy 1 ATM Put
+- `SELL_ATM_STRADDLE` (supported) - Sell 1 ATM Call + Sell 1 ATM Put
 
-Other strategy types may be defined in the `StrategyType` enum but not yet implemented; the `/api/strategies/types` endpoint indicates implementation status.
+The `/api/strategies/types` endpoint indicates implementation status.
 
 ### 1. Execute Strategy
 
-Execute a trading strategy such as ATM Straddle or ATM Strangle.
+Execute a trading strategy such as ATM Straddle or Sell ATM Straddle.
 
 **Endpoint:** `POST /api/strategies/execute`
 
@@ -825,7 +825,6 @@ Content-Type: application/json
   "expiry": "2025-11-27",
   "lots": 1,
   "orderType": "MARKET",
-  "strikeGap": null,
   "autoSquareOff": false,
   "stopLossPoints": 20.0,
   "targetPoints": 30.0
@@ -952,7 +951,6 @@ The backtesting module enables historical strategy simulation using real market 
   "expiry": "2025-11-28",
   "lots": 1,
   "orderType": "MARKET",
-  "strikeGap": null,
   "stopLossPoints": 10.0,
   "targetPoints": 15.0,
   "backtestDate": null,
@@ -962,13 +960,12 @@ The backtesting module enables historical strategy simulation using real market 
 ```
 
 **Key Parameters:**
-- `strategyType` (required): Strategy to test (`ATM_STRADDLE`, `ATM_STRANGLE`, etc.).
+- `strategyType` (required): Strategy to test (`ATM_STRADDLE`, `SELL_ATM_STRADDLE`).
 - `instrumentType` (required): Underlying instrument (`NIFTY`, `BANKNIFTY`, `FINNIFTY`).
 - `expiry`: Option expiry date. Default chooses nearest expiry on/after backtest date.
 - `lots`: Number of lots (default 1).
 - `orderType`: `MARKET` or `LIMIT` (default `MARKET`).
 - `stopLossPoints`/`targetPoints`: Optional overrides for exits.
-- `strikeGap`: Strike gap for strangles.
 - `backtestDate`: Specific trading day. Defaults to latest completed trading day.
 - `replaySpeedMultiplier`: `0` fastest, `1` real time.
 - `includeDetailedLogs`: `true` to emit tick-by-tick PRICE_UPDATE events.

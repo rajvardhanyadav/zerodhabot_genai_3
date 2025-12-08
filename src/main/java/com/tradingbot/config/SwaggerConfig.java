@@ -37,7 +37,7 @@ public class SwaggerConfig {
                         • Order Management (Place, Modify, Cancel)
                         • Portfolio & Position Tracking
                         • Real-time Market Data
-                        • Automated Trading Strategies (ATM Straddle, ATM Strangle)
+                        • Automated Trading Strategies (ATM Straddle, Sell ATM Straddle)
                         • Real-time Position Monitoring with WebSocket
                         • Stop Loss & Target Management
                         • Paper Trading Mode for risk-free testing

@@ -30,7 +30,7 @@ This comprehensive guide includes:
 - **Portfolio Management**: View positions, holdings, and trades
 - **Market Data**: Real-time quotes, OHLC, LTP, and historical data
 - **GTT Orders**: Good Till Triggered order management
-- **Trading Strategies**: ATM Straddle, ATM Strangle with auto SL/Target and optional auto-reentry
+- **Trading Strategies**: ATM Straddle, Sell ATM Straddle with auto SL/Target and optional auto-reentry
 - **Position Monitoring**: Real-time WebSocket-based monitoring (per-user)
 - **Paper Trading**: Risk-free testing with real market data
 - **Historical Replay**: Backtest-like execution using recent day's data (per-second replay) with the same auto-reentry logic
@@ -133,8 +133,8 @@ Open Swagger UI: `http://localhost:8080/swagger-ui.html`
 ## Key Features
 
 ### 🎯 Trading Strategies
-- **ATM Straddle**: Buy ATM Call + Buy ATM Put
-- **ATM Strangle**: Buy OTM Call + Buy OTM Put
+- **ATM Straddle**: Buy ATM Call + Buy ATM Put (profits from high volatility)
+- **Sell ATM Straddle**: Sell ATM Call + Sell ATM Put (profits from low volatility and time decay)
 - Configurable Stop-Loss and Target
 - Individual leg exit capability
 - Delta-based strike selection using Black-Scholes model
