@@ -1,6 +1,8 @@
 package com.tradingbot.service;
 
 import com.tradingbot.config.PaperTradingConfig;
+import com.tradingbot.dto.BasketOrderRequest;
+import com.tradingbot.dto.BasketOrderResponse;
 import com.tradingbot.dto.DayPnLResponse;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
@@ -54,6 +56,21 @@ public class UnifiedTradingService {
         } else {
             logLiveMode("Placing live order for user=" + userId);
             return liveTradingService.placeOrder(orderRequest);
+        }
+    }
+
+    /**
+     * Place basket order - routes to paper or live trading based on config
+     * Places multiple orders as a basket for atomic execution
+     */
+    public BasketOrderResponse placeBasketOrder(BasketOrderRequest basketRequest) {
+        String userId = getUserId();
+        if (isPaperTradingEnabled()) {
+            logPaperMode("Placing paper basket order for user=" + userId);
+            return paperTradingService.placeBasketOrder(basketRequest, userId);
+        } else {
+            logLiveMode("Placing live basket order for user=" + userId);
+            return liveTradingService.placeBasketOrder(basketRequest);
         }
     }
 

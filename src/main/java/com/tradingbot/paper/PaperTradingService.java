@@ -1,6 +1,8 @@
 package com.tradingbot.paper;
 
 import com.tradingbot.config.PaperTradingConfig;
+import com.tradingbot.dto.BasketOrderRequest;
+import com.tradingbot.dto.BasketOrderResponse;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.OrderChargesResponse;
@@ -119,6 +121,210 @@ public class PaperTradingService {
 
         log.info("[PAPER TRADING] Order placed successfully: {}", orderId);
         return new OrderResponse(orderId, STATUS_SUCCESS, MSG_ORDER_PLACED_SUCCESS);
+    }
+
+    /**
+     * Place basket order - multiple orders at once for paper trading
+     * Places all orders in the basket and returns consolidated results
+     */
+    public BasketOrderResponse placeBasketOrder(BasketOrderRequest basketRequest, String userId) {
+        log.info("[PAPER TRADING] Placing basket order with {} orders for user: {}",
+                basketRequest.getOrders() != null ? basketRequest.getOrders().size() : 0, userId);
+
+        List<BasketOrderResponse.BasketOrderResult> results = new ArrayList<>();
+        int successCount = 0;
+        int failureCount = 0;
+
+        if (basketRequest.getOrders() == null || basketRequest.getOrders().isEmpty()) {
+            log.error("[PAPER TRADING] Basket order request has no orders");
+            return BasketOrderResponse.builder()
+                    .status(STATUS_FAILED)
+                    .message("No orders in basket request")
+                    .totalOrders(0)
+                    .successCount(0)
+                    .failureCount(0)
+                    .orderResults(results)
+                    .build();
+        }
+
+        // Get or create paper account
+        PaperAccount account = getOrCreateAccount(userId);
+
+        // Fetch prices for all instruments first to minimize API calls
+        Map<String, Double> priceCache = new HashMap<>();
+        for (BasketOrderRequest.BasketOrderItem item : basketRequest.getOrders()) {
+            try {
+                String key = item.getTradingSymbol() + ":" + item.getExchange();
+                if (!priceCache.containsKey(key)) {
+                    Double price = getCurrentPrice(item.getTradingSymbol(), item.getExchange());
+                    priceCache.put(key, price);
+                }
+            } catch (KiteException | IOException e) {
+                log.warn("[PAPER TRADING] Failed to fetch price for {}: {}", item.getTradingSymbol(), e.getMessage());
+            }
+        }
+
+        // Place each order in the basket
+        for (BasketOrderRequest.BasketOrderItem item : basketRequest.getOrders()) {
+            try {
+                OrderRequest orderRequest = item.toOrderRequest();
+                String key = item.getTradingSymbol() + ":" + item.getExchange();
+                Double cachedPrice = priceCache.get(key);
+
+                // Place the individual order
+                OrderResponse response = placeOrderWithPrice(orderRequest, userId, cachedPrice);
+
+                if (STATUS_SUCCESS.equals(response.getStatus())) {
+                    // Get execution price from order
+                    Double executionPrice = getOrderExecutionPrice(response.getOrderId());
+
+                    log.info("[PAPER TRADING] Basket order item placed successfully: {} - {} {}",
+                            response.getOrderId(), item.getTransactionType(), item.getTradingSymbol());
+
+                    results.add(BasketOrderResponse.BasketOrderResult.builder()
+                            .orderId(response.getOrderId())
+                            .tradingSymbol(item.getTradingSymbol())
+                            .legType(item.getLegType())
+                            .status(STATUS_SUCCESS)
+                            .message(MSG_ORDER_PLACED_SUCCESS)
+                            .executionPrice(executionPrice)
+                            .instrumentToken(item.getInstrumentToken())
+                            .build());
+                    successCount++;
+                } else {
+                    log.error("[PAPER TRADING] Basket order item failed for {}: {}",
+                            item.getTradingSymbol(), response.getMessage());
+                    results.add(BasketOrderResponse.BasketOrderResult.builder()
+                            .tradingSymbol(item.getTradingSymbol())
+                            .legType(item.getLegType())
+                            .status(STATUS_FAILED)
+                            .message(response.getMessage())
+                            .instrumentToken(item.getInstrumentToken())
+                            .build());
+                    failureCount++;
+                }
+
+            } catch (Exception e) {
+                log.error("[PAPER TRADING] Error placing basket order item for {}: {}",
+                        item.getTradingSymbol(), e.getMessage());
+                results.add(BasketOrderResponse.BasketOrderResult.builder()
+                        .tradingSymbol(item.getTradingSymbol())
+                        .legType(item.getLegType())
+                        .status(STATUS_FAILED)
+                        .message("Error: " + e.getMessage())
+                        .instrumentToken(item.getInstrumentToken())
+                        .build());
+                failureCount++;
+            }
+        }
+
+        String overallStatus = determineOverallStatus(successCount, failureCount, basketRequest.getOrders().size());
+        String message = String.format("[PAPER] Basket order completed: %d/%d orders successful",
+                successCount, basketRequest.getOrders().size());
+
+        log.info("[PAPER TRADING] Basket order completed - Status: {}, Success: {}, Failed: {}",
+                overallStatus, successCount, failureCount);
+
+        return BasketOrderResponse.builder()
+                .status(overallStatus)
+                .message(message)
+                .orderResults(results)
+                .successCount(successCount)
+                .failureCount(failureCount)
+                .totalOrders(basketRequest.getOrders().size())
+                .build();
+    }
+
+    /**
+     * Place order with pre-fetched price to avoid additional API calls
+     */
+    private OrderResponse placeOrderWithPrice(OrderRequest orderRequest, String userId, Double cachedPrice) {
+        log.info("[PAPER TRADING] Placing order for {}: {} {} @ {}",
+                 orderRequest.getTradingSymbol(),
+                 orderRequest.getTransactionType(),
+                 orderRequest.getQuantity(),
+                 orderRequest.getOrderType());
+
+        PaperAccount account = getOrCreateAccount(userId);
+        String orderId = String.valueOf(orderIdGenerator.incrementAndGet());
+        Long instrumentToken = getInstrumentToken(orderRequest.getTradingSymbol(), orderRequest.getExchange());
+
+        PaperOrder order = PaperOrder.fromOrderRequest(
+            orderId, userId,
+            orderRequest.getTradingSymbol(),
+            orderRequest.getExchange(),
+            orderRequest.getTransactionType(),
+            orderRequest.getQuantity(),
+            orderRequest.getProduct(),
+            orderRequest.getOrderType(),
+            orderRequest.getPrice(),
+            orderRequest.getTriggerPrice(),
+            orderRequest.getValidity(),
+            orderRequest.getDisclosedQuantity(),
+            instrumentToken
+        );
+
+        String validationError = validateOrder(order);
+        if (validationError != null) {
+            return rejectAndReturnOrder(order, orderId, validationError);
+        }
+
+        Double currentPrice;
+        try {
+            currentPrice = (cachedPrice != null && cachedPrice > 0)
+                    ? cachedPrice
+                    : getCurrentPrice(orderRequest.getTradingSymbol(), orderRequest.getExchange());
+        } catch (KiteException | IOException e) {
+            String msg = "Failed to fetch LTP: " + e.getMessage();
+            log.error("[PAPER TRADING] {}", msg, e);
+            return rejectAndReturnOrder(order, orderId, msg);
+        }
+
+        Double requiredMargin = calculateRequiredMargin(order, currentPrice);
+
+        if (TRANSACTION_BUY.equals(order.getTransactionType())) {
+            if (!account.hasSufficientBalance(requiredMargin)) {
+                String errorMsg = String.format(ERR_INSUFFICIENT_FUNDS,
+                                                requiredMargin, account.getAvailableBalance());
+                log.error("[PAPER TRADING] {}", errorMsg);
+                return rejectAndReturnOrder(order, orderId, errorMsg);
+            }
+            account.blockMargin(requiredMargin);
+        }
+
+        order.setStatus(STATUS_PENDING);
+        order.setStatusMessage(MSG_ORDER_VALIDATION_PENDING);
+        orders.put(orderId, order);
+        addToHistory(orderId, order);
+
+        executeOrder(order, account, currentPrice);
+
+        log.info("[PAPER TRADING] Order placed successfully: {}", orderId);
+        return new OrderResponse(orderId, STATUS_SUCCESS, MSG_ORDER_PLACED_SUCCESS);
+    }
+
+    /**
+     * Get execution price for an order
+     */
+    private Double getOrderExecutionPrice(String orderId) {
+        PaperOrder order = orders.get(orderId);
+        if (order != null) {
+            return order.getAveragePrice();
+        }
+        return null;
+    }
+
+    /**
+     * Determine overall status based on success/failure counts
+     */
+    private String determineOverallStatus(int successCount, int failureCount, int total) {
+        if (successCount == total) {
+            return STATUS_SUCCESS;
+        } else if (successCount > 0) {
+            return STATUS_PARTIAL;
+        } else {
+            return STATUS_FAILED;
+        }
     }
 
     /**

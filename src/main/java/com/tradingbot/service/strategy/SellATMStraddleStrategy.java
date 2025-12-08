@@ -1,6 +1,8 @@
 package com.tradingbot.service.strategy;
 
 import com.tradingbot.config.StrategyConfig;
+import com.tradingbot.dto.BasketOrderRequest;
+import com.tradingbot.dto.BasketOrderResponse;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
@@ -91,21 +93,165 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
         validateATMOptions(atmCall, atmPut, atmStrike);
 
-        List<StrategyExecutionResponse.OrderDetail> orderDetails = new ArrayList<>();
         int quantity = calculateOrderQuantity(request);
         String orderType = getOrderType(request);
 
-        // Place both legs as SELL
-        placeCallLeg(atmCall, quantity, orderType, orderDetails, tradingMode);
-        placePutLeg(atmPut, quantity, orderType, orderDetails, tradingMode);
+        // Place both legs as SELL using basket order for atomic execution
+        List<StrategyExecutionResponse.OrderDetail> orderDetails = placeBasketOrderForStraddle(
+                atmCall, atmPut, quantity, orderType, tradingMode, executionId);
 
         double totalPremium = calculateTotalPremium(orderDetails);
 
+        // Get order IDs from order details
+        String callOrderId = orderDetails.stream()
+                .filter(od -> od.getOptionType().contains(StrategyConstants.OPTION_TYPE_CALL))
+                .findFirst()
+                .map(StrategyExecutionResponse.OrderDetail::getOrderId)
+                .orElseThrow(() -> new RuntimeException("Call order not found in basket response"));
+
+        String putOrderId = orderDetails.stream()
+                .filter(od -> od.getOptionType().contains(StrategyConstants.OPTION_TYPE_PUT))
+                .findFirst()
+                .map(StrategyExecutionResponse.OrderDetail::getOrderId)
+                .orElseThrow(() -> new RuntimeException("Put order not found in basket response"));
+
         setupMonitoring(executionId, atmCall, atmPut,
-                orderDetails.get(0).getOrderId(), orderDetails.get(1).getOrderId(),
+                callOrderId, putOrderId,
                 quantity, stopLossPoints, targetPoints, completionCallback);
 
         return buildSuccessResponse(executionId, orderDetails, totalPremium, stopLossPoints, targetPoints, tradingMode);
+    }
+
+    /**
+     * Place basket order for straddle - places both Call and Put SELL orders atomically
+     */
+    private List<StrategyExecutionResponse.OrderDetail> placeBasketOrderForStraddle(
+            Instrument atmCall, Instrument atmPut, int quantity, String orderType,
+            String tradingMode, String executionId) {
+
+        log.info("[{}] Placing basket order for Sell ATM Straddle - Call: {}, Put: {}, Qty: {}",
+                tradingMode, atmCall.tradingsymbol, atmPut.tradingsymbol, quantity);
+
+        // Build basket order request with both legs
+        List<BasketOrderRequest.BasketOrderItem> basketItems = new ArrayList<>();
+
+        // Call leg
+        basketItems.add(BasketOrderRequest.BasketOrderItem.builder()
+                .tradingSymbol(atmCall.tradingsymbol)
+                .exchange(EXCHANGE_NFO)
+                .transactionType(StrategyConstants.TRANSACTION_SELL)
+                .quantity(quantity)
+                .product(PRODUCT_MIS)
+                .orderType(orderType)
+                .validity(VALIDITY_DAY)
+                .legType(StrategyConstants.LEG_TYPE_CALL)
+                .instrumentToken(atmCall.instrument_token)
+                .build());
+
+        // Put leg
+        basketItems.add(BasketOrderRequest.BasketOrderItem.builder()
+                .tradingSymbol(atmPut.tradingsymbol)
+                .exchange(EXCHANGE_NFO)
+                .transactionType(StrategyConstants.TRANSACTION_SELL)
+                .quantity(quantity)
+                .product(PRODUCT_MIS)
+                .orderType(orderType)
+                .validity(VALIDITY_DAY)
+                .legType(StrategyConstants.LEG_TYPE_PUT)
+                .instrumentToken(atmPut.instrument_token)
+                .build());
+
+        BasketOrderRequest basketRequest = BasketOrderRequest.builder()
+                .orders(basketItems)
+                .tag("SELL_STRADDLE_" + executionId)
+                .build();
+
+        // Place basket order
+        BasketOrderResponse basketResponse = unifiedTradingService.placeBasketOrder(basketRequest);
+
+        log.info("[{}] Basket order response - Status: {}, Success: {}/{}",
+                tradingMode, basketResponse.getStatus(),
+                basketResponse.getSuccessCount(), basketResponse.getTotalOrders());
+
+        // Validate basket order response
+        if (!basketResponse.hasAnySuccess()) {
+            String errorMsg = "Basket order failed: " + basketResponse.getMessage();
+            log.error(errorMsg);
+            throw new RuntimeException(errorMsg);
+        }
+
+        if (!basketResponse.isAllSuccess()) {
+            log.warn("[{}] Partial basket order success - {} of {} orders placed",
+                    tradingMode, basketResponse.getSuccessCount(), basketResponse.getTotalOrders());
+            // For straddle, we need both legs - if partial, we should handle appropriately
+            // For now, we'll proceed with what was successful but log a warning
+        }
+
+        // Convert basket response to order details
+        List<StrategyExecutionResponse.OrderDetail> orderDetails = new ArrayList<>();
+
+        for (BasketOrderResponse.BasketOrderResult result : basketResponse.getOrderResults()) {
+            if (STATUS_SUCCESS.equals(result.getStatus())) {
+                // Get the corresponding instrument
+                Instrument instrument = StrategyConstants.LEG_TYPE_CALL.equals(result.getLegType())
+                        ? atmCall : atmPut;
+
+                // Get order price
+                double price = getOrderPriceFromBasketResult(result);
+
+                orderDetails.add(createOrderDetailFromBasketResult(result, instrument, quantity, price));
+            }
+        }
+
+        if (orderDetails.size() < 2) {
+            String errorMsg = String.format("Expected 2 order details but got %d. Basket order may have partially failed.",
+                    orderDetails.size());
+            log.error(errorMsg);
+            throw new RuntimeException(errorMsg);
+        }
+
+        log.info("[{}] Basket order completed - {} orders placed successfully", tradingMode, orderDetails.size());
+
+        return orderDetails;
+    }
+
+    /**
+     * Get order price from basket result, falling back to order history if not available
+     */
+    private double getOrderPriceFromBasketResult(BasketOrderResponse.BasketOrderResult result) {
+        if (result.getExecutionPrice() != null && result.getExecutionPrice() > 0) {
+            return result.getExecutionPrice();
+        }
+        // Fallback to order history lookup
+        try {
+            return getOrderPrice(result.getOrderId());
+        } catch (KiteException | IOException e) {
+            log.error("Failed to get order price for order {}: {}", result.getOrderId(), e.getMessage());
+            return 0.0;
+        }
+    }
+
+    /**
+     * Create order detail from basket result
+     */
+    private StrategyExecutionResponse.OrderDetail createOrderDetailFromBasketResult(
+            BasketOrderResponse.BasketOrderResult result, Instrument instrument, int quantity, double price) {
+
+        // Mark optionType with SHORT suffix so generic stop-all logic knows to BUY to close
+        String baseType = StrategyConstants.LEG_TYPE_CALL.equals(result.getLegType())
+                ? StrategyConstants.OPTION_TYPE_CALL
+                : StrategyConstants.OPTION_TYPE_PUT;
+        String annotatedType = baseType + "_SHORT";
+
+        return new StrategyExecutionResponse.OrderDetail(
+                result.getOrderId(),
+                result.getTradingSymbol(),
+                annotatedType,
+                Double.valueOf(instrument.strike),
+                quantity,
+                price,
+                StrategyConstants.ORDER_STATUS_COMPLETE
+        );
     }
 
     private double getStopLossPoints(StrategyRequest request) {

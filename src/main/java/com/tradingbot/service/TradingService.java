@@ -1,6 +1,8 @@
 package com.tradingbot.service;
 
 import com.tradingbot.config.KiteConfig;
+import com.tradingbot.dto.BasketOrderRequest;
+import com.tradingbot.dto.BasketOrderResponse;
 import com.tradingbot.dto.OrderChargesResponse;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
@@ -105,6 +107,134 @@ public class TradingService {
             log.error("Unexpected error while placing order: {}", e.getMessage(), e);
             return new OrderResponse(null, STATUS_FAILED, ERR_UNEXPECTED + e.getMessage());
         }
+    }
+
+    /**
+     * Place basket order - multiple orders placed sequentially for the Sell ATM Straddle strategy.
+     * Places all orders in the basket and returns consolidated results.
+     * Note: Kite Connect SDK doesn't support atomic basket placement, so orders are placed individually.
+     */
+    public BasketOrderResponse placeBasketOrder(BasketOrderRequest basketRequest) {
+        log.info("Placing basket order with {} orders, tag: {}",
+                basketRequest.getOrders() != null ? basketRequest.getOrders().size() : 0,
+                basketRequest.getTag());
+
+        List<BasketOrderResponse.BasketOrderResult> results = new ArrayList<>();
+        int successCount = 0;
+        int failureCount = 0;
+
+        if (basketRequest.getOrders() == null || basketRequest.getOrders().isEmpty()) {
+            log.error("Basket order request has no orders");
+            return BasketOrderResponse.builder()
+                    .status(STATUS_FAILED)
+                    .message("No orders in basket request")
+                    .totalOrders(0)
+                    .successCount(0)
+                    .failureCount(0)
+                    .orderResults(results)
+                    .build();
+        }
+
+        // Place each order individually (Kite SDK doesn't support batch placement)
+        for (BasketOrderRequest.BasketOrderItem item : basketRequest.getOrders()) {
+            try {
+                OrderParams orderParams = buildOrderParamsFromBasketItem(item);
+                Order order = kc().placeOrder(orderParams, VARIETY_REGULAR);
+
+                if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
+                    log.info("Basket order item placed successfully: {} - {} {} {}",
+                            order.orderId, item.getTransactionType(), item.getQuantity(), item.getTradingSymbol());
+
+                    results.add(BasketOrderResponse.BasketOrderResult.builder()
+                            .orderId(order.orderId)
+                            .tradingSymbol(item.getTradingSymbol())
+                            .legType(item.getLegType())
+                            .status(STATUS_SUCCESS)
+                            .message(MSG_ORDER_PLACED_SUCCESS)
+                            .instrumentToken(item.getInstrumentToken())
+                            .build());
+                    successCount++;
+                } else {
+                    log.error("Basket order item failed - no order ID returned for {}", item.getTradingSymbol());
+                    results.add(BasketOrderResponse.BasketOrderResult.builder()
+                            .tradingSymbol(item.getTradingSymbol())
+                            .legType(item.getLegType())
+                            .status(STATUS_FAILED)
+                            .message(ERR_ORDER_PLACEMENT_FAILED_NO_ID)
+                            .instrumentToken(item.getInstrumentToken())
+                            .build());
+                    failureCount++;
+                }
+
+            } catch (KiteException e) {
+                log.error("Kite API error for {}: {}", item.getTradingSymbol(), e.message);
+                results.add(BasketOrderResponse.BasketOrderResult.builder()
+                        .tradingSymbol(item.getTradingSymbol())
+                        .legType(item.getLegType())
+                        .status(STATUS_FAILED)
+                        .message(ERR_ORDER_PLACEMENT_FAILED + e.message)
+                        .instrumentToken(item.getInstrumentToken())
+                        .build());
+                failureCount++;
+            } catch (IOException e) {
+                log.error("Network error for {}: {}", item.getTradingSymbol(), e.getMessage());
+                results.add(BasketOrderResponse.BasketOrderResult.builder()
+                        .tradingSymbol(item.getTradingSymbol())
+                        .legType(item.getLegType())
+                        .status(STATUS_FAILED)
+                        .message(ERR_NETWORK + e.getMessage())
+                        .instrumentToken(item.getInstrumentToken())
+                        .build());
+                failureCount++;
+            }
+        }
+
+        String overallStatus = determineOverallStatus(successCount, failureCount, basketRequest.getOrders().size());
+        String message = String.format("Basket order completed: %d/%d orders successful",
+                successCount, basketRequest.getOrders().size());
+
+        log.info("Basket order completed - Status: {}, Success: {}, Failed: {}",
+                overallStatus, successCount, failureCount);
+
+        return BasketOrderResponse.builder()
+                .status(overallStatus)
+                .message(message)
+                .orderResults(results)
+                .successCount(successCount)
+                .failureCount(failureCount)
+                .totalOrders(basketRequest.getOrders().size())
+                .build();
+    }
+
+    /**
+     * Determine overall status based on success/failure counts
+     */
+    private String determineOverallStatus(int successCount, int failureCount, int total) {
+        if (successCount == total) {
+            return STATUS_SUCCESS;
+        } else if (successCount > 0) {
+            return STATUS_PARTIAL;
+        } else {
+            return STATUS_FAILED;
+        }
+    }
+
+    /**
+     * Build OrderParams from BasketOrderItem
+     */
+    private OrderParams buildOrderParamsFromBasketItem(BasketOrderRequest.BasketOrderItem item) {
+        OrderParams orderParams = new OrderParams();
+        orderParams.tradingsymbol = item.getTradingSymbol();
+        orderParams.exchange = item.getExchange();
+        orderParams.transactionType = item.getTransactionType();
+        orderParams.quantity = item.getQuantity();
+        orderParams.product = item.getProduct();
+        orderParams.orderType = item.getOrderType();
+        orderParams.price = item.getPrice();
+        orderParams.triggerPrice = item.getTriggerPrice();
+        orderParams.validity = item.getValidity();
+        orderParams.disclosedQuantity = item.getDisclosedQuantity();
+        return orderParams;
     }
 
     /**
