@@ -563,21 +563,31 @@ public abstract class BaseStrategy implements TradingStrategy {
     }
 
     /**
-     * Find option instrument by strike and type
+     * Find option instrument by strike and type.
+     * HFT Optimized: Uses indexed loop instead of streams for minimum latency.
+     *
+     * @param instruments List of instruments to search
+     * @param strike Target strike price
+     * @param optionType Option type (CE or PE)
+     * @return Matching instrument or null if not found
      */
     protected Instrument findOptionInstrument(List<Instrument> instruments, double strike, String optionType) {
-        return instruments.stream()
-                .filter(i -> i.instrument_type.equals(optionType))
-                .filter(i -> {
-                    try {
-                        double instrumentStrike = Double.parseDouble(i.strike);
-                        return Math.abs(instrumentStrike - strike) < 0.01;
-                    } catch (NumberFormatException e) {
-                        return false;
+        // HFT: Use indexed loop to avoid stream/iterator overhead
+        final int size = instruments.size();
+        for (int i = 0; i < size; i++) {
+            final Instrument inst = instruments.get(i);
+            if (optionType.equals(inst.instrument_type)) {
+                try {
+                    final double instrumentStrike = Double.parseDouble(inst.strike);
+                    if (Math.abs(instrumentStrike - strike) < 0.01) {
+                        return inst;
                     }
-                })
-                .findFirst()
-                .orElse(null);
+                } catch (NumberFormatException e) {
+                    // Skip invalid instruments
+                }
+            }
+        }
+        return null;
     }
 
     /**

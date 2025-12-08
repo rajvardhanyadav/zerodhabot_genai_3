@@ -362,35 +362,63 @@ public class WebSocketService implements DisposableBean {
         }
     }
 
+    /**
+     * Process incoming ticks from WebSocket.
+     * HFT Critical Path - this method is called on every tick batch from WebSocket.
+     *
+     * Optimizations:
+     * - Early exit checks to avoid unnecessary processing
+     * - Indexed loop to avoid iterator allocation
+     * - Lazy HashSet allocation only when needed
+     * - Single pass through ticks to collect all monitors
+     * - Batch update to monitors with full tick array
+     */
     private void processTicks(UserWSContext c, ArrayList<Tick> ticks) {
-        // Fast path: skip if no ticks or no monitors
-        if (ticks == null || ticks.isEmpty() || c.activeMonitors.isEmpty()) {
+        // HFT: Ultra-fast early exit checks
+        if (ticks == null) {
+            return;
+        }
+        final int tickCount = ticks.size();
+        if (tickCount == 0) {
+            return;
+        }
+        final Map<String, PositionMonitor> monitors = c.activeMonitors;
+        if (monitors.isEmpty()) {
             return;
         }
 
-        // Collect all unique monitors that need updates
-        // Using a Set to avoid calling updatePriceWithDifferenceCheck multiple times on the same monitor
-        final int tickCount = ticks.size();
+        // HFT: For single-execution case (most common), avoid Set allocation entirely
+        PositionMonitor singleMonitor = null;
         Set<PositionMonitor> monitorsToUpdate = null;
 
         for (int i = 0; i < tickCount; i++) {
-            long token = ticks.get(i).getInstrumentToken();
-            Set<String> executions = c.instrumentToExecutions.get(token);
+            final long token = ticks.get(i).getInstrumentToken();
+            final Set<String> executions = c.instrumentToExecutions.get(token);
             if (executions != null && !executions.isEmpty()) {
                 for (String executionId : executions) {
-                    PositionMonitor monitor = c.activeMonitors.get(executionId);
+                    final PositionMonitor monitor = monitors.get(executionId);
                     if (monitor != null && monitor.isActive()) {
-                        if (monitorsToUpdate == null) {
+                        // HFT: Optimize for single-monitor case (most common)
+                        if (singleMonitor == null && monitorsToUpdate == null) {
+                            singleMonitor = monitor;
+                        } else if (singleMonitor != null && singleMonitor != monitor) {
+                            // Transition to Set when we have multiple monitors
                             monitorsToUpdate = new HashSet<>(4);
+                            monitorsToUpdate.add(singleMonitor);
+                            monitorsToUpdate.add(monitor);
+                            singleMonitor = null;
+                        } else if (monitorsToUpdate != null) {
+                            monitorsToUpdate.add(monitor);
                         }
-                        monitorsToUpdate.add(monitor);
                     }
                 }
             }
         }
 
-        // Update all affected monitors once with the full tick batch
-        if (monitorsToUpdate != null) {
+        // HFT: Update monitors - optimized for single-monitor case
+        if (singleMonitor != null) {
+            singleMonitor.updatePriceWithDifferenceCheck(ticks);
+        } else if (monitorsToUpdate != null) {
             for (PositionMonitor monitor : monitorsToUpdate) {
                 monitor.updatePriceWithDifferenceCheck(ticks);
             }

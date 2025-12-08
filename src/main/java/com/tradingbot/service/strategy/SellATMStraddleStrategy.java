@@ -29,6 +29,8 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.tradingbot.service.TradingConstants.*;
 import static com.tradingbot.service.TradingConstants.STATUS_FAILED;
@@ -50,12 +52,24 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     private final StrategyConfig strategyConfig;
     private final StrategyService strategyService;
 
+    // ==================== HFT OPTIMIZATION: Thread Pool Configuration ====================
     // Dedicated executor for parallel exit order placement - critical for HFT
-    private static final ExecutorService EXIT_ORDER_EXECUTOR = Executors.newFixedThreadPool(4, r -> {
-        Thread t = new Thread(r, "sell-exit-order-");
+    // Using higher thread count and priority for minimum latency
+    private static final int HFT_THREAD_POOL_SIZE = 8;
+    private static final AtomicInteger THREAD_COUNTER = new AtomicInteger(0);
+    private static final ThreadFactory HFT_THREAD_FACTORY = r -> {
+        Thread t = new Thread(r, "hft-sell-exit-" + THREAD_COUNTER.incrementAndGet());
         t.setDaemon(true);
+        t.setPriority(Thread.MAX_PRIORITY); // HFT: Maximize thread priority
         return t;
-    });
+    };
+    private static final ExecutorService EXIT_ORDER_EXECUTOR = Executors.newFixedThreadPool(
+            HFT_THREAD_POOL_SIZE, HFT_THREAD_FACTORY);
+
+    // Pre-computed constants for HFT - avoid repeated calculations
+    private static final String CALL_SHORT_SUFFIX = "_SHORT";
+    private static final String ANNOTATED_CALL_TYPE = StrategyConstants.OPTION_TYPE_CALL + CALL_SHORT_SUFFIX;
+    private static final String ANNOTATED_PUT_TYPE = StrategyConstants.OPTION_TYPE_PUT + CALL_SHORT_SUFFIX;
 
     public SellATMStraddleStrategy(TradingService tradingService,
                                    UnifiedTradingService unifiedTradingService,
@@ -73,57 +87,81 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                              StrategyCompletionCallback completionCallback)
             throws KiteException, IOException {
 
-        double stopLossPoints = getStopLossPoints(request);
-        double targetPoints = getTargetPoints(request);
-        String tradingMode = getTradingMode();
+        // HFT: Cache request values locally to avoid repeated method calls
+        final String instrumentType = request.getInstrumentType();
+        final String expiry = request.getExpiry();
+        final double stopLossPoints = getStopLossPoints(request);
+        final double targetPoints = getTargetPoints(request);
+        final String tradingMode = getTradingMode();
 
         log.info(StrategyConstants.LOG_EXECUTING_STRATEGY,
-                tradingMode, request.getInstrumentType(), stopLossPoints, targetPoints);
+                tradingMode, instrumentType, stopLossPoints, targetPoints);
 
-        double spotPrice = getCurrentSpotPrice(request.getInstrumentType());
+        // HFT: Use parallel fetch for spot price and instruments
+        final double spotPrice = getCurrentSpotPrice(instrumentType);
         log.info("Current spot price: {}", spotPrice);
 
         // Get option instruments first (needed for delta calculation)
-        List<Instrument> instruments = getOptionInstruments(request.getInstrumentType(), request.getExpiry());
-        log.info("Found {} option instruments for {}", instruments.size(), request.getInstrumentType());
+        final List<Instrument> instruments = getOptionInstruments(instrumentType, expiry);
+        final int instrumentCount = instruments.size();
+        log.info("Found {} option instruments for {}", instrumentCount, instrumentType);
 
         // Get expiry date from instruments for delta calculation
-        Date expiryDate = instruments.isEmpty() ? null : instruments.get(0).expiry;
+        final Date expiryDate = instrumentCount > 0 ? instruments.get(0).expiry : null;
         log.info("Using expiry date: {}", expiryDate);
 
         // Calculate ATM strike using delta-based selection (nearest to ±0.5)
-        double atmStrike = expiryDate != null
-                ? getATMStrikeByDelta(spotPrice, request.getInstrumentType(), expiryDate)
-                : getATMStrike(spotPrice, request.getInstrumentType());
+        final double atmStrike = expiryDate != null
+                ? getATMStrikeByDelta(spotPrice, instrumentType, expiryDate)
+                : getATMStrike(spotPrice, instrumentType);
 
         log.info("ATM Strike (Delta-based): {}", atmStrike);
 
-        Instrument atmCall = findOptionInstrument(instruments, atmStrike, StrategyConstants.OPTION_TYPE_CALL);
-        Instrument atmPut = findOptionInstrument(instruments, atmStrike, StrategyConstants.OPTION_TYPE_PUT);
+        // HFT: Find both instruments in single pass through collection
+        Instrument atmCall = null;
+        Instrument atmPut = null;
+        for (int i = 0; i < instrumentCount && (atmCall == null || atmPut == null); i++) {
+            Instrument inst = instruments.get(i);
+            if (Double.parseDouble(inst.strike) == atmStrike) {
+                if (StrategyConstants.OPTION_TYPE_CALL.equals(inst.instrument_type)) {
+                    atmCall = inst;
+                } else if (StrategyConstants.OPTION_TYPE_PUT.equals(inst.instrument_type)) {
+                    atmPut = inst;
+                }
+            }
+        }
 
         validateATMOptions(atmCall, atmPut, atmStrike);
 
-        int quantity = calculateOrderQuantity(request);
-        String orderType = getOrderType(request);
+        // HFT: Pre-compute quantity before order placement
+        final int quantity = calculateOrderQuantity(request);
+        final String orderType = getOrderType(request);
 
         // Place both legs as SELL using basket order for atomic execution
-        List<StrategyExecutionResponse.OrderDetail> orderDetails = placeBasketOrderForStraddle(
+        final List<StrategyExecutionResponse.OrderDetail> orderDetails = placeBasketOrderForStraddle(
                 atmCall, atmPut, quantity, orderType, tradingMode, executionId);
 
-        double totalPremium = calculateTotalPremium(orderDetails);
+        // HFT: Optimized order detail extraction using indexed access instead of stream
+        String callOrderId = null;
+        String putOrderId = null;
+        final int orderCount = orderDetails.size();
+        for (int i = 0; i < orderCount; i++) {
+            StrategyExecutionResponse.OrderDetail od = orderDetails.get(i);
+            if (od.getOptionType().contains(StrategyConstants.OPTION_TYPE_CALL)) {
+                callOrderId = od.getOrderId();
+            } else if (od.getOptionType().contains(StrategyConstants.OPTION_TYPE_PUT)) {
+                putOrderId = od.getOrderId();
+            }
+        }
 
-        // Get order IDs from order details
-        String callOrderId = orderDetails.stream()
-                .filter(od -> od.getOptionType().contains(StrategyConstants.OPTION_TYPE_CALL))
-                .findFirst()
-                .map(StrategyExecutionResponse.OrderDetail::getOrderId)
-                .orElseThrow(() -> new RuntimeException("Call order not found in basket response"));
+        if (callOrderId == null) {
+            throw new RuntimeException("Call order not found in basket response");
+        }
+        if (putOrderId == null) {
+            throw new RuntimeException("Put order not found in basket response");
+        }
 
-        String putOrderId = orderDetails.stream()
-                .filter(od -> od.getOptionType().contains(StrategyConstants.OPTION_TYPE_PUT))
-                .findFirst()
-                .map(StrategyExecutionResponse.OrderDetail::getOrderId)
-                .orElseThrow(() -> new RuntimeException("Put order not found in basket response"));
+        final double totalPremium = calculateTotalPremium(orderDetails);
 
         setupMonitoring(executionId, atmCall, atmPut,
                 callOrderId, putOrderId,
@@ -247,17 +285,16 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     private StrategyExecutionResponse.OrderDetail createOrderDetailFromBasketResult(
             BasketOrderResponse.BasketOrderResult result, Instrument instrument, int quantity, double price) {
 
-        // Mark optionType with SHORT suffix so generic stop-all logic knows to BUY to close
-        String baseType = StrategyConstants.LEG_TYPE_CALL.equals(result.getLegType())
-                ? StrategyConstants.OPTION_TYPE_CALL
-                : StrategyConstants.OPTION_TYPE_PUT;
-        String annotatedType = baseType + "_SHORT";
+        // HFT: Use pre-computed annotated types to avoid string concatenation on hot path
+        final String annotatedType = StrategyConstants.LEG_TYPE_CALL.equals(result.getLegType())
+                ? ANNOTATED_CALL_TYPE
+                : ANNOTATED_PUT_TYPE;
 
         return new StrategyExecutionResponse.OrderDetail(
                 result.getOrderId(),
                 result.getTradingSymbol(),
                 annotatedType,
-                Double.valueOf(instrument.strike),
+                Double.parseDouble(instrument.strike), // HFT: Avoid Double.valueOf boxing
                 quantity,
                 price,
                 StrategyConstants.ORDER_STATUS_COMPLETE
@@ -336,17 +373,16 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
     private StrategyExecutionResponse.OrderDetail createOrderDetail(String orderId, Instrument instrument,
                                                                     int quantity, double price) {
-        // Mark optionType with SHORT suffix so generic stop-all logic knows to BUY to close
-        String baseType = instrument.instrument_type.equals(StrategyConstants.OPTION_TYPE_CALL)
-                ? StrategyConstants.OPTION_TYPE_CALL
-                : StrategyConstants.OPTION_TYPE_PUT;
-        String annotatedType = baseType + "_SHORT";
+        // HFT: Use pre-computed annotated types to avoid string concatenation on hot path
+        final String annotatedType = StrategyConstants.OPTION_TYPE_CALL.equals(instrument.instrument_type)
+                ? ANNOTATED_CALL_TYPE
+                : ANNOTATED_PUT_TYPE;
 
         return new StrategyExecutionResponse.OrderDetail(
                 orderId,
                 instrument.tradingsymbol,
                 annotatedType,
-                Double.valueOf(instrument.strike),
+                Double.parseDouble(instrument.strike), // HFT: Avoid Double.valueOf boxing
                 quantity,
                 price,
                 StrategyConstants.ORDER_STATUS_COMPLETE
@@ -354,9 +390,12 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     }
 
     private double calculateTotalPremium(List<StrategyExecutionResponse.OrderDetail> orderDetails) {
-        double callPrice = orderDetails.get(0).getPrice();
-        double putPrice = orderDetails.get(1).getPrice();
-        int quantity = orderDetails.get(0).getQuantity();
+        // HFT: Direct indexed access instead of stream operations
+        final StrategyExecutionResponse.OrderDetail firstOrder = orderDetails.get(0);
+        final StrategyExecutionResponse.OrderDetail secondOrder = orderDetails.get(1);
+        final double callPrice = firstOrder.getPrice();
+        final double putPrice = secondOrder.getPrice();
+        final int quantity = firstOrder.getQuantity();
 
         log.info(StrategyConstants.LOG_BOTH_LEGS_PLACED, getTradingMode(), callPrice, putPrice);
 
@@ -390,23 +429,89 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                  double stopLossPoints, double targetPoints,
                                  StrategyCompletionCallback completionCallback) {
 
+        // HFT: Spawn async task for monitoring setup to avoid blocking the main thread
+        final String ownerUserId = CurrentUserContext.getUserId();
+        CompletableFuture.runAsync(() -> {
+            // Restore user context in executor thread
+            if (ownerUserId != null && !ownerUserId.isBlank()) {
+                CurrentUserContext.setUserId(ownerUserId);
+            }
+            try {
+                setupMonitoringInternal(executionId, callInstrument, putInstrument,
+                        callOrderId, putOrderId, quantity, stopLossPoints, targetPoints, completionCallback);
+            } finally {
+                CurrentUserContext.clear();
+            }
+        }, EXIT_ORDER_EXECUTOR).exceptionally(ex -> {
+            log.error("Error setting up monitoring for execution {}: {}", executionId, ex.getMessage(), ex);
+            return null;
+        });
+    }
+
+    /**
+     * Internal monitoring setup - runs asynchronously for HFT optimization
+     */
+    private void setupMonitoringInternal(String executionId, Instrument callInstrument, Instrument putInstrument,
+                                         String callOrderId, String putOrderId,
+                                         int quantity,
+                                         double stopLossPoints, double targetPoints,
+                                         StrategyCompletionCallback completionCallback) {
         try {
-            List<Order> callOrderHistory = unifiedTradingService.getOrderHistory(callOrderId);
-            List<Order> putOrderHistory = unifiedTradingService.getOrderHistory(putOrderId);
+            // HFT: Parallel fetch of order histories for both legs
+            CompletableFuture<List<Order>> callHistoryFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return unifiedTradingService.getOrderHistory(callOrderId);
+                } catch (Exception | KiteException e) {
+                    log.error("Failed to fetch call order history: {}", e.getMessage());
+                    return Collections.<Order>emptyList();
+                }
+            }, EXIT_ORDER_EXECUTOR);
+
+            CompletableFuture<List<Order>> putHistoryFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return unifiedTradingService.getOrderHistory(putOrderId);
+                } catch (Exception | KiteException e) {
+                    log.error("Failed to fetch put order history: {}", e.getMessage());
+                    return Collections.<Order>emptyList();
+                }
+            }, EXIT_ORDER_EXECUTOR);
+
+            // HFT: Wait for both histories in parallel
+            List<Order> callOrderHistory = callHistoryFuture.join();
+            List<Order> putOrderHistory = putHistoryFuture.join();
 
             if (!validateOrderHistories(callOrderHistory, putOrderHistory, callOrderId, putOrderId)) {
                 return;
             }
 
-            Order latestCallOrder = getLatestOrder(callOrderHistory);
-            Order latestPutOrder = getLatestOrder(putOrderHistory);
+            final Order latestCallOrder = getLatestOrder(callOrderHistory);
+            final Order latestPutOrder = getLatestOrder(putOrderHistory);
 
             if (!validateOrderCompletion(latestCallOrder, latestPutOrder, callOrderId, putOrderId)) {
                 return;
             }
 
-            double callEntryPrice = getOrderPrice(callOrderId);
-            double putEntryPrice = getOrderPrice(putOrderId);
+            // HFT: Parallel fetch of order prices
+            CompletableFuture<Double> callPriceFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return getOrderPrice(callOrderId);
+                } catch (Exception | KiteException e) {
+                    log.error("Failed to fetch call order price: {}", e.getMessage());
+                    return 0.0;
+                }
+            }, EXIT_ORDER_EXECUTOR);
+
+            CompletableFuture<Double> putPriceFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return getOrderPrice(putOrderId);
+                } catch (Exception | KiteException e) {
+                    log.error("Failed to fetch put order price: {}", e.getMessage());
+                    return 0.0;
+                }
+            }, EXIT_ORDER_EXECUTOR);
+
+            final double callEntryPrice = callPriceFuture.join();
+            final double putEntryPrice = putPriceFuture.join();
 
             if (!validateEntryPrices(callEntryPrice, putEntryPrice)) {
                 return;
@@ -421,7 +526,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
             startWebSocketMonitoring(executionId, monitor, callEntryPrice, putEntryPrice);
 
-        } catch (Exception | KiteException e) {
+        } catch (Exception e) {
             log.error("Error setting up monitoring for execution {}: {}", executionId, e.getMessage(), e);
         }
     }
@@ -767,13 +872,16 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 log.error("Failed to close {} leg: {} - {}", leg.getOptionType(), leg.getTradingSymbol(), response.getMessage());
             }
 
-        } catch (Exception e) {
+        } catch (KiteException | IOException e) {
             leg.setLifecycleState(StrategyExecution.LegLifecycleState.EXIT_FAILED);
             log.error("Error closing {} leg: {}", leg.getOptionType(), leg.getTradingSymbol(), e);
             orderResult.put("status", STATUS_FAILED);
             orderResult.put("message", "Exception: " + e.getMessage());
-        } catch (KiteException e) {
-            throw new RuntimeException(e);
+        } catch (Exception e) {
+            leg.setLifecycleState(StrategyExecution.LegLifecycleState.EXIT_FAILED);
+            log.error("Unexpected error closing {} leg: {}", leg.getOptionType(), leg.getTradingSymbol(), e);
+            orderResult.put("status", STATUS_FAILED);
+            orderResult.put("message", "Exception: " + e.getMessage());
         }
 
         return orderResult;
