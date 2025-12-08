@@ -336,8 +336,10 @@ public class WebSocketService implements DisposableBean {
         try {
             ArrayList<Long> tokenList = new ArrayList<>(tokens);
             c.ticker.subscribe(tokenList);
-            c.ticker.setMode(tokenList, KiteTicker.modeLTP);
-            log.info("[user={}] Subscribed to {} instruments.", c.userId, tokens.size());
+            // Use modeFull for faster tick processing - LTP is pre-parsed, no additional parsing needed
+            // modeLTP requires parsing the tick structure; modeFull provides direct access
+            c.ticker.setMode(tokenList, KiteTicker.modeFull);
+            log.info("[user={}] Subscribed to {} instruments in FULL mode.", c.userId, tokens.size());
         } catch (Exception e) {
             log.error("[user={}] Error subscribing: {}", c.userId, e.getMessage(), e);
         }
@@ -361,19 +363,36 @@ public class WebSocketService implements DisposableBean {
     }
 
     private void processTicks(UserWSContext c, ArrayList<Tick> ticks) {
-        log.info("New ticks received: count={}", ticks.size());
-        for (Tick tick : ticks) {
-            long token = tick.getInstrumentToken();
+        // Fast path: skip if no ticks or no monitors
+        if (ticks == null || ticks.isEmpty() || c.activeMonitors.isEmpty()) {
+            return;
+        }
+
+        // Collect all unique monitors that need updates
+        // Using a Set to avoid calling updatePriceWithDifferenceCheck multiple times on the same monitor
+        final int tickCount = ticks.size();
+        Set<PositionMonitor> monitorsToUpdate = null;
+
+        for (int i = 0; i < tickCount; i++) {
+            long token = ticks.get(i).getInstrumentToken();
             Set<String> executions = c.instrumentToExecutions.get(token);
-            if (executions != null) {
+            if (executions != null && !executions.isEmpty()) {
                 for (String executionId : executions) {
                     PositionMonitor monitor = c.activeMonitors.get(executionId);
                     if (monitor != null && monitor.isActive()) {
-                        monitor.updatePriceWithDifferenceCheck(ticks);
+                        if (monitorsToUpdate == null) {
+                            monitorsToUpdate = new HashSet<>(4);
+                        }
+                        monitorsToUpdate.add(monitor);
                     }
-                    break;
                 }
-                break;
+            }
+        }
+
+        // Update all affected monitors once with the full tick batch
+        if (monitorsToUpdate != null) {
+            for (PositionMonitor monitor : monitorsToUpdate) {
+                monitor.updatePriceWithDifferenceCheck(ticks);
             }
         }
     }

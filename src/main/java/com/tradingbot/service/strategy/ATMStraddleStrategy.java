@@ -22,6 +22,9 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * ATM Straddle Strategy
@@ -41,6 +44,13 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
     private final WebSocketService webSocketService;
     private final StrategyConfig strategyConfig;
+
+    // Dedicated executor for parallel exit order placement - critical for HFT
+    private static final ExecutorService EXIT_ORDER_EXECUTOR = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r, "exit-order-");
+        t.setDaemon(true);
+        return t;
+    });
 
     public ATMStraddleStrategy(TradingService tradingService,
                                UnifiedTradingService unifiedTradingService,
@@ -376,54 +386,79 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
     /**
      * Exit all legs when SL or Target is hit
+     * OPTIMIZED: Places both exit orders in parallel for minimum latency
      * Only exits legs that are still active/being monitored to avoid duplicate exit orders
      */
     private void exitAllLegs(String executionId, String callSymbol, String putSymbol,
                              int quantity, String reason, StrategyCompletionCallback completionCallback) {
         try {
-            String tradingMode = getTradingMode();
+            final String tradingMode = getTradingMode();
+            final String userId = com.tradingbot.util.CurrentUserContext.getUserId();
             log.info(StrategyConstants.LOG_EXITING_LEGS, tradingMode, executionId, reason);
 
             // Get the monitor to check which legs are still active
             webSocketService.getMonitor(executionId).ifPresent(monitor -> {
-                // Only exit Call leg if it's still being monitored
-                if (monitor.getLegsBySymbol().containsKey(callSymbol)) {
-                    try {
-                        OrderRequest callExitOrder = createOrderRequest(callSymbol, StrategyConstants.TRANSACTION_SELL,
-                                quantity, StrategyConstants.ORDER_TYPE_MARKET);
-                        OrderResponse callExitResponse = unifiedTradingService.placeOrder(callExitOrder);
+                List<CompletableFuture<Void>> exitFutures = new ArrayList<>(2);
 
-                        if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(callExitResponse.getStatus())) {
-                            log.info(StrategyConstants.LOG_LEG_EXITED, tradingMode, "Call", callExitResponse.getOrderId());
-                        } else {
-                            log.error("Failed to exit Call leg: {}", callExitResponse.getMessage());
+                // Exit Call leg in parallel if still being monitored
+                if (monitor.getLegsBySymbol().containsKey(callSymbol)) {
+                    exitFutures.add(CompletableFuture.runAsync(() -> {
+                        // Restore user context in executor thread
+                        com.tradingbot.util.CurrentUserContext.setUserId(userId);
+                        try {
+                            OrderRequest callExitOrder = createOrderRequest(callSymbol, StrategyConstants.TRANSACTION_SELL,
+                                    quantity, StrategyConstants.ORDER_TYPE_MARKET);
+                            OrderResponse callExitResponse = unifiedTradingService.placeOrder(callExitOrder);
+
+                            if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(callExitResponse.getStatus())) {
+                                log.info(StrategyConstants.LOG_LEG_EXITED, tradingMode, "Call", callExitResponse.getOrderId());
+                            } else {
+                                log.error("Failed to exit Call leg: {}", callExitResponse.getMessage());
+                            }
+                        } catch (KiteException | IOException e) {
+                            log.error("Error exiting Call leg for execution {}: {}", executionId, e.getMessage(), e);
+                        } catch (Exception e) {
+                            log.error("Unexpected error exiting Call leg for execution {}: {}", executionId, e.getMessage(), e);
+                        } finally {
+                            com.tradingbot.util.CurrentUserContext.clear();
                         }
-                    } catch (Exception | KiteException e) {
-                        log.error("Error exiting Call leg for execution {}: {}", executionId, e.getMessage(), e);
-                    }
+                    }, EXIT_ORDER_EXECUTOR));
                 } else {
                     log.info("[{}] Call leg {} already closed for execution {}, skipping exit order",
                             tradingMode, callSymbol, executionId);
                 }
 
-                // Only exit Put leg if it's still being monitored
+                // Exit Put leg in parallel if still being monitored
                 if (monitor.getLegsBySymbol().containsKey(putSymbol)) {
-                    try {
-                        OrderRequest putExitOrder = createOrderRequest(putSymbol, StrategyConstants.TRANSACTION_SELL,
-                                quantity, StrategyConstants.ORDER_TYPE_MARKET);
-                        OrderResponse putExitResponse = unifiedTradingService.placeOrder(putExitOrder);
+                    exitFutures.add(CompletableFuture.runAsync(() -> {
+                        // Restore user context in executor thread
+                        com.tradingbot.util.CurrentUserContext.setUserId(userId);
+                        try {
+                            OrderRequest putExitOrder = createOrderRequest(putSymbol, StrategyConstants.TRANSACTION_SELL,
+                                    quantity, StrategyConstants.ORDER_TYPE_MARKET);
+                            OrderResponse putExitResponse = unifiedTradingService.placeOrder(putExitOrder);
 
-                        if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(putExitResponse.getStatus())) {
-                            log.info(StrategyConstants.LOG_LEG_EXITED, tradingMode, "Put", putExitResponse.getOrderId());
-                        } else {
-                            log.error("Failed to exit Put leg: {}", putExitResponse.getMessage());
+                            if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(putExitResponse.getStatus())) {
+                                log.info(StrategyConstants.LOG_LEG_EXITED, tradingMode, "Put", putExitResponse.getOrderId());
+                            } else {
+                                log.error("Failed to exit Put leg: {}", putExitResponse.getMessage());
+                            }
+                        } catch (KiteException | IOException e) {
+                            log.error("Error exiting Put leg for execution {}: {}", executionId, e.getMessage(), e);
+                        } catch (Exception e) {
+                            log.error("Unexpected error exiting Put leg for execution {}: {}", executionId, e.getMessage(), e);
+                        } finally {
+                            com.tradingbot.util.CurrentUserContext.clear();
                         }
-                    } catch (Exception | KiteException e) {
-                        log.error("Error exiting Put leg for execution {}: {}", executionId, e.getMessage(), e);
-                    }
+                    }, EXIT_ORDER_EXECUTOR));
                 } else {
                     log.info("[{}] Put leg {} already closed for execution {}, skipping exit order",
                             tradingMode, putSymbol, executionId);
+                }
+
+                // Wait for all exit orders to complete (non-blocking on each other)
+                if (!exitFutures.isEmpty()) {
+                    CompletableFuture.allOf(exitFutures.toArray(new CompletableFuture[0])).join();
                 }
             });
 

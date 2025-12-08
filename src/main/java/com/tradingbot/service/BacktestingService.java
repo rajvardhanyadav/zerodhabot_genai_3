@@ -274,8 +274,8 @@ public class BacktestingService {
         Map<String, Double> entryPrices = new HashMap<>();
         double totalEntryPremium = 0.0;
         for (PositionMonitor.LegMonitor leg : legs) {
-            // Leg entryPrice is BigDecimal in the monitor; convert to double for DTOs
-            double entryPriceDouble = leg.getEntryPrice() != null ? leg.getEntryPrice().doubleValue() : 0.0;
+            // Leg entryPrice is now primitive double
+            double entryPriceDouble = leg.getEntryPrice();
             entryPrices.put(leg.getSymbol(), entryPriceDouble);
             totalEntryPremium += entryPriceDouble * leg.getQuantity();
         }
@@ -426,8 +426,8 @@ public class BacktestingService {
                     ? strategyResponse.getOrders().get(i)
                     : null;
 
-            double entryPrice = leg.getEntryPrice() != null ? leg.getEntryPrice().doubleValue() : 0.0;
-            double exitPrice = leg.getCurrentPrice() != null ? leg.getCurrentPrice().doubleValue() : entryPrice;
+            double entryPrice = leg.getEntryPrice();
+            double exitPrice = leg.getCurrentPrice();
             double pnl = (exitPrice - entryPrice) * leg.getQuantity();
             double pnlPercentage = entryPrice > 0 ? (pnl / (entryPrice * leg.getQuantity())) * 100 : 0;
 
