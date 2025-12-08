@@ -92,4 +92,25 @@ public class UserSessionManager {
         sessions.remove(userId);
         log.info("Kite session invalidated for userId={}", userId);
     }
+
+    /**
+     * Get all active user IDs with valid sessions.
+     * Used by background services (like DeltaCacheService) that need to operate across all users.
+     *
+     * @return Set of user IDs with active Kite sessions
+     */
+    public java.util.Set<String> getActiveUserIds() {
+        return java.util.Collections.unmodifiableSet(sessions.keySet());
+    }
+
+    /**
+     * Get KiteConnect for a specific user ID (for background services).
+     * Returns null if no session exists for the user.
+     *
+     * @param userId User ID to get session for
+     * @return KiteConnect instance or null if not found
+     */
+    public KiteConnect getKiteForUserOrNull(String userId) {
+        return sessions.get(userId);
+    }
 }

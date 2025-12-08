@@ -8,6 +8,7 @@ import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.StrategyCompletionReason;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
+import com.tradingbot.service.greeks.DeltaCacheService;
 import com.tradingbot.service.strategy.monitoring.PositionMonitor;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import com.tradingbot.util.StrategyConstants;
@@ -56,8 +57,9 @@ public class ATMStraddleStrategy extends BaseStrategy {
                                UnifiedTradingService unifiedTradingService,
                                Map<String, Integer> lotSizeCache,
                                WebSocketService webSocketService,
-                               StrategyConfig strategyConfig) {
-        super(tradingService, unifiedTradingService, lotSizeCache);
+                               StrategyConfig strategyConfig,
+                               DeltaCacheService deltaCacheService) {
+        super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService);
         this.webSocketService = webSocketService;
         this.strategyConfig = strategyConfig;
     }

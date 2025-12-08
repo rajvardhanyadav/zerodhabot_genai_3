@@ -1,6 +1,7 @@
 package com.tradingbot.controller;
 
 import com.tradingbot.dto.ApiResponse;
+import com.tradingbot.service.greeks.DeltaCacheService;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,6 +23,7 @@ import java.util.Map;
 public class MonitoringController {
 
     private final WebSocketService webSocketService;
+    private final DeltaCacheService deltaCacheService;
 
     @GetMapping("/status")
     @Operation(summary = "Get WebSocket connection status",
@@ -60,5 +62,23 @@ public class MonitoringController {
     public ResponseEntity<ApiResponse<String>> stopMonitoring(@PathVariable String executionId) {
         webSocketService.stopMonitoring(executionId);
         return ResponseEntity.ok(ApiResponse.success("Monitoring stopped for execution: " + executionId));
+    }
+
+    @GetMapping("/delta-cache")
+    @Operation(summary = "Get Delta Cache Status",
+               description = "Returns statistics about the pre-computed delta cache used for HFT optimization. " +
+                           "Shows cache size, freshness, and cached ATM strikes for each instrument/expiry pair.")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getDeltaCacheStatus() {
+        Map<String, Object> stats = deltaCacheService.getCacheStats();
+        return ResponseEntity.ok(ApiResponse.success(stats));
+    }
+
+    @PostMapping("/delta-cache/refresh")
+    @Operation(summary = "Force Delta Cache Refresh",
+               description = "Manually trigger a refresh of the delta cache for all supported instruments. " +
+                           "Useful before placing orders when cache is stale.")
+    public ResponseEntity<ApiResponse<String>> refreshDeltaCache() {
+        deltaCacheService.refreshDeltaCache();
+        return ResponseEntity.ok(ApiResponse.success("Delta cache refresh triggered for all instruments"));
     }
 }

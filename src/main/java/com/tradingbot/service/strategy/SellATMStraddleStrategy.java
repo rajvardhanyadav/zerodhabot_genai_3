@@ -13,6 +13,7 @@ import com.tradingbot.model.StrategyStatus;
 import com.tradingbot.service.StrategyService;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
+import com.tradingbot.service.greeks.DeltaCacheService;
 import com.tradingbot.service.strategy.monitoring.PositionMonitor;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import com.tradingbot.util.CurrentUserContext;
@@ -75,8 +76,10 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                    UnifiedTradingService unifiedTradingService,
                                    Map<String, Integer> lotSizeCache,
                                    WebSocketService webSocketService,
-                                   StrategyConfig strategyConfig, @Lazy StrategyService strategyService) {
-        super(tradingService, unifiedTradingService, lotSizeCache);
+                                   StrategyConfig strategyConfig,
+                                   @Lazy StrategyService strategyService,
+                                   DeltaCacheService deltaCacheService) {
+        super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService);
         this.webSocketService = webSocketService;
         this.strategyConfig = strategyConfig;
         this.strategyService = strategyService;
