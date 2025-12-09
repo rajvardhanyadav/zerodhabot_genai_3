@@ -1,6 +1,8 @@
 package com.tradingbot.controller;
 
 import com.tradingbot.dto.ApiResponse;
+import com.tradingbot.service.InstrumentCacheService;
+import com.tradingbot.service.RateLimiterService;
 import com.tradingbot.service.greeks.DeltaCacheService;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -24,6 +26,8 @@ public class MonitoringController {
 
     private final WebSocketService webSocketService;
     private final DeltaCacheService deltaCacheService;
+    private final RateLimiterService rateLimiterService;
+    private final InstrumentCacheService instrumentCacheService;
 
     @GetMapping("/status")
     @Operation(summary = "Get WebSocket connection status",
@@ -80,5 +84,25 @@ public class MonitoringController {
     public ResponseEntity<ApiResponse<String>> refreshDeltaCache() {
         deltaCacheService.refreshDeltaCache();
         return ResponseEntity.ok(ApiResponse.success("Delta cache refresh triggered for all instruments"));
+    }
+
+    @GetMapping("/rate-limiter")
+    @Operation(summary = "Get Rate Limiter Status",
+               description = "Returns statistics about API rate limiting. Shows current request counts per API type " +
+                           "and global request counts within the sliding window. " +
+                           "Kite API limits: 3 req/sec per API, 10 req/sec overall.")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getRateLimiterStatus() {
+        Map<String, Object> stats = rateLimiterService.getStatistics();
+        return ResponseEntity.ok(ApiResponse.success(stats));
+    }
+
+    @GetMapping("/instrument-cache")
+    @Operation(summary = "Get Instrument Cache Status",
+               description = "Returns statistics about the instrument cache. Shows cached exchanges, " +
+                           "instrument counts, and cache freshness. Instruments are cached for 5 minutes " +
+                           "to reduce API calls.")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getInstrumentCacheStatus() {
+        Map<String, Object> stats = instrumentCacheService.getCacheStats();
+        return ResponseEntity.ok(ApiResponse.success(stats));
     }
 }

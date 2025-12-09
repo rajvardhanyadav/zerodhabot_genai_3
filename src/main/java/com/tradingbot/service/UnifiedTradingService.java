@@ -91,7 +91,7 @@ public class UnifiedTradingService {
     /**
      * Cancel order
      */
-    public OrderResponse cancelOrder(String orderId) {
+    public OrderResponse cancelOrder(String orderId) throws KiteException, IOException {
         String userId = getUserId();
         if (isPaperTradingEnabled()) {
             logPaperMode("Cancelling paper order: " + orderId + " for user=" + userId);

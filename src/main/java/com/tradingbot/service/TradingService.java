@@ -31,6 +31,7 @@ public class TradingService {
 
     private final KiteConfig kiteConfig;
     private final UserSessionManager sessionManager;
+    private final RateLimiterService rateLimiterService;
 
     /**
      * Generate login URL for Kite Connect authentication
@@ -63,6 +64,9 @@ public class TradingService {
      */
     public Profile getUserProfile() throws KiteException, IOException {
         log.debug("Fetching user profile");
+        if (!rateLimiterService.acquire(RateLimiterService.ApiType.PROFILE)) {
+            throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for getUserProfile. Please retry.");
+        }
         Profile profile = kc().getProfile();
         log.debug("User profile fetched for user: {}", profile.userName);
         return profile;
@@ -73,6 +77,9 @@ public class TradingService {
      */
     public Margin getMargins(String segment) throws KiteException, IOException {
         log.debug("Fetching margins for segment: {}", segment);
+        if (!rateLimiterService.acquire(RateLimiterService.ApiType.MARGINS)) {
+            throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for getMargins. Please retry.");
+        }
         Margin margin = kc().getMargins(segment);
         log.debug("Margins fetched - Available: {}, Used: {}", margin.available.cash, margin.utilised.debits);
         return margin;
@@ -81,32 +88,27 @@ public class TradingService {
     /**
      * Place a new order
      */
-    public OrderResponse placeOrder(OrderRequest orderRequest) {
+    public OrderResponse placeOrder(OrderRequest orderRequest) throws KiteException, IOException {
         log.info("Placing order - Symbol: {}, Type: {}, Qty: {}",
             orderRequest.getTradingSymbol(), orderRequest.getTransactionType(), orderRequest.getQuantity());
-        try {
-            OrderParams orderParams = buildOrderParams(orderRequest);
-            Order order = kc().placeOrder(orderParams, VARIETY_REGULAR);
 
-            // Check if order was placed successfully
-            if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
-                log.info("Order placed successfully: {} - {} {} {} @ {}",
-                    order.orderId, order.transactionType, order.quantity, order.tradingSymbol, order.orderType);
-                return new OrderResponse(order.orderId, STATUS_SUCCESS, MSG_ORDER_PLACED_SUCCESS);
-            } else {
-                log.error("Order placement failed - no order ID returned");
-                return new OrderResponse(null, STATUS_FAILED, ERR_ORDER_PLACEMENT_FAILED_NO_ID);
-            }
+        // Rate limit check
+        if (!rateLimiterService.acquire(RateLimiterService.ApiType.ORDER)) {
+            log.warn("Rate limit exceeded for order placement - Symbol: {}", orderRequest.getTradingSymbol());
+            throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for order placement. Please retry.");
+        }
 
-        } catch (KiteException e) {
-            log.error("Kite API error while placing order: {}", e.message, e);
-            return new OrderResponse(null, STATUS_FAILED, ERR_ORDER_PLACEMENT_FAILED + e.message);
-        } catch (IOException e) {
-            log.error("Network error while placing order: {}", e.getMessage(), e);
-            return new OrderResponse(null, STATUS_FAILED, ERR_NETWORK + e.getMessage());
-        } catch (Exception e) {
-            log.error("Unexpected error while placing order: {}", e.getMessage(), e);
-            return new OrderResponse(null, STATUS_FAILED, ERR_UNEXPECTED + e.getMessage());
+        OrderParams orderParams = buildOrderParams(orderRequest);
+        Order order = kc().placeOrder(orderParams, VARIETY_REGULAR);
+
+        // Check if order was placed successfully
+        if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
+            log.info("Order placed successfully: {} - {} {} {} @ {}",
+                order.orderId, order.transactionType, order.quantity, order.tradingSymbol, order.orderType);
+            return new OrderResponse(order.orderId, STATUS_SUCCESS, MSG_ORDER_PLACED_SUCCESS);
+        } else {
+            log.error("Order placement failed - no order ID returned");
+            throw new IllegalStateException(ERR_ORDER_PLACEMENT_FAILED_NO_ID);
         }
     }
 
@@ -192,9 +194,22 @@ public class TradingService {
 
     /**
      * HFT: Place a single basket order item - extracted for parallel execution.
+     * Includes rate limiting to prevent exceeding API limits.
      */
     private BasketOrderResponse.BasketOrderResult placeSingleBasketOrderItem(BasketOrderRequest.BasketOrderItem item) {
         try {
+            // Rate limit check for order placement
+            if (!rateLimiterService.acquire(RateLimiterService.ApiType.ORDER)) {
+                log.warn("Rate limit exceeded for basket order item: {}", item.getTradingSymbol());
+                return BasketOrderResponse.BasketOrderResult.builder()
+                        .tradingSymbol(item.getTradingSymbol())
+                        .legType(item.getLegType())
+                        .status(STATUS_FAILED)
+                        .message("Rate limit exceeded. Please retry.")
+                        .instrumentToken(item.getInstrumentToken())
+                        .build();
+            }
+
             OrderParams orderParams = buildOrderParamsFromBasketItem(item);
             Order order = kc().placeOrder(orderParams, VARIETY_REGULAR);
 
@@ -284,29 +299,20 @@ public class TradingService {
     /**
      * Cancel an order
      */
-    public OrderResponse cancelOrder(String orderId) {
+    public OrderResponse cancelOrder(String orderId) throws KiteException, IOException {
         log.info("Cancelling order: {}", orderId);
-        try {
-            Order order = kc().cancelOrder(orderId, VARIETY_REGULAR);
+        if (!rateLimiterService.acquire(RateLimiterService.ApiType.ORDER)) {
+            throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for cancelOrder. Please retry.");
+        }
+        Order order = kc().cancelOrder(orderId, VARIETY_REGULAR);
 
-            // Check if order was cancelled successfully
-            if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
-                log.info("Order cancelled successfully: {}", orderId);
-                return new OrderResponse(order.orderId, STATUS_SUCCESS, MSG_ORDER_CANCELLED_SUCCESS);
-            } else {
-                log.error("Order cancellation failed for orderId: {}", orderId);
-                return new OrderResponse(orderId, STATUS_FAILED, ERR_ORDER_CANCELLATION_FAILED);
-            }
-
-        } catch (KiteException e) {
-            log.error("Kite API error while cancelling order {}: {}", orderId, e.message, e);
-            return new OrderResponse(orderId, STATUS_FAILED, ERR_ORDER_CANCELLATION_FAILED + ": " + e.message);
-        } catch (IOException e) {
-            log.error("Network error while cancelling order {}: {}", orderId, e.getMessage(), e);
-            return new OrderResponse(orderId, STATUS_FAILED, ERR_NETWORK + e.getMessage());
-        } catch (Exception e) {
-            log.error("Unexpected error while cancelling order {}: {}", orderId, e.getMessage(), e);
-            return new OrderResponse(orderId, STATUS_FAILED, ERR_UNEXPECTED + e.getMessage());
+        // Check if order was cancelled successfully
+        if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
+            log.info("Order cancelled successfully: {}", orderId);
+            return new OrderResponse(order.orderId, STATUS_SUCCESS, MSG_ORDER_CANCELLED_SUCCESS);
+        } else {
+            log.error("Order cancellation failed for orderId: {}", orderId);
+            throw new IllegalStateException(ERR_ORDER_CANCELLATION_FAILED);
         }
     }
 
@@ -315,6 +321,9 @@ public class TradingService {
      */
     public List<Order> getOrders() throws KiteException, IOException {
         log.debug("Fetching all orders for the day");
+        if (!rateLimiterService.acquire(RateLimiterService.ApiType.ORDERS)) {
+            throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for getOrders. Please retry.");
+        }
         List<Order> orders = kc().getOrders();
         log.debug("Fetched {} orders", orders != null ? orders.size() : 0);
         return orders;
@@ -325,6 +334,9 @@ public class TradingService {
      */
     public List<Order> getOrderHistory(String orderId) throws KiteException, IOException {
         log.debug("Fetching order history for order: {}", orderId);
+        if (!rateLimiterService.acquire(RateLimiterService.ApiType.ORDERS)) {
+            throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for getOrderHistory. Please retry.");
+        }
         List<Order> history = kc().getOrderHistory(orderId);
         log.debug("Fetched {} order history records for order: {}", history != null ? history.size() : 0, orderId);
         return history;
@@ -335,6 +347,9 @@ public class TradingService {
      */
     public List<Trade> getTrades() throws KiteException, IOException {
         log.debug("Fetching all trades for the day");
+        if (!rateLimiterService.acquire(RateLimiterService.ApiType.ORDERS)) {
+            throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for getTrades. Please retry.");
+        }
         List<Trade> trades = kc().getTrades();
         log.debug("Fetched {} trades", trades != null ? trades.size() : 0);
         return trades;
@@ -345,6 +360,9 @@ public class TradingService {
      */
     public Map<String, List<Position>> getPositions() throws KiteException, IOException {
         log.debug("Fetching all positions");
+        if (!rateLimiterService.acquire(RateLimiterService.ApiType.POSITIONS)) {
+            throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for getPositions. Please retry.");
+        }
         Map<String, List<Position>> positions = kc().getPositions();
         log.debug("Fetched positions - Net: {}, Day: {}",
             positions.get(POSITION_NET) != null ? positions.get(POSITION_NET).size() : 0,
@@ -357,6 +375,9 @@ public class TradingService {
      */
     public List<Holding> getHoldings() throws KiteException, IOException {
         log.debug("Fetching holdings");
+        if (!rateLimiterService.acquire(RateLimiterService.ApiType.HOLDINGS)) {
+            throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for getHoldings. Please retry.");
+        }
         List<Holding> holdings = kc().getHoldings();
         log.debug("Fetched {} holdings", holdings != null ? holdings.size() : 0);
         return holdings;
@@ -454,6 +475,9 @@ public class TradingService {
      */
     public GTT placeGTT(GTTParams gttParams) throws KiteException, IOException {
         log.info("Placing GTT order - Type: {}, Symbol: {}", gttParams.triggerType, gttParams.tradingsymbol);
+        if (!rateLimiterService.acquire(RateLimiterService.ApiType.GTT)) {
+            throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for placeGTT. Please retry.");
+        }
         GTT gtt = kc().placeGTT(gttParams);
         log.info("GTT order placed successfully - ID: {}", gtt.id);
         return gtt;
@@ -464,6 +488,9 @@ public class TradingService {
      */
     public GTT getGTT(int triggerId) throws KiteException, IOException {
         log.debug("Fetching GTT order: {}", triggerId);
+        if (!rateLimiterService.acquire(RateLimiterService.ApiType.GTT)) {
+            throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for getGTT. Please retry.");
+        }
         GTT gtt = kc().getGTT(triggerId);
         log.debug("Fetched GTT order: {} - Status: {}", triggerId, gtt.status);
         return gtt;
@@ -474,6 +501,9 @@ public class TradingService {
      */
     public GTT modifyGTT(int triggerId, GTTParams gttParams) throws KiteException, IOException {
         log.info("Modifying GTT order: {}", triggerId);
+        if (!rateLimiterService.acquire(RateLimiterService.ApiType.GTT)) {
+            throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for modifyGTT. Please retry.");
+        }
         GTT gtt = kc().modifyGTT(triggerId, gttParams);
         log.info("GTT order modified successfully: {}", triggerId);
         return gtt;
@@ -484,6 +514,9 @@ public class TradingService {
      */
     public GTT cancelGTT(int triggerId) throws KiteException, IOException {
         log.info("Cancelling GTT order: {}", triggerId);
+        if (!rateLimiterService.acquire(RateLimiterService.ApiType.GTT)) {
+            throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for cancelGTT. Please retry.");
+        }
         GTT gtt = kc().cancelGTT(triggerId);
         log.info("GTT order cancelled successfully: {}", triggerId);
         return gtt;
@@ -494,6 +527,9 @@ public class TradingService {
      */
     public List<OrderChargesResponse> getOrderCharges() throws KiteException {
         try {
+            if (!rateLimiterService.acquire(RateLimiterService.ApiType.ORDERS)) {
+                throw new RateLimiterService.RateLimitExceededException("Rate limit exceeded for getOrderCharges. Please retry.");
+            }
             // Get all orders for the day
             List<Order> orders = kc().getOrders();
 

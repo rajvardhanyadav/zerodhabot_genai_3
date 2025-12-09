@@ -235,7 +235,7 @@ public class StrategyService {
 
         List<InstrumentDetail> instrumentDetails = new ArrayList<>();
         String[] supportedInstruments = {"NIFTY", "BANKNIFTY", "FINNIFTY"};
-
+        log.info("Supported instruments: {}", Arrays.toString(supportedInstruments));
         for (String instrumentCode : supportedInstruments) {
             try {
                 int lotSize = fetchLotSizeFromKite(instrumentCode);
@@ -264,6 +264,7 @@ public class StrategyService {
      * Fetch lot size from Kite API
      */
     private int fetchLotSizeFromKite(String instrumentType) throws KiteException, IOException {
+        log.info("Fetching lot size for instrument: {} from Kite API", instrumentType);
         List<Instrument> allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
         String instrumentName = getInstrumentName(instrumentType);
 

@@ -162,6 +162,13 @@ public class PositionMonitor {
             cumulative += (leg.currentPrice - leg.entryPrice) * directionMultiplier;
         }
 
+        // HFT: Lazy debug logging - isDebugEnabled() is a simple boolean check
+        // No string formatting happens if debug logging is disabled
+        if (log.isDebugEnabled()) {
+            log.debug("Cumulative P&L for {}: {} points (target: {}, stop: {})",
+                    executionId, cumulative, cumulativeTargetPoints, cumulativeStopPoints);
+        }
+
         // Check target hit (profit)
         if (cumulative >= cumulativeTargetPoints) {
             log.warn("Cumulative target hit for execution {}: cumulative={} points, target={} - Closing ALL legs",
