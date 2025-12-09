@@ -44,6 +44,13 @@ import static com.tradingbot.service.TradingConstants.VALIDITY_DAY;
  *
  * Entry/exit thresholds are same as PositionMonitor (2.5 & 4 points),
  * and overall flow mirrors ATMStraddleStrategy but uses SELL instead of BUY.
+ *
+ * HFT Optimizations Applied:
+ * - O(1) instrument lookup via pre-built HashMap index
+ * - Pre-parsed strike values to avoid Double.parseDouble() on hot path
+ * - Parallel order placement for both legs
+ * - High-priority dedicated thread pool for exit orders
+ * - Pre-computed string constants to avoid concatenation
  */
 @Slf4j
 @Component
@@ -71,6 +78,52 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     private static final String CALL_SHORT_SUFFIX = "_SHORT";
     private static final String ANNOTATED_CALL_TYPE = StrategyConstants.OPTION_TYPE_CALL + CALL_SHORT_SUFFIX;
     private static final String ANNOTATED_PUT_TYPE = StrategyConstants.OPTION_TYPE_PUT + CALL_SHORT_SUFFIX;
+
+    // ==================== HFT OPTIMIZATION: Instrument Index Key ====================
+    /**
+     * Immutable key for O(1) instrument lookup by strike and option type.
+     * Uses primitive long for strike (multiplied by 100 to avoid floating point)
+     * and interned string for type to ensure fast hashCode/equals.
+     */
+    private record InstrumentKey(long strikeX100, String optionType) {
+        static InstrumentKey of(double strike, String optionType) {
+            return new InstrumentKey((long) (strike * 100), optionType.intern());
+        }
+    }
+
+    // Pre-computed index for fast instrument lookup - reused across executions
+    private final Map<InstrumentKey, Instrument> instrumentIndex = new HashMap<>(256);
+
+    /**
+     * HFT OPTIMIZATION: Build instrument index for O(1) lookups.
+     * Converts O(n) linear search to O(1) HashMap lookup.
+     * Pre-parses strike values to avoid Double.parseDouble() on hot path.
+     *
+     * @param instruments List of instruments to index
+     */
+    private void buildInstrumentIndex(List<Instrument> instruments) {
+        // Clear previous index
+        instrumentIndex.clear();
+
+        final int size = instruments.size();
+        for (int i = 0; i < size; i++) {
+            final Instrument inst = instruments.get(i);
+            final String optionType = inst.instrument_type;
+
+            // Only index CE and PE options
+            if (StrategyConstants.OPTION_TYPE_CALL.equals(optionType) ||
+                StrategyConstants.OPTION_TYPE_PUT.equals(optionType)) {
+                try {
+                    final double strike = Double.parseDouble(inst.strike);
+                    instrumentIndex.put(InstrumentKey.of(strike, optionType), inst);
+                } catch (NumberFormatException e) {
+                    // Skip instruments with invalid strike format
+                    log.trace("Skipping instrument with invalid strike: {}", inst.tradingsymbol);
+                }
+            }
+        }
+        log.debug("Built instrument index with {} entries", instrumentIndex.size());
+    }
 
     public SellATMStraddleStrategy(TradingService tradingService,
                                    UnifiedTradingService unifiedTradingService,
@@ -120,19 +173,12 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
         log.info("ATM Strike (Delta-based): {}", atmStrike);
 
-        // HFT: Find both instruments in single pass through collection
-        Instrument atmCall = null;
-        Instrument atmPut = null;
-        for (int i = 0; i < instrumentCount && (atmCall == null || atmPut == null); i++) {
-            Instrument inst = instruments.get(i);
-            if (Double.parseDouble(inst.strike) == atmStrike) {
-                if (StrategyConstants.OPTION_TYPE_CALL.equals(inst.instrument_type)) {
-                    atmCall = inst;
-                } else if (StrategyConstants.OPTION_TYPE_PUT.equals(inst.instrument_type)) {
-                    atmPut = inst;
-                }
-            }
-        }
+        // HFT: Build instrument index for fast lookups
+        buildInstrumentIndex(instruments);
+
+        // HFT: Find both instruments using pre-computed index
+        Instrument atmCall = instrumentIndex.get(InstrumentKey.of(atmStrike, StrategyConstants.OPTION_TYPE_CALL));
+        Instrument atmPut = instrumentIndex.get(InstrumentKey.of(atmStrike, StrategyConstants.OPTION_TYPE_PUT));
 
         validateATMOptions(atmCall, atmPut, atmStrike);
 
@@ -464,9 +510,11 @@ public class SellATMStraddleStrategy extends BaseStrategy {
             CompletableFuture<List<Order>> callHistoryFuture = CompletableFuture.supplyAsync(() -> {
                 try {
                     return unifiedTradingService.getOrderHistory(callOrderId);
-                } catch (Exception | KiteException e) {
+                } catch (Exception e) {
                     log.error("Failed to fetch call order history: {}", e.getMessage());
                     return Collections.<Order>emptyList();
+                } catch (KiteException e) {
+                    throw new RuntimeException(e);
                 }
             }, EXIT_ORDER_EXECUTOR);
 
@@ -661,7 +709,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                         } else {
                             log.error("Failed to exit Call leg: {}", callExitResponse.getMessage());
                         }
-                    } catch (Exception | KiteException e) {
+                    } catch (Exception e) {
                         log.error("Error exiting Call leg for execution {}: {}", executionId, e.getMessage(), e);
                     }
                 } else {
@@ -679,7 +727,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                         } else {
                             log.error("Failed to exit Put leg: {}", putExitResponse.getMessage());
                         }
-                    } catch (Exception | KiteException e) {
+                    } catch (Exception e) {
                         log.error("Error exiting Put leg for execution {}: {}", executionId, e.getMessage(), e);
                     }
                 } else {

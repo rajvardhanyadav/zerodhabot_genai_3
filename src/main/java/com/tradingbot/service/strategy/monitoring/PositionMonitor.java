@@ -34,10 +34,17 @@ public class PositionMonitor {
     // Pre-computed direction multiplier: 1.0 for LONG, -1.0 for SHORT
     private final double directionMultiplier;
 
-    // HFT: Pre-formatted exit reason templates to avoid String.format on hot path
-    private static final String EXIT_REASON_CUMULATIVE_TARGET = "CUMULATIVE_TARGET_HIT (Signal: %.2f points)";
-    private static final String EXIT_REASON_CUMULATIVE_STOPLOSS = "CUMULATIVE_STOPLOSS_HIT (Signal: %.2f points)";
-    private static final String EXIT_REASON_PRICE_DIFF_INDIVIDUAL = "PRICE_DIFF_INDIVIDUAL (Leg: %s, Diff: %.2f points)";
+    // HFT: Pre-built exit reason prefixes to avoid String.format on hot path
+    // Using StringBuilder with pre-computed components is faster than String.format
+    private static final String EXIT_PREFIX_TARGET = "CUMULATIVE_TARGET_HIT (Signal: ";
+    private static final String EXIT_PREFIX_STOPLOSS = "CUMULATIVE_STOPLOSS_HIT (Signal: ";
+    private static final String EXIT_PREFIX_INDIVIDUAL = "PRICE_DIFF_INDIVIDUAL (Leg: ";
+    private static final String EXIT_SUFFIX_POINTS = " points)";
+    private static final String EXIT_SUFFIX_DIFF = ", Diff: ";
+
+    // HFT: ThreadLocal StringBuilder for exit reason construction - avoids allocation
+    private static final ThreadLocal<StringBuilder> EXIT_REASON_BUILDER =
+        ThreadLocal.withInitial(() -> new StringBuilder(64));
 
     // HFT: Direction constants to avoid enum comparison overhead
     private static final double DIRECTION_LONG = 1.0;
@@ -158,16 +165,16 @@ public class PositionMonitor {
         // Check target hit (profit)
         if (cumulative >= cumulativeTargetPoints) {
             log.warn("Cumulative target hit for execution {}: cumulative={} points, target={} - Closing ALL legs",
-                    executionId, String.format("%.2f", cumulative), String.format("%.2f", cumulativeTargetPoints));
-            triggerExitAllLegs(String.format(EXIT_REASON_CUMULATIVE_TARGET, cumulative));
+                    executionId, formatDouble(cumulative), formatDouble(cumulativeTargetPoints));
+            triggerExitAllLegs(buildExitReasonTarget(cumulative));
             return;
         }
 
         // Check stoploss hit (loss)
         if (cumulative <= -cumulativeStopPoints) {
             log.warn("Cumulative stoploss hit for execution {}: cumulative={} points, stopLoss={} - Closing ALL legs",
-                    executionId, String.format("%.2f", cumulative), String.format("%.2f", cumulativeStopPoints));
-            triggerExitAllLegs(String.format(EXIT_REASON_CUMULATIVE_STOPLOSS, cumulative));
+                    executionId, formatDouble(cumulative), formatDouble(cumulativeStopPoints));
+            triggerExitAllLegs(buildExitReasonStoploss(cumulative));
         }
     }
 
@@ -217,16 +224,16 @@ public class PositionMonitor {
         // Check target hit
         if (cumulative >= cumulativeTargetPoints) {
             log.warn("Cumulative target hit for execution {}: cumulative={} points, target={} - Closing ALL legs",
-                    executionId, String.format("%.2f", cumulative), String.format("%.2f", cumulativeTargetPoints));
-            triggerExitAllLegs(String.format(EXIT_REASON_CUMULATIVE_TARGET, cumulative));
+                    executionId, formatDouble(cumulative), formatDouble(cumulativeTargetPoints));
+            triggerExitAllLegs(buildExitReasonTarget(cumulative));
             return;
         }
 
         // Check stoploss hit (negative cumulative >= configured stop)
         if (cumulative <= -cumulativeStopPoints) {
             log.warn("Cumulative stoploss hit for execution {}: cumulative={} points, stopLoss={} - Closing ALL legs",
-                    executionId, String.format("%.2f", cumulative), String.format("%.2f", cumulativeStopPoints));
-            triggerExitAllLegs(String.format(EXIT_REASON_CUMULATIVE_STOPLOSS, cumulative));
+                    executionId, formatDouble(cumulative), formatDouble(cumulativeStopPoints));
+            triggerExitAllLegs(buildExitReasonStoploss(cumulative));
         }
     }
 
@@ -258,8 +265,7 @@ public class PositionMonitor {
             return;
         }
 
-        String exitReason = String.format(EXIT_REASON_PRICE_DIFF_INDIVIDUAL,
-                                         legSymbol, priceDifference);
+        String exitReason = buildExitReasonIndividual(legSymbol, priceDifference);
 
         log.warn("Triggering individual leg exit for {} in execution {} - Reason: {}",
                  legSymbol, executionId, exitReason);
@@ -290,6 +296,83 @@ public class PositionMonitor {
     public void stop() {
         active = false;
         log.info("Stopped monitoring for execution: {}", executionId);
+    }
+
+    // ==================== HFT OPTIMIZATION: Fast String Building Methods ====================
+
+    /**
+     * HFT: Fast double formatting without String.format overhead.
+     * Uses ThreadLocal StringBuilder to avoid allocation on hot path.
+     */
+    private static String formatDouble(double value) {
+        // Simple 2 decimal place formatting without String.format
+        long scaled = Math.round(value * 100);
+        StringBuilder sb = EXIT_REASON_BUILDER.get();
+        sb.setLength(0);
+        if (scaled < 0) {
+            sb.append('-');
+            scaled = -scaled;
+        }
+        sb.append(scaled / 100);
+        sb.append('.');
+        long frac = scaled % 100;
+        if (frac < 10) sb.append('0');
+        sb.append(frac);
+        return sb.toString();
+    }
+
+    /**
+     * HFT: Build target exit reason without String.format.
+     */
+    private static String buildExitReasonTarget(double cumulative) {
+        StringBuilder sb = EXIT_REASON_BUILDER.get();
+        sb.setLength(0);
+        sb.append(EXIT_PREFIX_TARGET);
+        appendDouble(sb, cumulative);
+        sb.append(EXIT_SUFFIX_POINTS);
+        return sb.toString();
+    }
+
+    /**
+     * HFT: Build stoploss exit reason without String.format.
+     */
+    private static String buildExitReasonStoploss(double cumulative) {
+        StringBuilder sb = EXIT_REASON_BUILDER.get();
+        sb.setLength(0);
+        sb.append(EXIT_PREFIX_STOPLOSS);
+        appendDouble(sb, cumulative);
+        sb.append(EXIT_SUFFIX_POINTS);
+        return sb.toString();
+    }
+
+    /**
+     * HFT: Build individual leg exit reason without String.format.
+     */
+    private static String buildExitReasonIndividual(String legSymbol, double priceDifference) {
+        StringBuilder sb = EXIT_REASON_BUILDER.get();
+        sb.setLength(0);
+        sb.append(EXIT_PREFIX_INDIVIDUAL);
+        sb.append(legSymbol);
+        sb.append(EXIT_SUFFIX_DIFF);
+        appendDouble(sb, priceDifference);
+        sb.append(EXIT_SUFFIX_POINTS);
+        return sb.toString();
+    }
+
+    /**
+     * HFT: Append double with 2 decimal places to StringBuilder.
+     */
+    private static void appendDouble(StringBuilder sb, double value) {
+        long scaled = Math.round(value * 100);
+        if (scaled < 0) {
+            sb.append('-');
+            scaled = -scaled;
+        }
+        sb.append(scaled / 100);
+        sb.append('.');
+        long frac = scaled % 100;
+        if (frac < 10) sb.append('0');
+        sb.append(frac);
     }
 
     /**

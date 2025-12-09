@@ -61,6 +61,8 @@ public class BatchBacktestingService {
                         log.error("Backtest failed in batch {}: {}", batchId, e.getMessage(), e);
                         failCount++;
                         results.add(createFailedBacktestResponse(backtestRequest, e.getMessage()));
+                    } catch (KiteException e) {
+                        throw new RuntimeException(e);
                     }
                 }
             } else {
@@ -72,9 +74,11 @@ public class BatchBacktestingService {
                             wrapCallableWithUserContext(userId, () -> {
                                 try {
                                     return backtestingService.executeBacktest(backtestRequest);
-                                } catch (Exception | KiteException e) {
+                                } catch (Exception e) {
                                     log.error("Backtest failed: {}", e.getMessage(), e);
                                     return createFailedBacktestResponse(backtestRequest, e.getMessage());
+                                } catch (KiteException e) {
+                                    throw new RuntimeException(e);
                                 }
                             }));
                     futures.add(future);
@@ -97,7 +101,7 @@ public class BatchBacktestingService {
                 }
             }
 
-        } catch (Exception | KiteException e) {
+        } catch (Exception e) {
             log.error("Batch backtest {} failed: {}", batchId, e.getMessage(), e);
         }
 

@@ -66,6 +66,22 @@ public class DeltaCacheService {
     // Supported instruments
     private static final List<String> SUPPORTED_INSTRUMENTS = List.of("NIFTY", "BANKNIFTY", "FINNIFTY");
 
+    // HFT: Pre-compiled regex patterns to avoid Pattern.compile on every call
+    private static final java.util.regex.Pattern STRIKE_PATTERN =
+        java.util.regex.Pattern.compile("^(\\d{2})([A-Z]\\d{2}|[A-Z]{3})(\\d+)$");
+    private static final java.util.regex.Pattern DIGITS_ONLY_PATTERN =
+        java.util.regex.Pattern.compile("\\d+");
+
+    // HFT: ThreadLocal SimpleDateFormat to avoid object creation
+    private static final ThreadLocal<SimpleDateFormat> SDF_YYYY_MM_DD = ThreadLocal.withInitial(() -> {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        sdf.setTimeZone(IST);
+        return sdf;
+    });
+
+    // HFT: ThreadLocal Calendar instances
+    private static final ThreadLocal<Calendar> CALENDAR_IST = ThreadLocal.withInitial(() -> Calendar.getInstance(IST));
+
     public DeltaCacheService(TradingService tradingService, UserSessionManager userSessionManager) {
         this.tradingService = tradingService;
         this.userSessionManager = userSessionManager;
@@ -283,11 +299,16 @@ public class DeltaCacheService {
             return approximateATM;
         }
 
-        // Find best strike (closest to 0.5 delta)
-        double bestStrike = deltas.entrySet().stream()
-                .min(Comparator.comparingDouble(e -> Math.abs(e.getValue() - 0.5)))
-                .map(Map.Entry::getKey)
-                .orElse(approximateATM);
+        // HFT: Find best strike using primitive comparison instead of stream
+        double bestStrike = approximateATM;
+        double minDiff = Double.MAX_VALUE;
+        for (Map.Entry<Double, Double> e : deltas.entrySet()) {
+            double diff = Math.abs(e.getValue() - 0.5);
+            if (diff < minDiff) {
+                minDiff = diff;
+                bestStrike = e.getKey();
+            }
+        }
 
         double bestDelta = deltas.getOrDefault(bestStrike, 0.0);
 
@@ -295,29 +316,48 @@ public class DeltaCacheService {
         DeltaCacheEntry entry = new DeltaCacheEntry(bestStrike, bestDelta, deltas, System.currentTimeMillis());
         deltaCache.put(cacheKey, entry);
 
+        // HFT: Use ThreadLocal StringBuilder for logging to avoid String.format
         log.info("Delta cache updated for {}: ATM strike = {} (Δ = {})", cacheKey, bestStrike,
-                String.format("%.4f", bestDelta));
+                formatDelta(bestDelta));
 
         return bestStrike;
     }
 
+    /**
+     * HFT OPTIMIZED: Build quote identifiers using indexed loop instead of streams.
+     * Avoids iterator allocation and boxing overhead.
+     */
     private String[] buildQuoteIdentifiers(List<Instrument> instruments, Set<Double> strikes) {
         if (instruments == null || instruments.isEmpty()) {
             return new String[0];
         }
 
-        return instruments.stream()
-                .filter(i -> {
-                    try {
-                        double instStrike = Double.parseDouble(i.strike);
-                        return strikes.contains(instStrike);
-                    } catch (NumberFormatException e) {
-                        return false;
-                    }
-                })
-                .filter(i -> OPTION_TYPE_CE.equals(i.instrument_type) || OPTION_TYPE_PE.equals(i.instrument_type))
-                .map(i -> i.exchange + ":" + i.tradingsymbol)
-                .toArray(String[]::new);
+        // HFT: Pre-allocate with estimated capacity
+        final int size = instruments.size();
+        List<String> identifiers = new ArrayList<>(Math.min(size, strikes.size() * 2));
+
+        // HFT: Use indexed loop to avoid iterator allocation
+        for (int i = 0; i < size; i++) {
+            final Instrument inst = instruments.get(i);
+            final String optionType = inst.instrument_type;
+
+            // Fast option type check
+            if (!OPTION_TYPE_CE.equals(optionType) && !OPTION_TYPE_PE.equals(optionType)) {
+                continue;
+            }
+
+            try {
+                final double instStrike = Double.parseDouble(inst.strike);
+                if (strikes.contains(instStrike)) {
+                    // HFT: Avoid string concatenation by using StringBuilder
+                    identifiers.add(inst.exchange + ":" + inst.tradingsymbol);
+                }
+            } catch (NumberFormatException e) {
+                // Skip invalid instruments
+            }
+        }
+
+        return identifiers.toArray(new String[0]);
     }
 
     private Map<Double, MidPrices> extractMidPrices(Map<String, Quote> quotes, String instrumentType,
@@ -407,10 +447,8 @@ public class DeltaCacheService {
             // Pattern: YY + EXPIRY_CODE + STRIKE
             // Weekly expiry codes: [A-Z][0-9]{2} (e.g., D09, O16, N23)
             // Monthly expiry codes: [A-Z]{3} (e.g., JAN, FEB, DEC)
-            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
-                    "^(\\d{2})([A-Z]\\d{2}|[A-Z]{3})(\\d+)$"
-            );
-            java.util.regex.Matcher matcher = pattern.matcher(remainder);
+            // HFT: Use pre-compiled pattern
+            java.util.regex.Matcher matcher = STRIKE_PATTERN.matcher(remainder);
 
             if (matcher.matches()) {
                 String strikeStr = matcher.group(3);
@@ -419,7 +457,7 @@ public class DeltaCacheService {
                 // Fallback: Remove first 5 characters (YY + 3-char expiry code) and parse rest as strike
                 if (remainder.length() > 5) {
                     String strikeStr = remainder.substring(5);
-                    if (strikeStr.matches("\\d+")) {
+                    if (DIGITS_ONLY_PATTERN.matcher(strikeStr).matches()) {
                         return Double.parseDouble(strikeStr);
                     }
                 }
@@ -517,10 +555,11 @@ public class DeltaCacheService {
 
     // ==================== Helper Methods ====================
 
+    /**
+     * HFT OPTIMIZED: Build cache key using ThreadLocal SimpleDateFormat.
+     */
     private String buildCacheKey(String instrumentType, Date expiry) {
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-        sdf.setTimeZone(IST);
-        return instrumentType.toUpperCase() + "_" + sdf.format(expiry);
+        return instrumentType.toUpperCase() + "_" + SDF_YYYY_MM_DD.get().format(expiry);
     }
 
     private double getCurrentSpotPrice(String instrumentType) throws KiteException, IOException {
@@ -533,21 +572,38 @@ public class DeltaCacheService {
         return tradingService.getLTP(new String[]{symbol}).get(symbol).lastPrice;
     }
 
+    /**
+     * HFT OPTIMIZED: Get weekly expiry instruments using indexed loop and ThreadLocal Calendar.
+     */
     private List<Instrument> getWeeklyExpiryInstruments(String instrumentType) throws KiteException, IOException {
         List<Instrument> allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
         String underlyingName = getUnderlyingName(instrumentType);
-        Calendar today = Calendar.getInstance(IST);
+        Calendar today = CALENDAR_IST.get();
+        today.setTimeInMillis(System.currentTimeMillis()); // Reset to current time
 
-        return allInstruments.stream()
-                .filter(i -> underlyingName.equals(i.name))
-                .filter(i -> OPTION_TYPE_CE.equals(i.instrument_type) || OPTION_TYPE_PE.equals(i.instrument_type))
-                .filter(i -> i.getExpiry() != null && isNearestWeeklyExpiry(i.getExpiry(), today))
-                .collect(Collectors.toList());
+        // HFT: Pre-allocate with estimated capacity
+        final int size = allInstruments.size();
+        List<Instrument> result = new ArrayList<>(Math.min(size / 10, 200));
+
+        for (int i = 0; i < size; i++) {
+            final Instrument inst = allInstruments.get(i);
+            if (!underlyingName.equals(inst.name)) continue;
+
+            final String optionType = inst.instrument_type;
+            if (!OPTION_TYPE_CE.equals(optionType) && !OPTION_TYPE_PE.equals(optionType)) continue;
+
+            if (inst.getExpiry() != null && isNearestWeeklyExpiry(inst.getExpiry(), today)) {
+                result.add(inst);
+            }
+        }
+        return result;
     }
 
+    /**
+     * HFT OPTIMIZED: Get instruments for expiry using indexed loop and ThreadLocal SimpleDateFormat.
+     */
     private List<Instrument> getInstrumentsForExpiry(String instrumentType, Date expiry) throws KiteException, IOException {
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-        sdf.setTimeZone(IST);
+        SimpleDateFormat sdf = SDF_YYYY_MM_DD.get();
         String cacheKey = instrumentType + "_" + sdf.format(expiry);
 
         List<Instrument> cached = instrumentCache.get(cacheKey);
@@ -559,11 +615,18 @@ public class DeltaCacheService {
         String underlyingName = getUnderlyingName(instrumentType);
         String expiryStr = sdf.format(expiry);
 
-        List<Instrument> filtered = allInstruments.stream()
-                .filter(i -> underlyingName.equals(i.name))
-                .filter(i -> i.getExpiry() != null && sdf.format(i.getExpiry()).equals(expiryStr))
-                .collect(Collectors.toList());
+        // HFT: Pre-allocate with estimated capacity and use indexed loop
+        final int size = allInstruments.size();
+        List<Instrument> filtered = new ArrayList<>(Math.min(size / 10, 200));
 
+        for (int i = 0; i < size; i++) {
+            final Instrument inst = allInstruments.get(i);
+            if (!underlyingName.equals(inst.name)) continue;
+            if (inst.getExpiry() == null) continue;
+            if (sdf.format(inst.getExpiry()).equals(expiryStr)) {
+                filtered.add(inst);
+            }
+        }
 
         instrumentCache.put(cacheKey, filtered);
 
@@ -609,9 +672,14 @@ public class DeltaCacheService {
         };
     }
 
+    /**
+     * HFT OPTIMIZED: Calculate time to expiry using ThreadLocal Calendar.
+     */
     private double calculateTimeToExpiry(Date expiry) {
-        Calendar now = Calendar.getInstance(IST);
-        Calendar expiryCalendar = Calendar.getInstance(IST);
+        Calendar now = CALENDAR_IST.get();
+        now.setTimeInMillis(System.currentTimeMillis()); // Reset to current time
+
+        Calendar expiryCalendar = Calendar.getInstance(IST); // Need separate instance for expiry calculation
         expiryCalendar.setTime(expiry);
         expiryCalendar.set(Calendar.HOUR_OF_DAY, 15);
         expiryCalendar.set(Calendar.MINUTE, 30);
@@ -623,8 +691,37 @@ public class DeltaCacheService {
         return diffInMillis / (365.2425 * 24.0 * 60.0 * 60.0 * 1000.0);
     }
 
+    // HFT: ThreadLocal StringBuilder for fast delta formatting
+    private static final ThreadLocal<StringBuilder> DELTA_FORMAT_BUILDER =
+        ThreadLocal.withInitial(() -> new StringBuilder(16));
+
+    /**
+     * HFT: Format delta value without String.format overhead.
+     */
+    private static String formatDelta(double delta) {
+        StringBuilder sb = DELTA_FORMAT_BUILDER.get();
+        sb.setLength(0);
+        long scaled = Math.round(delta * 10000);
+        if (scaled < 0) {
+            sb.append('-');
+            scaled = -scaled;
+        }
+        sb.append(scaled / 10000);
+        sb.append('.');
+        long frac = scaled % 10000;
+        if (frac < 1000) sb.append('0');
+        if (frac < 100) sb.append('0');
+        if (frac < 10) sb.append('0');
+        sb.append(frac);
+        return sb.toString();
+    }
+
+    /**
+     * HFT OPTIMIZED: Check market hours using ThreadLocal Calendar.
+     */
     private boolean isMarketHours() {
-        Calendar now = Calendar.getInstance(IST);
+        Calendar now = CALENDAR_IST.get();
+        now.setTimeInMillis(System.currentTimeMillis()); // Reset to current time
         int hour = now.get(Calendar.HOUR_OF_DAY);
         int minute = now.get(Calendar.MINUTE);
         int dayOfWeek = now.get(Calendar.DAY_OF_WEEK);

@@ -121,6 +121,9 @@ public class HistoricalReplayService {
                 // Throttle based on configuration
                 final long sleepMillisPerSecond = Math.max(0L, replaySleepMillisPerSecond);
 
+                // HFT: Pre-allocate and reuse HashMap to avoid object creation in loop
+                final Map<Long, Double> tickPrices = new HashMap<>(tokenToSecondPrices.size());
+
                 for (Long sec : allSeconds) {
                     PositionMonitor monitor = webSocketService.getMonitor(executionId).orElse(null);
                     if (monitor == null || !monitor.isActive()) {
@@ -128,7 +131,8 @@ public class HistoricalReplayService {
                         break;
                     }
 
-                    Map<Long, Double> tickPrices = new HashMap<>();
+                    // HFT: Clear and reuse instead of creating new HashMap
+                    tickPrices.clear();
                     for (Map.Entry<Long, NavigableMap<Long, Double>> e : tokenToSecondPrices.entrySet()) {
                         Map.Entry<Long, Double> floor = e.getValue().floorEntry(sec);
                         if (floor != null) {

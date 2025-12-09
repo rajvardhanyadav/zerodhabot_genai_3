@@ -20,12 +20,15 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * ATM Straddle Strategy
@@ -38,6 +41,10 @@ import java.util.concurrent.Executors;
  * - Real-time monitoring via WebSocket
  * - Auto-exit both legs when either SL or Target is hit
  * - Supports both Paper Trading and Live Trading modes
+ *
+ * HFT Optimizations:
+ * - High-priority thread pool for order operations
+ * - Parallel order history and price fetching
  */
 @Slf4j
 @Component
@@ -46,12 +53,17 @@ public class ATMStraddleStrategy extends BaseStrategy {
     private final WebSocketService webSocketService;
     private final StrategyConfig strategyConfig;
 
-    // Dedicated executor for parallel exit order placement - critical for HFT
-    private static final ExecutorService EXIT_ORDER_EXECUTOR = Executors.newFixedThreadPool(4, r -> {
-        Thread t = new Thread(r, "exit-order-");
+    // ==================== HFT OPTIMIZATION: Thread Pool Configuration ====================
+    private static final int HFT_THREAD_POOL_SIZE = 8;
+    private static final AtomicInteger THREAD_COUNTER = new AtomicInteger(0);
+    private static final ThreadFactory HFT_THREAD_FACTORY = r -> {
+        Thread t = new Thread(r, "hft-atm-" + THREAD_COUNTER.incrementAndGet());
         t.setDaemon(true);
+        t.setPriority(Thread.MAX_PRIORITY);
         return t;
-    });
+    };
+    private static final ExecutorService EXIT_ORDER_EXECUTOR = Executors.newFixedThreadPool(
+            HFT_THREAD_POOL_SIZE, HFT_THREAD_FACTORY);
 
     public ATMStraddleStrategy(TradingService tradingService,
                                UnifiedTradingService unifiedTradingService,
@@ -241,8 +253,30 @@ public class ATMStraddleStrategy extends BaseStrategy {
                                  StrategyCompletionCallback completionCallback) {
 
         try {
-            List<Order> callOrderHistory = unifiedTradingService.getOrderHistory(callOrderId);
-            List<Order> putOrderHistory = unifiedTradingService.getOrderHistory(putOrderId);
+            // HFT: Parallel fetch of order histories for both legs
+            CompletableFuture<List<Order>> callHistoryFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return unifiedTradingService.getOrderHistory(callOrderId);
+                } catch (Exception e) {
+                    log.error("Failed to fetch call order history: {}", e.getMessage());
+                    return Collections.<Order>emptyList();
+                } catch (KiteException e) {
+                    throw new RuntimeException(e);
+                }
+            }, EXIT_ORDER_EXECUTOR);
+
+            CompletableFuture<List<Order>> putHistoryFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return unifiedTradingService.getOrderHistory(putOrderId);
+                } catch (Exception | KiteException e) {
+                    log.error("Failed to fetch put order history: {}", e.getMessage());
+                    return Collections.<Order>emptyList();
+                }
+            }, EXIT_ORDER_EXECUTOR);
+
+            // HFT: Wait for both histories in parallel
+            List<Order> callOrderHistory = callHistoryFuture.join();
+            List<Order> putOrderHistory = putHistoryFuture.join();
 
             if (!validateOrderHistories(callOrderHistory, putOrderHistory, callOrderId, putOrderId)) {
                 return;
@@ -255,8 +289,27 @@ public class ATMStraddleStrategy extends BaseStrategy {
                 return;
             }
 
-            double callEntryPrice = getOrderPrice(callOrderId);
-            double putEntryPrice = getOrderPrice(putOrderId);
+            // HFT: Parallel fetch of order prices
+            CompletableFuture<Double> callPriceFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return getOrderPrice(callOrderId);
+                } catch (Exception | KiteException e) {
+                    log.error("Failed to fetch call order price: {}", e.getMessage());
+                    return 0.0;
+                }
+            }, EXIT_ORDER_EXECUTOR);
+
+            CompletableFuture<Double> putPriceFuture = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return getOrderPrice(putOrderId);
+                } catch (Exception | KiteException e) {
+                    log.error("Failed to fetch put order price: {}", e.getMessage());
+                    return 0.0;
+                }
+            }, EXIT_ORDER_EXECUTOR);
+
+            double callEntryPrice = callPriceFuture.join();
+            double putEntryPrice = putPriceFuture.join();
 
             if (!validateEntryPrices(callEntryPrice, putEntryPrice)) {
                 return;
@@ -271,7 +324,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
             startWebSocketMonitoring(executionId, monitor, callEntryPrice, putEntryPrice);
 
-        } catch (Exception | KiteException e) {
+        } catch (Exception e) {
             log.error("Error setting up monitoring for execution {}: {}", executionId, e.getMessage(), e);
         }
     }

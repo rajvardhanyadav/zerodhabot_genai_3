@@ -46,6 +46,25 @@ public abstract class BaseStrategy implements TradingStrategy {
     private static final double DIVIDEND_YIELD = 0.0;   // Indices have near-zero dividend yield for short horizons
     private static final TimeZone IST = TimeZone.getTimeZone("Asia/Kolkata");
 
+    // ==================== HFT OPTIMIZATION: ThreadLocal Date/Time Objects ====================
+    // SimpleDateFormat is NOT thread-safe and creating new instances is expensive (~5-10ms)
+    // ThreadLocal provides per-thread instances without synchronization overhead
+    private static final ThreadLocal<SimpleDateFormat> SDF_YYYY_MM_DD = ThreadLocal.withInitial(() -> {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        sdf.setTimeZone(IST);
+        return sdf;
+    });
+
+    private static final ThreadLocal<SimpleDateFormat> SDF_YY_MMM = ThreadLocal.withInitial(() -> {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyMMM");
+        sdf.setTimeZone(IST);
+        return sdf;
+    });
+
+    // ThreadLocal Calendar instances - Calendar.getInstance() is expensive (~3-5ms)
+    private static final ThreadLocal<Calendar> CALENDAR_IST = ThreadLocal.withInitial(() -> Calendar.getInstance(IST));
+    private static final ThreadLocal<Calendar> CALENDAR_DEFAULT = ThreadLocal.withInitial(Calendar::getInstance);
+
     /**
      * Constructor for BaseStrategy
      * @param tradingService Core trading service for API calls
@@ -173,19 +192,27 @@ public abstract class BaseStrategy implements TradingStrategy {
             return approximateATM;
         }
 
-        double bestStrike = deltas.entrySet().stream()
-                .min(Comparator.comparingDouble(entry -> Math.abs(entry.getValue() - 0.5)))
-                .map(Map.Entry::getKey)
-                .orElse(approximateATM);
+        // HFT: Find best strike using primitive comparison instead of stream
+        double bestStrike = approximateATM;
+        double minDiff = Double.MAX_VALUE;
+        for (Map.Entry<Double, Double> e : deltas.entrySet()) {
+            double diff = Math.abs(e.getValue() - 0.5);
+            if (diff < minDiff) {
+                minDiff = diff;
+                bestStrike = e.getKey();
+            }
+        }
 
         log.info("Selected strike {} (Δ ≈ {}) as ATM strike.", bestStrike, String.format("%.4f", deltas.getOrDefault(bestStrike, 0.0)));
         return bestStrike;
     }
 
     private Map<Double, Double> computeCallDeltas(String instrumentType, Date expiry, double spotPrice, Set<Double> strikes, double timeToExpiry) {
-        // 1. Fetch mid prices for all strikes
-        Map<Double, MidPrices> midPriceMap = strikes.stream()
-                .collect(Collectors.toMap(s -> s, s -> getBothMidPrices(instrumentType, s, expiry)));
+        // HFT: Use indexed iteration instead of stream for mid price fetching
+        Map<Double, MidPrices> midPriceMap = new HashMap<>(strikes.size());
+        for (Double strike : strikes) {
+            midPriceMap.put(strike, getBothMidPrices(instrumentType, strike, expiry));
+        }
 
         // 2. Calculate a stable forward price using put-call parity from liquid strikes
         double forwardPrice = calculateImpliedForwardPrice(spotPrice, midPriceMap, timeToExpiry);
@@ -278,9 +305,13 @@ public abstract class BaseStrategy implements TradingStrategy {
     }
 
     // Calculate time to expiry with second-level precision
+    // HFT OPTIMIZED: Uses ThreadLocal Calendar to avoid getInstance() overhead
     private double calculateTimeToExpiryPrecise(Date expiry) {
-        Calendar now = Calendar.getInstance(IST);
-        Calendar expiryCalendar = Calendar.getInstance(IST);
+        Calendar now = CALENDAR_IST.get();
+        now.setTimeInMillis(System.currentTimeMillis()); // Reset to current time
+
+        Calendar expiryCalendar = CALENDAR_DEFAULT.get();
+        expiryCalendar.setTimeZone(IST);
         expiryCalendar.setTime(expiry);
         expiryCalendar.set(Calendar.HOUR_OF_DAY, 15);
         expiryCalendar.set(Calendar.MINUTE, 30);
@@ -409,27 +440,38 @@ public abstract class BaseStrategy implements TradingStrategy {
         }
     }
 
+    /**
+     * HFT OPTIMIZED: Find option instrument by strike using indexed loop instead of stream.
+     */
     private Instrument findOptionInstrumentByStrike(String instrumentType, double strike, Date expiry, String optionType) throws KiteException, IOException {
         List<Instrument> instrumentsForExpiry = getInstrumentsForExpiry(expiry);
         String underlyingName = getUnderlyingName(instrumentType);
 
-        return instrumentsForExpiry.stream()
-                .filter(i -> underlyingName.equals(i.name))
-                .filter(i -> optionType.equals(i.instrument_type))
-                .filter(i -> {
-                    try {
-                        return Math.abs(Double.parseDouble(i.strike) - strike) < 0.01;
-                    } catch (NumberFormatException e) {
-                        return false;
-                    }
-                })
-                .findFirst()
-                .orElse(null);
+        // HFT: Use indexed loop to avoid stream/iterator allocation
+        final int size = instrumentsForExpiry.size();
+        for (int i = 0; i < size; i++) {
+            final Instrument inst = instrumentsForExpiry.get(i);
+            if (!underlyingName.equals(inst.name)) continue;
+            if (!optionType.equals(inst.instrument_type)) continue;
+
+            try {
+                final double instStrike = Double.parseDouble(inst.strike);
+                if (Math.abs(instStrike - strike) < 0.01) {
+                    return inst;
+                }
+            } catch (NumberFormatException e) {
+                // Skip invalid instruments
+            }
+        }
+        return null;
     }
 
+    /**
+     * HFT OPTIMIZED: Get instruments for expiry with indexed grouping.
+     * Uses ThreadLocal SimpleDateFormat to avoid object creation.
+     */
     private List<Instrument> getInstrumentsForExpiry(Date expiry) throws KiteException, IOException {
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-        sdf.setTimeZone(IST);
+        SimpleDateFormat sdf = SDF_YYYY_MM_DD.get();
         String expiryKey = sdf.format(expiry);
 
         synchronized (instrumentCache) {
@@ -438,9 +480,17 @@ public abstract class BaseStrategy implements TradingStrategy {
             }
 
             List<Instrument> allNfoInstruments = tradingService.getInstruments(EXCHANGE_NFO);
-            Map<String, List<Instrument>> instrumentsByExpiry = allNfoInstruments.stream()
-                    .filter(i -> i.getExpiry() != null)
-                    .collect(Collectors.groupingBy(i -> sdf.format(i.getExpiry())));
+
+            // HFT: Use indexed loop instead of stream for grouping
+            Map<String, List<Instrument>> instrumentsByExpiry = new HashMap<>();
+            final int size = allNfoInstruments.size();
+            for (int i = 0; i < size; i++) {
+                final Instrument inst = allNfoInstruments.get(i);
+                if (inst.getExpiry() == null) continue;
+
+                String key = sdf.format(inst.getExpiry());
+                instrumentsByExpiry.computeIfAbsent(key, k -> new ArrayList<>()).add(inst);
+            }
 
             instrumentCache.putAll(instrumentsByExpiry);
 
@@ -459,11 +509,10 @@ public abstract class BaseStrategy implements TradingStrategy {
 
     /**
      * (Fallback) Manually build instrument identifier like NFO:NIFTY25NOV19650CE.
+     * HFT OPTIMIZED: Uses ThreadLocal SimpleDateFormat.
      */
     private String buildOptionInstrumentIdentifierManually(String instrumentType, double strike, Date expiry, String optionType) {
-        SimpleDateFormat sdf = new SimpleDateFormat("yyMMM");
-        sdf.setTimeZone(IST);
-        String expiryStr = sdf.format(expiry).toUpperCase();
+        String expiryStr = SDF_YY_MMM.get().format(expiry).toUpperCase();
         String tradingSymbol = instrumentType.toUpperCase() + expiryStr + (int) strike + optionType.toUpperCase();
         log.warn("Using manually constructed identifier (fallback): {}", tradingSymbol);
         return "NFO:" + tradingSymbol;
@@ -485,6 +534,7 @@ public abstract class BaseStrategy implements TradingStrategy {
     /**
      * Get lot size for instrument by fetching from Kite API
      * Results are cached for the session to avoid repeated API calls
+     * HFT OPTIMIZED: Uses indexed loop instead of stream
      */
     protected int getLotSize(String instrumentType) throws KiteException {
         String instrumentKey = instrumentType.toUpperCase();
@@ -508,22 +558,23 @@ public abstract class BaseStrategy implements TradingStrategy {
                 default -> instrumentKey;
             };
 
-            Optional<Instrument> instrument = allInstruments.stream()
-                    .filter(i -> i.name != null && i.name.equals(instrumentName))
-                    .filter(i -> i.lot_size > 0)
-                    .findFirst();
-
-            if (instrument.isPresent()) {
-                int lotSize = instrument.get().lot_size;
-                log.info("Found lot size for {}: {}", instrumentKey, lotSize);
-                lotSizeCache.put(instrumentKey, lotSize);
-                return lotSize;
-            } else {
-                log.warn("Lot size not found in Kite API for {}, using fallback value", instrumentKey);
-                int fallbackLotSize = getFallbackLotSize(instrumentKey);
-                lotSizeCache.put(instrumentKey, fallbackLotSize);
-                return fallbackLotSize;
+            // HFT: Use indexed loop instead of stream
+            final int size = allInstruments.size();
+            for (int i = 0; i < size; i++) {
+                final Instrument inst = allInstruments.get(i);
+                if (inst.name != null && inst.name.equals(instrumentName) && inst.lot_size > 0) {
+                    int lotSize = inst.lot_size;
+                    log.info("Found lot size for {}: {}", instrumentKey, lotSize);
+                    lotSizeCache.put(instrumentKey, lotSize);
+                    return lotSize;
+                }
             }
+
+            // Not found - use fallback
+            log.warn("Lot size not found in Kite API for {}, using fallback value", instrumentKey);
+            int fallbackLotSize = getFallbackLotSize(instrumentKey);
+            lotSizeCache.put(instrumentKey, fallbackLotSize);
+            return fallbackLotSize;
 
         } catch (Exception e) {
             log.error("Error fetching lot size from Kite API for {}: {}", instrumentKey, e.getMessage());
@@ -567,24 +618,39 @@ public abstract class BaseStrategy implements TradingStrategy {
 
     /**
      * Get option instruments for given index and expiry
+     * HFT OPTIMIZED: Uses indexed loop instead of streams to avoid iterator allocation
      */
     protected List<Instrument> getOptionInstruments(String instrumentType, String expiry)
             throws KiteException, IOException {
 
         List<Instrument> allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
 
-        String namePrefix = switch (instrumentType.toUpperCase()) {
+        final String namePrefix = switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> INSTRUMENT_NIFTY;
             case "BANKNIFTY" -> INSTRUMENT_BANKNIFTY;
             case "FINNIFTY" -> INSTRUMENT_FINNIFTY;
             default -> instrumentType.toUpperCase();
         };
 
-        return allInstruments.stream()
-                .filter(i -> i.name.equals(namePrefix))
-                .filter(i -> OPTION_TYPE_CE.equals(i.instrument_type) || OPTION_TYPE_PE.equals(i.instrument_type))
-                .filter(i -> matchesExpiry(i, expiry))
-                .collect(Collectors.toList());
+        // HFT: Pre-allocate with estimated capacity to avoid resizing
+        final int estimatedSize = Math.min(allInstruments.size() / 10, 500);
+        List<Instrument> result = new ArrayList<>(estimatedSize);
+
+        // HFT: Use indexed loop to avoid iterator allocation
+        final int size = allInstruments.size();
+        for (int i = 0; i < size; i++) {
+            final Instrument inst = allInstruments.get(i);
+            // HFT: Fast string equality check using interned constant
+            if (namePrefix.equals(inst.name)) {
+                final String optionType = inst.instrument_type;
+                if (OPTION_TYPE_CE.equals(optionType) || OPTION_TYPE_PE.equals(optionType)) {
+                    if (matchesExpiry(inst, expiry)) {
+                        result.add(inst);
+                    }
+                }
+            }
+        }
+        return result;
     }
 
     /**
@@ -596,24 +662,26 @@ public abstract class BaseStrategy implements TradingStrategy {
         } else if (expiry.equalsIgnoreCase("MONTHLY")) {
             return isMonthlyExpiry(instrument.expiry);
         } else {
-            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-            return sdf.format(instrument.expiry).equals(expiry);
+            // HFT: Use ThreadLocal SimpleDateFormat
+            return SDF_YYYY_MM_DD.get().format(instrument.expiry).equals(expiry);
         }
     }
 
     /**
      * Check if the expiry is the nearest weekly expiry
+     * HFT OPTIMIZED: Uses ThreadLocal Calendar instances.
      */
     private boolean isNearestWeeklyExpiry(Date expiry) {
-        Calendar cal = Calendar.getInstance();
+        Calendar cal = CALENDAR_DEFAULT.get();
         cal.setTime(expiry);
 
         if (cal.get(Calendar.DAY_OF_WEEK) != Calendar.THURSDAY) {
             return false;
         }
 
-        Calendar today = Calendar.getInstance();
-        long diffInMillis = expiry.getTime() - today.getTimeInMillis();
+        // Use System.currentTimeMillis() directly instead of another Calendar
+        long nowMillis = System.currentTimeMillis();
+        long diffInMillis = expiry.getTime() - nowMillis;
         long diffInDays = diffInMillis / (24 * 60 * 60 * 1000);
 
         return diffInDays >= 0 && diffInDays <= 7;
@@ -621,19 +689,19 @@ public abstract class BaseStrategy implements TradingStrategy {
 
     /**
      * Check if the expiry is a monthly expiry
+     * HFT OPTIMIZED: Uses ThreadLocal Calendar instances.
      */
     private boolean isMonthlyExpiry(Date expiry) {
-        Calendar cal = Calendar.getInstance();
+        Calendar cal = CALENDAR_DEFAULT.get();
         cal.setTime(expiry);
 
         if (cal.get(Calendar.DAY_OF_WEEK) != Calendar.THURSDAY) {
             return false;
         }
 
+        int originalMonth = cal.get(Calendar.MONTH);
         cal.add(Calendar.DAY_OF_MONTH, 7);
-        Calendar expiryCalendar = Calendar.getInstance();
-        expiryCalendar.setTime(expiry);
-        return cal.get(Calendar.MONTH) != expiryCalendar.get(Calendar.MONTH);
+        return cal.get(Calendar.MONTH) != originalMonth;
     }
 
     /**

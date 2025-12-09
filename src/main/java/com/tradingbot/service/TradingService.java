@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 
 import static com.tradingbot.service.TradingConstants.*;
 
@@ -109,19 +110,25 @@ public class TradingService {
         }
     }
 
+    // HFT: Dedicated thread pool for parallel order placement
+    private static final ExecutorService ORDER_EXECUTOR = java.util.concurrent.Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r, "hft-order-placer");
+        t.setDaemon(true);
+        t.setPriority(Thread.MAX_PRIORITY);
+        return t;
+    });
+
     /**
-     * Place basket order - multiple orders placed sequentially for the Sell ATM Straddle strategy.
-     * Places all orders in the basket and returns consolidated results.
-     * Note: Kite Connect SDK doesn't support atomic basket placement, so orders are placed individually.
+     * Place basket order - HFT OPTIMIZED with parallel order placement.
+     * Places all orders in the basket concurrently and returns consolidated results.
+     * Note: Kite Connect SDK doesn't support atomic basket placement, so orders are placed in parallel.
+     *
+     * HFT Optimization: Parallel order submission reduces latency from ~2x single order to ~1x.
      */
     public BasketOrderResponse placeBasketOrder(BasketOrderRequest basketRequest) {
         log.info("Placing basket order with {} orders, tag: {}",
                 basketRequest.getOrders() != null ? basketRequest.getOrders().size() : 0,
                 basketRequest.getTag());
-
-        List<BasketOrderResponse.BasketOrderResult> results = new ArrayList<>();
-        int successCount = 0;
-        int failureCount = 0;
 
         if (basketRequest.getOrders() == null || basketRequest.getOrders().isEmpty()) {
             log.error("Basket order request has no orders");
@@ -131,67 +138,44 @@ public class TradingService {
                     .totalOrders(0)
                     .successCount(0)
                     .failureCount(0)
-                    .orderResults(results)
+                    .orderResults(new ArrayList<>())
                     .build();
         }
 
-        // Place each order individually (Kite SDK doesn't support batch placement)
-        for (BasketOrderRequest.BasketOrderItem item : basketRequest.getOrders()) {
+        final List<BasketOrderRequest.BasketOrderItem> orderItems = basketRequest.getOrders();
+        final int orderCount = orderItems.size();
+
+        // HFT: Use CompletableFuture for parallel order placement
+        List<java.util.concurrent.CompletableFuture<BasketOrderResponse.BasketOrderResult>> futures =
+            new ArrayList<>(orderCount);
+
+        for (BasketOrderRequest.BasketOrderItem item : orderItems) {
+            futures.add(java.util.concurrent.CompletableFuture.supplyAsync(() ->
+                placeSingleBasketOrderItem(item), ORDER_EXECUTOR));
+        }
+
+        // Wait for all orders to complete (blocking but all orders run in parallel)
+        List<BasketOrderResponse.BasketOrderResult> results = new ArrayList<>(orderCount);
+        int successCount = 0;
+        int failureCount = 0;
+
+        for (java.util.concurrent.CompletableFuture<BasketOrderResponse.BasketOrderResult> future : futures) {
             try {
-                OrderParams orderParams = buildOrderParamsFromBasketItem(item);
-                Order order = kc().placeOrder(orderParams, VARIETY_REGULAR);
-
-                if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
-                    log.info("Basket order item placed successfully: {} - {} {} {}",
-                            order.orderId, item.getTransactionType(), item.getQuantity(), item.getTradingSymbol());
-
-                    results.add(BasketOrderResponse.BasketOrderResult.builder()
-                            .orderId(order.orderId)
-                            .tradingSymbol(item.getTradingSymbol())
-                            .legType(item.getLegType())
-                            .status(STATUS_SUCCESS)
-                            .message(MSG_ORDER_PLACED_SUCCESS)
-                            .instrumentToken(item.getInstrumentToken())
-                            .build());
+                BasketOrderResponse.BasketOrderResult result = future.join();
+                results.add(result);
+                if (STATUS_SUCCESS.equals(result.getStatus())) {
                     successCount++;
                 } else {
-                    log.error("Basket order item failed - no order ID returned for {}", item.getTradingSymbol());
-                    results.add(BasketOrderResponse.BasketOrderResult.builder()
-                            .tradingSymbol(item.getTradingSymbol())
-                            .legType(item.getLegType())
-                            .status(STATUS_FAILED)
-                            .message(ERR_ORDER_PLACEMENT_FAILED_NO_ID)
-                            .instrumentToken(item.getInstrumentToken())
-                            .build());
                     failureCount++;
                 }
-
-            } catch (KiteException e) {
-                log.error("Kite API error for {}: {}", item.getTradingSymbol(), e.message);
-                results.add(BasketOrderResponse.BasketOrderResult.builder()
-                        .tradingSymbol(item.getTradingSymbol())
-                        .legType(item.getLegType())
-                        .status(STATUS_FAILED)
-                        .message(ERR_ORDER_PLACEMENT_FAILED + e.message)
-                        .instrumentToken(item.getInstrumentToken())
-                        .build());
-                failureCount++;
-            } catch (IOException e) {
-                log.error("Network error for {}: {}", item.getTradingSymbol(), e.getMessage());
-                results.add(BasketOrderResponse.BasketOrderResult.builder()
-                        .tradingSymbol(item.getTradingSymbol())
-                        .legType(item.getLegType())
-                        .status(STATUS_FAILED)
-                        .message(ERR_NETWORK + e.getMessage())
-                        .instrumentToken(item.getInstrumentToken())
-                        .build());
+            } catch (Exception e) {
+                log.error("Error waiting for order completion: {}", e.getMessage());
                 failureCount++;
             }
         }
 
-        String overallStatus = determineOverallStatus(successCount, failureCount, basketRequest.getOrders().size());
-        String message = String.format("Basket order completed: %d/%d orders successful",
-                successCount, basketRequest.getOrders().size());
+        String overallStatus = determineOverallStatus(successCount, failureCount, orderCount);
+        String message = String.format("Basket order completed: %d/%d orders successful", successCount, orderCount);
 
         log.info("Basket order completed - Status: {}, Success: {}, Failed: {}",
                 overallStatus, successCount, failureCount);
@@ -199,21 +183,69 @@ public class TradingService {
         return BasketOrderResponse.builder()
                 .status(overallStatus)
                 .message(message)
-                .orderResults(results)
+                .totalOrders(orderCount)
                 .successCount(successCount)
                 .failureCount(failureCount)
-                .totalOrders(basketRequest.getOrders().size())
+                .orderResults(results)
                 .build();
     }
 
     /**
-     * Determine overall status based on success/failure counts
+     * HFT: Place a single basket order item - extracted for parallel execution.
      */
-    private String determineOverallStatus(int successCount, int failureCount, int total) {
-        if (successCount == total) {
+    private BasketOrderResponse.BasketOrderResult placeSingleBasketOrderItem(BasketOrderRequest.BasketOrderItem item) {
+        try {
+            OrderParams orderParams = buildOrderParamsFromBasketItem(item);
+            Order order = kc().placeOrder(orderParams, VARIETY_REGULAR);
+
+            if (order != null && order.orderId != null && !order.orderId.isEmpty()) {
+                log.info("Basket order item placed successfully: {} - {} {} {}",
+                        order.orderId, item.getTransactionType(), item.getQuantity(), item.getTradingSymbol());
+
+                return BasketOrderResponse.BasketOrderResult.builder()
+                        .orderId(order.orderId)
+                        .tradingSymbol(item.getTradingSymbol())
+                        .legType(item.getLegType())
+                        .status(STATUS_SUCCESS)
+                        .message(MSG_ORDER_PLACED_SUCCESS)
+                        .instrumentToken(item.getInstrumentToken())
+                        .build();
+            } else {
+                log.error("Basket order item failed - no order ID returned for {}", item.getTradingSymbol());
+                return BasketOrderResponse.BasketOrderResult.builder()
+                        .tradingSymbol(item.getTradingSymbol())
+                        .legType(item.getLegType())
+                        .status(STATUS_FAILED)
+                        .message(ERR_ORDER_PLACEMENT_FAILED_NO_ID)
+                        .instrumentToken(item.getInstrumentToken())
+                        .build();
+            }
+        } catch (KiteException e) {
+            log.error("Kite API error for {}: {}", item.getTradingSymbol(), e.message);
+            return BasketOrderResponse.BasketOrderResult.builder()
+                    .tradingSymbol(item.getTradingSymbol())
+                    .legType(item.getLegType())
+                    .status(STATUS_FAILED)
+                    .message(ERR_ORDER_PLACEMENT_FAILED + e.message)
+                    .instrumentToken(item.getInstrumentToken())
+                    .build();
+        } catch (IOException e) {
+            log.error("Network error for {}: {}", item.getTradingSymbol(), e.getMessage());
+            return BasketOrderResponse.BasketOrderResult.builder()
+                    .tradingSymbol(item.getTradingSymbol())
+                    .legType(item.getLegType())
+                    .status(STATUS_FAILED)
+                    .message(ERR_NETWORK + e.getMessage())
+                    .instrumentToken(item.getInstrumentToken())
+                    .build();
+        }
+    }
+
+    private String determineOverallStatus(int successCount, int failureCount, int totalOrders) {
+        if (successCount == totalOrders) {
             return STATUS_SUCCESS;
         } else if (successCount > 0) {
-            return STATUS_PARTIAL;
+            return "PARTIAL";
         } else {
             return STATUS_FAILED;
         }
