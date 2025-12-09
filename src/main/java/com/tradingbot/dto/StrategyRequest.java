@@ -15,7 +15,7 @@ public class StrategyRequest {
     private StrategyType strategyType;
 
     @NotNull(message = "Instrument type is required")
-    private String instrumentType; // NIFTY, BANKNIFTY, FINNIFTY
+    private String instrumentType; // NIFTY, BANKNIFTY
 
     @NotNull(message = "Expiry is required")
     private String expiry; // Format: yyyy-MM-dd or WEEKLY/MONTHLY

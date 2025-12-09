@@ -64,7 +64,7 @@ public class DeltaCacheService {
     private static final TimeZone IST = TimeZone.getTimeZone("Asia/Kolkata");
 
     // Supported instruments
-    private static final List<String> SUPPORTED_INSTRUMENTS = List.of("NIFTY", "BANKNIFTY", "FINNIFTY");
+    private static final List<String> SUPPORTED_INSTRUMENTS = List.of("NIFTY", "BANKNIFTY");
 
     // HFT: Pre-compiled regex patterns to avoid Pattern.compile on every call
     private static final java.util.regex.Pattern STRIKE_PATTERN =
@@ -91,7 +91,7 @@ public class DeltaCacheService {
      * Get cached ATM strike for an instrument and expiry.
      * Returns Optional.empty() if cache is stale or unavailable.
      *
-     * @param instrumentType NIFTY, BANKNIFTY, or FINNIFTY
+     * @param instrumentType NIFTY or BANKNIFTY
      * @param expiry Expiry date
      * @return Cached ATM strike or empty if not available
      */
@@ -566,7 +566,6 @@ public class DeltaCacheService {
         String symbol = switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> "NSE:NIFTY 50";
             case "BANKNIFTY" -> "NSE:NIFTY BANK";
-            case "FINNIFTY" -> "NSE:NIFTY FIN SERVICE";
             default -> throw new IllegalArgumentException("Unsupported instrument: " + instrumentType);
         };
         return tradingService.getLTP(new String[]{symbol}).get(symbol).lastPrice;
@@ -653,7 +652,6 @@ public class DeltaCacheService {
         return switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> 50.0;
             case "BANKNIFTY" -> 100.0;
-            case "FINNIFTY" -> 50.0;
             default -> 50.0;
         };
     }
@@ -667,7 +665,6 @@ public class DeltaCacheService {
         return switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> INSTRUMENT_NIFTY;
             case "BANKNIFTY" -> INSTRUMENT_BANKNIFTY;
-            case "FINNIFTY" -> INSTRUMENT_FINNIFTY;
             default -> instrumentType.toUpperCase();
         };
     }

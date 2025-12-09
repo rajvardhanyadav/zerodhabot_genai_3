@@ -98,7 +98,7 @@ public abstract class BaseStrategy implements TradingStrategy {
         String symbol = switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> "NSE:NIFTY 50";
             case "BANKNIFTY" -> "NSE:NIFTY BANK";
-            case "FINNIFTY" -> "NSE:NIFTY FIN SERVICE";
+            
             default -> throw new IllegalArgumentException("Unsupported instrument: " + instrumentType);
         };
 
@@ -129,7 +129,7 @@ public abstract class BaseStrategy implements TradingStrategy {
      * - Implied Volatility is solved from option mid-price (best bid/ask avg), fallback to LTP
      *
      * @param spotPrice Current spot price
-     * @param instrumentType Type of instrument (NIFTY, BANKNIFTY, FINNIFTY)
+     * @param instrumentType Type of instrument (NIFTY, BANKNIFTY)
      * @param expiry Expiry date of the options
      * @return Strike price with delta nearest to ±0.5
      */
@@ -502,7 +502,6 @@ public abstract class BaseStrategy implements TradingStrategy {
         return switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> INSTRUMENT_NIFTY;
             case "BANKNIFTY" -> INSTRUMENT_BANKNIFTY;
-            case "FINNIFTY" -> INSTRUMENT_FINNIFTY;
             default -> instrumentType.toUpperCase();
         };
     }
@@ -526,7 +525,6 @@ public abstract class BaseStrategy implements TradingStrategy {
         return switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> 50.0;
             case "BANKNIFTY" -> 100.0;
-            case "FINNIFTY" -> 50.0;
             default -> 50.0;
         };
     }
@@ -554,7 +552,6 @@ public abstract class BaseStrategy implements TradingStrategy {
             String instrumentName = switch (instrumentKey) {
                 case "NIFTY" -> INSTRUMENT_NIFTY;
                 case "BANKNIFTY" -> INSTRUMENT_BANKNIFTY;
-                case "FINNIFTY" -> INSTRUMENT_FINNIFTY;
                 default -> instrumentKey;
             };
 
@@ -592,7 +589,6 @@ public abstract class BaseStrategy implements TradingStrategy {
         return switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> 75;
             case "BANKNIFTY" -> 35;
-            case "FINNIFTY" -> 40;
             default -> throw new IllegalArgumentException("Unsupported instrument type: " + instrumentType);
         };
     }
@@ -628,7 +624,6 @@ public abstract class BaseStrategy implements TradingStrategy {
         final String namePrefix = switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> INSTRUMENT_NIFTY;
             case "BANKNIFTY" -> INSTRUMENT_BANKNIFTY;
-            case "FINNIFTY" -> INSTRUMENT_FINNIFTY;
             default -> instrumentType.toUpperCase();
         };
 

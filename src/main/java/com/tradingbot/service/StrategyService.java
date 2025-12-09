@@ -234,7 +234,7 @@ public class StrategyService {
         log.info("Fetching available instruments from Kite API");
 
         List<InstrumentDetail> instrumentDetails = new ArrayList<>();
-        String[] supportedInstruments = {"NIFTY", "BANKNIFTY", "FINNIFTY"};
+        String[] supportedInstruments = {"NIFTY", "BANKNIFTY"};
         log.info("Supported instruments: {}", Arrays.toString(supportedInstruments));
         for (String instrumentCode : supportedInstruments) {
             try {
@@ -290,7 +290,6 @@ public class StrategyService {
         return switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> 75;
             case "BANKNIFTY" -> 35;
-            case "FINNIFTY" -> 40;
             default -> throw new IllegalArgumentException("Unsupported instrument type: " + instrumentType);
         };
     }
@@ -302,7 +301,6 @@ public class StrategyService {
         return switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> 50.0;
             case "BANKNIFTY" -> 100.0;
-            case "FINNIFTY" -> 50.0;
             default -> 50.0;
         };
     }
@@ -314,7 +312,6 @@ public class StrategyService {
         return switch (instrumentCode.toUpperCase()) {
             case "NIFTY" -> "NIFTY 50";
             case "BANKNIFTY" -> "NIFTY BANK";
-            case "FINNIFTY" -> "NIFTY FINSEREXBNK";
             default -> instrumentCode;
         };
     }
@@ -326,7 +323,6 @@ public class StrategyService {
         return switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> "NIFTY";
             case "BANKNIFTY" -> "BANKNIFTY";
-            case "FINNIFTY" -> "FINNIFTY";
             default -> instrumentType.toUpperCase();
         };
     }

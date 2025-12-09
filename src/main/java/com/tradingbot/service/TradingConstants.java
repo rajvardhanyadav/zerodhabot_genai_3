@@ -43,7 +43,6 @@ public final class TradingConstants {
     // Instrument Names
     public static final String INSTRUMENT_NIFTY = "NIFTY";
     public static final String INSTRUMENT_BANKNIFTY = "BANKNIFTY";
-    public static final String INSTRUMENT_FINNIFTY = "FINNIFTY";
 
     // Option Types
     public static final String OPTION_TYPE_CE = "CE";
