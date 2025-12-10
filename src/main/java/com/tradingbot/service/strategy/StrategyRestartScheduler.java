@@ -19,6 +19,7 @@ import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
@@ -38,6 +39,8 @@ import java.util.concurrent.ScheduledFuture;
 public class StrategyRestartScheduler {
 
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
+    private static final LocalTime MARKET_OPEN = LocalTime.of(9, 15);
+    private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 10);
 
     private final StrategyConfig strategyConfig;
     @Lazy
@@ -58,6 +61,17 @@ public class StrategyRestartScheduler {
                     execution.getExecutionId(), execution.getCompletionReason(), execution.getTradingMode());
             scheduleRestart(execution);
         }
+    }
+
+    /**
+     * Check if the given time is within market trading hours (9:15 AM - 3:10 PM IST).
+     *
+     * @param dateTime the timestamp to check
+     * @return true if within market hours, false otherwise
+     */
+    private boolean isWithinMarketHours(ZonedDateTime dateTime) {
+        LocalTime time = dateTime.toLocalTime();
+        return !time.isBefore(MARKET_OPEN) && !time.isAfter(MARKET_CLOSE);
     }
 
     /**
@@ -111,8 +125,23 @@ public class StrategyRestartScheduler {
         }
 
         ZonedDateTime now = ZonedDateTime.now(MARKET_ZONE);
+
+        // Check if current time is within market hours
+        if (!isWithinMarketHours(now)) {
+            log.info("Current time {} is outside market hours ({} - {}), skipping auto-restart for execution {}",
+                    now.toLocalTime(), MARKET_OPEN, MARKET_CLOSE, executionId);
+            return;
+        }
+
         Duration delay = CandleUtils.durationUntilNextFiveMinuteCandle(now);
         ZonedDateTime nextCandle = now.plus(delay);
+
+        // Validate that the next candle time is also within market hours
+        if (!isWithinMarketHours(nextCandle)) {
+            log.info("Next candle {} is outside market hours ({} - {}), skipping auto-restart for execution {}",
+                    nextCandle.toLocalTime(), MARKET_OPEN, MARKET_CLOSE, executionId);
+            return;
+        }
 
         log.info("[{} MODE] Scheduling auto-restart for execution {} (user={}) at next 5m candle {} (delay={}s), reason={}, strategyType={}, instrument={}, expiry={}",
                  tradingMode,
@@ -132,6 +161,14 @@ public class StrategyRestartScheduler {
             ScheduledFuture<?> future = scheduledRestarts.remove(executionId);
             if (future != null) {
                 future.cancel(false);
+            }
+
+            // Defensive check: verify market hours at execution time
+            ZonedDateTime executeTime = ZonedDateTime.now(MARKET_ZONE);
+            if (!isWithinMarketHours(executeTime)) {
+                log.warn("Auto-restart triggered outside market hours ({} - {}) at {}, skipping execution {}",
+                        MARKET_OPEN, MARKET_CLOSE, executeTime.toLocalTime(), executionId);
+                return;
             }
 
             // Preserve and propagate user context into the scheduler thread
