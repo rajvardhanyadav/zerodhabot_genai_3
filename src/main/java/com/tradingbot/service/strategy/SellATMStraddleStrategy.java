@@ -277,11 +277,35 @@ public class SellATMStraddleStrategy extends BaseStrategy {
             throw new RuntimeException(errorMsg);
         }
 
+        // HFT CRITICAL: For straddle, we MUST have both legs. Partial fill is a risk exposure.
+        // If partial success, rollback the successful leg to avoid naked option risk.
+        // NOTE: This is an ERROR PATH - not the hot path. HFT optimizations are less critical here
+        // but we still avoid allocations where possible.
         if (!basketResponse.isAllSuccess()) {
-            log.warn("[{}] Partial basket order success - {} of {} orders placed",
+            log.warn("[{}] Partial basket order detected - {} of {} orders placed. Initiating rollback.",
                     tradingMode, basketResponse.getSuccessCount(), basketResponse.getTotalOrders());
-            // For straddle, we need both legs - if partial, we should handle appropriately
-            // For now, we'll proceed with what was successful but log a warning
+
+            // Attempt to rollback (exit) any successfully placed legs
+            rollbackSuccessfulLegs(basketResponse, quantity, tradingMode, executionId);
+
+            // Build detailed error message including failed leg info
+            // HFT: Use StringBuilder with direct append (avoid String.format overhead)
+            StringBuilder errorDetails = new StringBuilder(128);
+            errorDetails.append("Straddle requires both legs. Partial fill detected: ");
+
+            final List<BasketOrderResponse.BasketOrderResult> results = basketResponse.getOrderResults();
+            final int resultCount = results.size();
+            for (int i = 0; i < resultCount; i++) {
+                BasketOrderResponse.BasketOrderResult result = results.get(i);
+                if (!STATUS_SUCCESS.equals(result.getStatus())) {
+                    errorDetails.append('[')
+                            .append(result.getLegType())
+                            .append(" leg FAILED: ")
+                            .append(result.getMessage())
+                            .append("] ");
+                }
+            }
+            throw new RuntimeException(errorDetails.toString());
         }
 
         // Convert basket response to order details
@@ -300,8 +324,9 @@ public class SellATMStraddleStrategy extends BaseStrategy {
             }
         }
 
+        // This check is now a safeguard - should not reach here with partial fills
         if (orderDetails.size() < 2) {
-            String errorMsg = String.format("Expected 2 order details but got %d. Basket order may have partially failed.",
+            String errorMsg = String.format("Expected 2 order details but got %d. Basket order validation failed.",
                     orderDetails.size());
             log.error(errorMsg);
             throw new RuntimeException(errorMsg);
@@ -310,6 +335,113 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         log.info("[{}] Basket order completed - {} orders placed successfully", tradingMode, orderDetails.size());
 
         return orderDetails;
+    }
+
+    /**
+     * HFT CRITICAL: Rollback (exit) successfully placed legs when basket order is partial.
+     * This prevents naked option exposure from incomplete straddles.
+     *
+     * For SELL straddle, we BUY back the successful leg to close the position.
+     *
+     * NOTE: This executes only on ERROR PATH (partial fill), not the normal hot path.
+     * Still optimized to minimize latency for risk management.
+     *
+     * @param basketResponse The basket order response containing order results
+     * @param quantity The quantity to exit
+     * @param tradingMode Trading mode (PAPER/LIVE) for logging
+     * @param executionId Execution ID for traceability
+     */
+    private void rollbackSuccessfulLegs(BasketOrderResponse basketResponse, int quantity,
+                                         String tradingMode, String executionId) {
+        log.warn("[{}] ROLLBACK: Initiating rollback for execution {} due to partial fill",
+                tradingMode, executionId);
+
+        final List<BasketOrderResponse.BasketOrderResult> results = basketResponse.getOrderResults();
+        final int resultCount = results.size();
+
+        // HFT: Pre-size ArrayList to avoid resizing (max 2 legs for straddle)
+        List<CompletableFuture<Boolean>> rollbackFutures = new ArrayList<>(2);
+
+        // HFT: Use indexed loop to avoid iterator allocation
+        for (int i = 0; i < resultCount; i++) {
+            final BasketOrderResponse.BasketOrderResult result = results.get(i);
+
+            if (STATUS_SUCCESS.equals(result.getStatus()) && result.getOrderId() != null) {
+                // HFT: Capture final variables for lambda (avoids repeated getter calls)
+                final String tradingSymbol = result.getTradingSymbol();
+                final String legType = result.getLegType();
+
+                log.warn("[{}] ROLLBACK: Exiting successful {} leg - Symbol: {}, OrderId: {}",
+                        tradingMode, legType, tradingSymbol, result.getOrderId());
+
+                // Execute rollback asynchronously for speed, but track completion
+                CompletableFuture<Boolean> rollbackFuture = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        // BUY back to close the SELL position
+                        OrderRequest exitOrder = createOrderRequest(
+                                tradingSymbol,
+                                StrategyConstants.TRANSACTION_BUY,
+                                quantity,
+                                StrategyConstants.ORDER_TYPE_MARKET
+                        );
+
+                        OrderResponse exitResponse = unifiedTradingService.placeOrder(exitOrder);
+
+                        if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(exitResponse.getStatus())) {
+                            log.info("[{}] ROLLBACK SUCCESS: {} leg exited - ExitOrderId: {}",
+                                    tradingMode, legType, exitResponse.getOrderId());
+                            return Boolean.TRUE;
+                        } else {
+                            log.error("[{}] ROLLBACK FAILED: {} leg exit failed - Message: {}",
+                                    tradingMode, legType, exitResponse.getMessage());
+                            return Boolean.FALSE;
+                        }
+                    } catch (Exception | KiteException e) {
+                        log.error("[{}] ROLLBACK ERROR: Failed to exit {} leg {}: {}",
+                                tradingMode, legType, tradingSymbol, e.getMessage(), e);
+                        return Boolean.FALSE;
+                    }
+                }, EXIT_ORDER_EXECUTOR);
+
+                rollbackFutures.add(rollbackFuture);
+            }
+        }
+
+        // Wait for all rollbacks to complete (with timeout for HFT safety)
+        final int futureCount = rollbackFutures.size();
+        if (futureCount > 0) {
+            try {
+                CompletableFuture<Void> allRollbacks = CompletableFuture.allOf(
+                        rollbackFutures.toArray(new CompletableFuture[0])
+                );
+
+                // Wait max 5 seconds for rollbacks - critical for risk management
+                allRollbacks.get(5, java.util.concurrent.TimeUnit.SECONDS);
+
+                // HFT: Count results using primitive loop (avoid stream overhead)
+                int successCount = 0;
+                for (int i = 0; i < futureCount; i++) {
+                    if (Boolean.TRUE.equals(rollbackFutures.get(i).join())) {
+                        successCount++;
+                    }
+                }
+
+                log.info("[{}] ROLLBACK COMPLETE: {}/{} legs successfully rolled back for execution {}",
+                        tradingMode, successCount, futureCount, executionId);
+
+                if (successCount < futureCount) {
+                    log.error("[{}] ROLLBACK INCOMPLETE: {} legs could not be rolled back. MANUAL INTERVENTION REQUIRED!",
+                            tradingMode, futureCount - successCount);
+                }
+
+            } catch (java.util.concurrent.TimeoutException e) {
+                log.error("[{}] ROLLBACK TIMEOUT: Rollback did not complete within 5 seconds for execution {}. " +
+                        "MANUAL INTERVENTION REQUIRED!", tradingMode, executionId);
+            } catch (Exception e) {
+                log.error("[{}] ROLLBACK ERROR: Unexpected error during rollback for execution {}: {}",
+                        tradingMode, executionId, e.getMessage(), e);
+            }
+        }
     }
 
     /**
