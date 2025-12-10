@@ -4,6 +4,8 @@ import com.tradingbot.dto.ApiResponse;
 import com.tradingbot.service.InstrumentCacheService;
 import com.tradingbot.service.RateLimiterService;
 import com.tradingbot.service.greeks.DeltaCacheService;
+import com.tradingbot.service.persistence.PersistenceBufferService;
+import com.tradingbot.service.persistence.SystemHealthMonitorService;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -28,6 +30,8 @@ public class MonitoringController {
     private final DeltaCacheService deltaCacheService;
     private final RateLimiterService rateLimiterService;
     private final InstrumentCacheService instrumentCacheService;
+    private final PersistenceBufferService persistenceBufferService;
+    private final SystemHealthMonitorService systemHealthMonitorService;
 
     @GetMapping("/status")
     @Operation(summary = "Get WebSocket connection status",
@@ -104,5 +108,33 @@ public class MonitoringController {
     public ResponseEntity<ApiResponse<Map<String, Object>>> getInstrumentCacheStatus() {
         Map<String, Object> stats = instrumentCacheService.getCacheStats();
         return ResponseEntity.ok(ApiResponse.success(stats));
+    }
+
+    @GetMapping("/persistence-buffer")
+    @Operation(summary = "Get Persistence Buffer Status",
+               description = "Returns metrics about the write-behind persistence buffer. " +
+                           "Shows queue sizes, buffer/flush counts, and circuit breaker status. " +
+                           "Important for HFT monitoring - ensures persistence doesn't block trading.")
+    public ResponseEntity<ApiResponse<PersistenceBufferService.BufferMetrics>> getPersistenceBufferStatus() {
+        PersistenceBufferService.BufferMetrics metrics = persistenceBufferService.getMetrics();
+        return ResponseEntity.ok(ApiResponse.success(metrics));
+    }
+
+    @PostMapping("/persistence-buffer/flush")
+    @Operation(summary = "Force Flush Persistence Buffer",
+               description = "Manually trigger immediate flush of all persistence buffers. " +
+                           "Useful before shutdown or when you need data to be immediately persisted.")
+    public ResponseEntity<ApiResponse<String>> flushPersistenceBuffer() {
+        persistenceBufferService.forceFlush();
+        return ResponseEntity.ok(ApiResponse.success("Persistence buffer flush completed"));
+    }
+
+    @GetMapping("/system-health/current")
+    @Operation(summary = "Get Current System Health Metrics",
+               description = "Returns real-time system health metrics without waiting for scheduled snapshot. " +
+                           "Shows heap memory, threads, ticks, and orders processed.")
+    public ResponseEntity<ApiResponse<SystemHealthMonitorService.HealthMetrics>> getCurrentHealth() {
+        SystemHealthMonitorService.HealthMetrics metrics = systemHealthMonitorService.getCurrentMetrics();
+        return ResponseEntity.ok(ApiResponse.success(metrics));
     }
 }

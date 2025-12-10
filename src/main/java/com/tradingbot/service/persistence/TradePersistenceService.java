@@ -669,6 +669,44 @@ public class TradePersistenceService {
 
     /**
      * Update daily summary when strategy completes
+     * Async to avoid blocking the trading thread on strategy completion.
+     */
+    @Async("persistenceExecutor")
+    @Transactional
+    public CompletableFuture<Void> updateDailySummaryForStrategyAsync(String userId, LocalDate date, String tradingMode,
+                                               BigDecimal realizedPnl, BigDecimal charges,
+                                               boolean success) {
+        try {
+            DailyPnLSummaryEntity summary = getOrCreateDailySummary(userId, date, tradingMode);
+
+            summary.setStrategyExecutions(summary.getStrategyExecutions() + 1);
+            if (success) {
+                summary.setSuccessfulStrategies(summary.getSuccessfulStrategies() + 1);
+            } else {
+                summary.setFailedStrategies(summary.getFailedStrategies() + 1);
+            }
+
+            if (realizedPnl != null) {
+                summary.setRealizedPnl(summary.getRealizedPnl().add(realizedPnl));
+                summary.setNetPnl(summary.getRealizedPnl().subtract(
+                        summary.getTotalCharges() != null ? summary.getTotalCharges() : BigDecimal.ZERO));
+            }
+
+            if (charges != null) {
+                summary.setTotalCharges(summary.getTotalCharges().add(charges));
+            }
+
+            dailyPnLSummaryRepository.save(summary);
+            log.debug("Updated daily summary for strategy: userId={}, date={}, pnl={}", userId, date, realizedPnl);
+            return CompletableFuture.completedFuture(null);
+        } catch (Exception e) {
+            log.error("Failed to update daily summary for strategy: userId={}, date={}", userId, date, e);
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    /**
+     * Update daily summary when strategy completes (sync version for internal use)
      */
     @Transactional
     public void updateDailySummaryForStrategy(String userId, LocalDate date, String tradingMode,

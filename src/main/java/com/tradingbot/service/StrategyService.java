@@ -23,6 +23,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -31,6 +32,7 @@ import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 import static com.tradingbot.service.TradingConstants.*;
@@ -57,6 +59,11 @@ public class StrategyService {
     @Autowired
     @Lazy
     private TradePersistenceService persistenceService;
+
+    @Autowired
+    @Lazy
+    @org.springframework.beans.factory.annotation.Qualifier("persistenceExecutor")
+    private Executor persistenceExecutor;
 
     // Keyed by executionId but owned by userId; maintain both maps for efficient lookups
     private final Map<String, StrategyExecution> executionsById = new ConcurrentHashMap<>();
@@ -182,21 +189,38 @@ public class StrategyService {
 
     /**
      * Handle completion of a strategy execution with structured reason.
-     * This method no longer triggers auto-restart directly to avoid circular dependency.
-     * Instead, StrategyRestartScheduler will call this as a listener.
+     *
+     * HFT-SAFE: This method is called from the tick processing thread when SL/Target is hit.
+     * The in-memory state update is fast and synchronous (required for consistency).
+     * The persistence work is offloaded to a background executor to not block tick processing.
      */
     public void handleStrategyCompletion(String executionId, StrategyCompletionReason reason) {
         StrategyExecution execution = executionsById.get(executionId);
         if (execution != null) {
+            // Fast in-memory state update (synchronous - required for consistency)
             execution.setStatus(StrategyStatus.COMPLETED);
             execution.setCompletionReason(reason);
             execution.setMessage("Strategy completed - " + reason);
             log.info("Strategy {} marked as COMPLETED: {} (user={})", executionId, reason, execution.getUserId());
 
-            // Persist strategy execution asynchronously
-            persistStrategyExecutionAsync(execution);
-
-            eventPublisher.publishEvent(new StrategyCompletionEvent(this, execution));
+            // Offload persistence and event publishing to background executor
+            // This ensures tick processing thread returns immediately
+            final StrategyExecution execCopy = execution; // Capture for lambda
+            if (persistenceExecutor != null) {
+                persistenceExecutor.execute(() -> {
+                    try {
+                        persistStrategyExecutionAsync(execCopy);
+                        eventPublisher.publishEvent(new StrategyCompletionEvent(this, execCopy));
+                    } catch (Exception e) {
+                        log.error("Error in async strategy completion handling for {}: {}",
+                                executionId, e.getMessage());
+                    }
+                });
+            } else {
+                // Fallback if executor not available
+                persistStrategyExecutionAsync(execution);
+                eventPublisher.publishEvent(new StrategyCompletionEvent(this, execution));
+            }
         } else {
             log.warn("Attempted to mark non-existent strategy as completed: {}", executionId);
         }
@@ -240,9 +264,9 @@ public class StrategyService {
                     execution.getOrderLegs()
             );
 
-            // Update daily summary
+            // Update daily summary (async - doesn't block completion callback)
             boolean isSuccess = execution.getCompletionReason() == StrategyCompletionReason.TARGET_HIT;
-            persistenceService.updateDailySummaryForStrategy(
+            persistenceService.updateDailySummaryForStrategyAsync(
                     execution.getUserId(),
                     LocalDate.now(),
                     execution.getTradingMode(),

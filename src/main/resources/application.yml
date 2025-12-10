@@ -7,16 +7,23 @@ spring:
 
   # Database Configuration (H2 for development)
   datasource:
-    url: jdbc:h2:file:./data/tradingbot;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    url: jdbc:h2:file:./data/tradingbot;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;LOCK_TIMEOUT=10000
     driver-class-name: org.h2.Driver
     username: sa
     password:
     hikari:
-      maximum-pool-size: 10
-      minimum-idle: 2
-      idle-timeout: 30000
-      connection-timeout: 20000
+      # HFT Optimization: Larger pool to handle async persistence + queries
+      maximum-pool-size: 15
+      minimum-idle: 5
+      # Fast connection timeouts for HFT
+      connection-timeout: 5000
+      # Aggressive idle timeout to reclaim unused connections
+      idle-timeout: 60000
       max-lifetime: 1800000
+      # Leak detection for debugging (disable in prod for performance)
+      leak-detection-threshold: 30000
+      # Pool name for monitoring
+      pool-name: HFT-HikariPool
 
   # JPA/Hibernate Configuration
   jpa:
