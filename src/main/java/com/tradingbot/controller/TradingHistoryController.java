@@ -168,5 +168,135 @@ public class TradingHistoryController {
         String mode = unifiedTradingService.getTradingMode();
         return ResponseEntity.ok(ApiResponse.success("Current trading mode", mode));
     }
+
+    // ==================== ALERT HISTORY ====================
+
+    @GetMapping("/alerts")
+    @Operation(summary = "Get alert history",
+               description = "Retrieve recent alerts")
+    public ResponseEntity<ApiResponse<List<AlertHistoryEntity>>> getAlerts() {
+        String userId = CurrentUserContext.getUserId();
+        if (userId == null) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("X-User-Id header is required"));
+        }
+
+        List<AlertHistoryEntity> alerts = persistenceService.getAlertsByUser(userId);
+        return ResponseEntity.ok(ApiResponse.success(
+                String.format("Found %d alerts", alerts.size()), alerts));
+    }
+
+    @GetMapping("/alerts/strategy/{strategyName}")
+    @Operation(summary = "Get alerts by strategy",
+               description = "Retrieve alerts for a specific strategy")
+    public ResponseEntity<ApiResponse<List<AlertHistoryEntity>>> getAlertsByStrategy(
+            @PathVariable String strategyName) {
+
+        List<AlertHistoryEntity> alerts = persistenceService.getAlertsByStrategy(strategyName);
+        return ResponseEntity.ok(ApiResponse.success(
+                String.format("Found %d alerts for strategy %s", alerts.size(), strategyName), alerts));
+    }
+
+    // ==================== MTM SNAPSHOTS ====================
+
+    @GetMapping("/mtm")
+    @Operation(summary = "Get MTM snapshots",
+               description = "Retrieve MTM snapshots for today")
+    public ResponseEntity<ApiResponse<List<MTMSnapshotEntity>>> getMTMSnapshots(
+            @Parameter(description = "Date (yyyy-MM-dd), defaults to today")
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+
+        String userId = CurrentUserContext.getUserId();
+        if (userId == null) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("X-User-Id header is required"));
+        }
+
+        LocalDate targetDate = date != null ? date : LocalDate.now();
+        List<MTMSnapshotEntity> snapshots = persistenceService.getMTMSnapshotsForDate(userId, targetDate);
+
+        return ResponseEntity.ok(ApiResponse.success(
+                String.format("Found %d MTM snapshots for %s", snapshots.size(), targetDate), snapshots));
+    }
+
+    @GetMapping("/mtm/latest")
+    @Operation(summary = "Get latest MTM snapshot",
+               description = "Retrieve the most recent MTM snapshot")
+    public ResponseEntity<ApiResponse<MTMSnapshotEntity>> getLatestMTMSnapshot() {
+        String userId = CurrentUserContext.getUserId();
+        if (userId == null) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("X-User-Id header is required"));
+        }
+
+        return persistenceService.getLatestMTMSnapshot(userId)
+                .map(snapshot -> ResponseEntity.ok(ApiResponse.success("Latest MTM snapshot", snapshot)))
+                .orElse(ResponseEntity.ok(ApiResponse.success("No MTM snapshots found", null)));
+    }
+
+    // ==================== STRATEGY CONFIG HISTORY ====================
+
+    @GetMapping("/config-history")
+    @Operation(summary = "Get strategy config history",
+               description = "Retrieve strategy configuration change history")
+    public ResponseEntity<ApiResponse<List<StrategyConfigHistoryEntity>>> getConfigHistory() {
+        String userId = CurrentUserContext.getUserId();
+        if (userId == null) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("X-User-Id header is required"));
+        }
+
+        List<StrategyConfigHistoryEntity> history = persistenceService.getStrategyConfigHistoryByUser(userId);
+        return ResponseEntity.ok(ApiResponse.success(
+                String.format("Found %d config changes", history.size()), history));
+    }
+
+    @GetMapping("/config-history/{strategyName}")
+    @Operation(summary = "Get config history by strategy",
+               description = "Retrieve configuration history for a specific strategy")
+    public ResponseEntity<ApiResponse<List<StrategyConfigHistoryEntity>>> getConfigHistoryByStrategy(
+            @PathVariable String strategyName) {
+
+        List<StrategyConfigHistoryEntity> history = persistenceService.getStrategyConfigHistory(strategyName);
+        return ResponseEntity.ok(ApiResponse.success(
+                String.format("Found %d config changes for %s", history.size(), strategyName), history));
+    }
+
+    // ==================== WEBSOCKET EVENTS ====================
+
+    @GetMapping("/websocket-events")
+    @Operation(summary = "Get WebSocket events",
+               description = "Retrieve recent WebSocket connection events")
+    public ResponseEntity<ApiResponse<List<WebSocketEventEntity>>> getWebSocketEvents() {
+        String userId = CurrentUserContext.getUserId();
+        if (userId == null) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("X-User-Id header is required"));
+        }
+
+        List<WebSocketEventEntity> events = persistenceService.getWebSocketEventsByUser(userId);
+        return ResponseEntity.ok(ApiResponse.success(
+                String.format("Found %d WebSocket events", events.size()), events));
+    }
+
+    // ==================== SYSTEM HEALTH ====================
+
+    @GetMapping("/system-health")
+    @Operation(summary = "Get system health snapshots",
+               description = "Retrieve recent system health metrics")
+    public ResponseEntity<ApiResponse<List<SystemHealthSnapshotEntity>>> getSystemHealth() {
+        List<SystemHealthSnapshotEntity> snapshots = persistenceService.getRecentHealthSnapshots();
+        return ResponseEntity.ok(ApiResponse.success(
+                String.format("Found %d health snapshots", snapshots.size()), snapshots));
+    }
+
+    @GetMapping("/system-health/latest")
+    @Operation(summary = "Get latest system health",
+               description = "Retrieve the most recent system health snapshot")
+    public ResponseEntity<ApiResponse<SystemHealthSnapshotEntity>> getLatestSystemHealth() {
+        return persistenceService.getLatestHealthSnapshot()
+                .map(snapshot -> ResponseEntity.ok(ApiResponse.success("Latest health snapshot", snapshot)))
+                .orElse(ResponseEntity.ok(ApiResponse.success("No health snapshots found", null)));
+    }
 }
 

@@ -4,7 +4,9 @@ import com.tradingbot.config.PersistenceConfig;
 import com.tradingbot.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +31,27 @@ public class DataCleanupService {
     private final PositionSnapshotRepository positionSnapshotRepository;
     private final OrderTimingRepository orderTimingRepository;
     private final DailyPnLSummaryRepository dailyPnLSummaryRepository;
+
+    // New repositories for extended persistence
+    @Autowired
+    @Lazy
+    private AlertHistoryRepository alertHistoryRepository;
+
+    @Autowired
+    @Lazy
+    private MTMSnapshotRepository mtmSnapshotRepository;
+
+    @Autowired
+    @Lazy
+    private StrategyConfigHistoryRepository strategyConfigHistoryRepository;
+
+    @Autowired
+    @Lazy
+    private WebSocketEventRepository webSocketEventRepository;
+
+    @Autowired
+    @Lazy
+    private SystemHealthSnapshotRepository systemHealthSnapshotRepository;
 
     /**
      * Scheduled cleanup job.
@@ -84,6 +107,33 @@ public class DataCleanupService {
         log.debug("Cleaning up daily summaries older than {}", tradeCutoff);
         dailyPnLSummaryRepository.deleteByTradingDateBefore(tradeCutoff);
 
+        // ==================== NEW CLEANUP OPERATIONS ====================
+
+        // Cleanup alert history
+        LocalDateTime alertCutoff = LocalDateTime.now().minusDays(retention.getAlertsDays());
+        log.debug("Cleaning up alerts older than {}", alertCutoff);
+        alertHistoryRepository.deleteByTimestampBefore(alertCutoff);
+
+        // Cleanup MTM snapshots
+        LocalDateTime mtmCutoff = LocalDateTime.now().minusDays(retention.getMtmSnapshotsDays());
+        log.debug("Cleaning up MTM snapshots older than {}", mtmCutoff);
+        mtmSnapshotRepository.deleteByTimestampBefore(mtmCutoff);
+
+        // Cleanup strategy config history
+        LocalDateTime configCutoff = LocalDateTime.now().minusDays(retention.getStrategyConfigDays());
+        log.debug("Cleaning up strategy config history older than {}", configCutoff);
+        strategyConfigHistoryRepository.deleteByChangedAtBefore(configCutoff);
+
+        // Cleanup WebSocket events
+        LocalDateTime wsCutoff = LocalDateTime.now().minusDays(retention.getWebsocketEventsDays());
+        log.debug("Cleaning up WebSocket events older than {}", wsCutoff);
+        webSocketEventRepository.deleteByTimestampBefore(wsCutoff);
+
+        // Cleanup system health snapshots
+        LocalDateTime healthCutoff = LocalDateTime.now().minusDays(retention.getSystemHealthDays());
+        log.debug("Cleaning up system health snapshots older than {}", healthCutoff);
+        systemHealthSnapshotRepository.deleteByTimestampBefore(healthCutoff);
+
         result.setSuccess(true);
         return result;
     }
@@ -100,6 +150,11 @@ public class DataCleanupService {
         private long positionSnapshotsDeleted;
         private long orderTimingsDeleted;
         private long dailySummariesDeleted;
+        private long alertsDeleted;
+        private long mtmSnapshotsDeleted;
+        private long strategyConfigHistoryDeleted;
+        private long websocketEventsDeleted;
+        private long systemHealthSnapshotsDeleted;
     }
 }
 

@@ -48,6 +48,31 @@ public class PersistenceConfig {
          * Number of days to retain order timing metrics
          */
         private int orderTimingDays = 90;
+
+        /**
+         * Number of days to retain alert history
+         */
+        private int alertsDays = 90;
+
+        /**
+         * Number of days to retain MTM snapshots
+         */
+        private int mtmSnapshotsDays = 30;
+
+        /**
+         * Number of days to retain strategy config history
+         */
+        private int strategyConfigDays = 365;
+
+        /**
+         * Number of days to retain WebSocket events
+         */
+        private int websocketEventsDays = 30;
+
+        /**
+         * Number of days to retain system health snapshots
+         */
+        private int systemHealthDays = 7;
     }
 
     @Data

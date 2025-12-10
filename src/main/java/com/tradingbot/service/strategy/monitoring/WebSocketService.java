@@ -1,6 +1,8 @@
 package com.tradingbot.service.strategy.monitoring;
 
 import com.tradingbot.config.KiteConfig;
+import com.tradingbot.config.PersistenceConfig;
+import com.tradingbot.service.persistence.TradePersistenceService;
 import com.tradingbot.service.session.UserSessionManager;
 import com.tradingbot.util.CurrentUserContext;
 import com.zerodhatech.kiteconnect.KiteConnect;
@@ -10,9 +12,10 @@ import com.zerodhatech.ticker.KiteTicker;
 import com.zerodhatech.ticker.OnError;
 import jakarta.annotation.PostConstruct;
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -26,13 +29,24 @@ import java.util.concurrent.locks.ReentrantLock;
  * Refactored to support per-user WebSocket connections and subscriptions.
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 @Getter
 public class WebSocketService implements DisposableBean {
 
     private final UserSessionManager sessionManager;
     private final KiteConfig kiteConfig;
+    private final PersistenceConfig persistenceConfig;
+
+    @Autowired
+    @Lazy
+    private TradePersistenceService tradePersistenceService;
+
+    public WebSocketService(UserSessionManager sessionManager, KiteConfig kiteConfig,
+                             PersistenceConfig persistenceConfig) {
+        this.sessionManager = sessionManager;
+        this.kiteConfig = kiteConfig;
+        this.persistenceConfig = persistenceConfig;
+    }
 
 
     /** Per-user WebSocket context */
@@ -262,12 +276,21 @@ public class WebSocketService implements DisposableBean {
         c.isConnecting.set(false);
         log.info("[user={}] WebSocket connected.", c.userId);
         resubscribeAll(c);
+
+        // Persist connection event
+        persistWebSocketEvent(c.userId, "CONNECTED", "WebSocket connection established",
+                c.instrumentToExecutions.size(), null, null, null, null);
     }
 
     private void onDisconnected(UserWSContext c) {
         c.isConnected.set(false);
         c.isConnecting.set(false);
         log.warn("[user={}] WebSocket disconnected. Scheduling reconnect...", c.userId);
+
+        // Persist disconnection event
+        persistWebSocketEvent(c.userId, "DISCONNECTED", "WebSocket connection lost",
+                c.instrumentToExecutions.size(), null, null, null, null);
+
         scheduleReconnection(c, 1);
     }
 
@@ -275,13 +298,43 @@ public class WebSocketService implements DisposableBean {
         log.error("[user={}] WebSocket error", c.userId, e);
         c.isConnected.set(false);
         c.isConnecting.set(false);
+
+        String errorCode = null;
         if (e instanceof KiteException ke) {
+            errorCode = String.valueOf(ke.code);
             if (ke.code == 1001 || ke.code == 1009) {
                 log.error("[user={}] Critical token error. Manual re-login required.", c.userId);
+
+                // Persist critical error event
+                persistWebSocketEvent(c.userId, "ERROR", "Critical token error - re-login required",
+                        null, null, e.getMessage(), errorCode, null);
                 return;
             }
         }
+
+        // Persist error event
+        persistWebSocketEvent(c.userId, "ERROR", "WebSocket error occurred",
+                null, null, e.getMessage(), errorCode, null);
+
         scheduleReconnection(c, 1);
+    }
+
+    /**
+     * Helper method to persist WebSocket events
+     */
+    private void persistWebSocketEvent(String userId, String eventType, String details,
+                                         Integer subscribedTokenCount, Integer reconnectAttempt,
+                                         String errorMessage, String errorCode, Long latencyMs) {
+        if (persistenceConfig == null || !persistenceConfig.isEnabled() || tradePersistenceService == null) {
+            return;
+        }
+        try {
+            tradePersistenceService.persistWebSocketEventAsync(
+                    userId, eventType, details, subscribedTokenCount,
+                    reconnectAttempt, errorMessage, errorCode, latencyMs);
+        } catch (Exception ex) {
+            log.trace("Failed to persist WebSocket event: {}", ex.getMessage());
+        }
     }
 
     private void scheduleReconnection(UserWSContext c, int attempt) {

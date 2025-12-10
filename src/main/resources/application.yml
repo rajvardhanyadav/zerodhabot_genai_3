@@ -111,6 +111,11 @@ persistence:
     delta-snapshots-days: 90
     position-snapshots-days: 180
     order-timing-days: 90
+    alerts-days: 90
+    mtm-snapshots-days: 30
+    strategy-config-days: 365
+    websocket-events-days: 30
+    system-health-days: 7
 
   # Cleanup job settings
   cleanup:

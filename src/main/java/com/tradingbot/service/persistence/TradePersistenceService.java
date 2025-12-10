@@ -1,5 +1,6 @@
 package com.tradingbot.service.persistence;
 
+import com.tradingbot.config.PersistenceConfig;
 import com.tradingbot.entity.*;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.paper.PaperOrder;
@@ -7,6 +8,8 @@ import com.tradingbot.paper.PaperPosition;
 import com.tradingbot.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,6 +18,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
@@ -36,6 +40,28 @@ public class TradePersistenceService {
     private final DailyPnLSummaryRepository dailyPnLSummaryRepository;
     private final PositionSnapshotRepository positionSnapshotRepository;
     private final OrderTimingRepository orderTimingRepository;
+    private final PersistenceConfig persistenceConfig;
+
+    // New repositories for extended persistence
+    @Autowired
+    @Lazy
+    private AlertHistoryRepository alertHistoryRepository;
+
+    @Autowired
+    @Lazy
+    private MTMSnapshotRepository mtmSnapshotRepository;
+
+    @Autowired
+    @Lazy
+    private StrategyConfigHistoryRepository strategyConfigHistoryRepository;
+
+    @Autowired
+    @Lazy
+    private WebSocketEventRepository webSocketEventRepository;
+
+    @Autowired
+    @Lazy
+    private SystemHealthSnapshotRepository systemHealthSnapshotRepository;
 
     // ==================== TRADE PERSISTENCE ====================
 
@@ -689,6 +715,343 @@ public class TradePersistenceService {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    // ==================== ALERT PERSISTENCE ====================
+
+    /**
+     * Persist alert history asynchronously
+     */
+    @Async("persistenceExecutor")
+    public CompletableFuture<Void> persistAlertAsync(String alertType, String strategyName, String symbol,
+                                                      String message, String severity, String userId,
+                                                      boolean telegramSent) {
+        if (!persistenceConfig.isEnabled()) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        try {
+            AlertHistoryEntity alert = AlertHistoryEntity.builder()
+                    .timestamp(LocalDateTime.now())
+                    .alertType(alertType)
+                    .strategyName(strategyName)
+                    .symbol(symbol)
+                    .message(message != null && message.length() > 2000 ? message.substring(0, 2000) : message)
+                    .severity(severity)
+                    .userId(userId)
+                    .telegramSent(telegramSent)
+                    .build();
+
+            alertHistoryRepository.save(alert);
+            log.debug("Persisted alert: type={}, strategy={}", alertType, strategyName);
+            return CompletableFuture.completedFuture(null);
+        } catch (Exception e) {
+            log.error("Failed to persist alert: {}", e.getMessage());
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    /**
+     * Get recent alerts
+     */
+    public List<AlertHistoryEntity> getRecentAlerts(int limit) {
+        return alertHistoryRepository.findTop100ByOrderByTimestampDesc();
+    }
+
+    /**
+     * Get alerts by user
+     */
+    public List<AlertHistoryEntity> getAlertsByUser(String userId) {
+        return alertHistoryRepository.findTop100ByUserIdOrderByTimestampDesc(userId);
+    }
+
+    /**
+     * Get alerts by strategy
+     */
+    public List<AlertHistoryEntity> getAlertsByStrategy(String strategyName) {
+        return alertHistoryRepository.findByStrategyNameOrderByTimestampDesc(strategyName);
+    }
+
+    // ==================== MTM SNAPSHOT PERSISTENCE ====================
+
+    /**
+     * Persist MTM snapshot asynchronously
+     */
+    @Async("persistenceExecutor")
+    public CompletableFuture<Void> persistMTMSnapshotAsync(String userId, BigDecimal totalMTM,
+                                                            BigDecimal unrealizedPnL, BigDecimal realizedPnL,
+                                                            BigDecimal spotPrice, BigDecimal portfolioDelta,
+                                                            String executionId, String tradingMode) {
+        if (!persistenceConfig.isEnabled()) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        try {
+            MTMSnapshotEntity snapshot = MTMSnapshotEntity.builder()
+                    .userId(userId)
+                    .timestamp(LocalDateTime.now())
+                    .tradingDate(LocalDate.now())
+                    .executionId(executionId)
+                    .totalMTM(totalMTM)
+                    .unrealizedPnL(unrealizedPnL)
+                    .realizedPnL(realizedPnL)
+                    .spotPrice(spotPrice)
+                    .portfolioDelta(portfolioDelta)
+                    .tradingMode(tradingMode)
+                    .build();
+
+            mtmSnapshotRepository.save(snapshot);
+            log.debug("Persisted MTM snapshot: userId={}, totalMTM={}", userId, totalMTM);
+            return CompletableFuture.completedFuture(null);
+        } catch (Exception e) {
+            log.error("Failed to persist MTM snapshot: {}", e.getMessage());
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    /**
+     * Get MTM snapshots for date
+     */
+    public List<MTMSnapshotEntity> getMTMSnapshotsForDate(String userId, LocalDate date) {
+        return mtmSnapshotRepository.findByUserIdAndTradingDateOrderByTimestamp(userId, date);
+    }
+
+    /**
+     * Get latest MTM snapshot
+     */
+    public Optional<MTMSnapshotEntity> getLatestMTMSnapshot(String userId) {
+        return mtmSnapshotRepository.findLatestSnapshotByUserIdAndDate(userId, LocalDate.now());
+    }
+
+    // ==================== STRATEGY CONFIG HISTORY PERSISTENCE ====================
+
+    /**
+     * Persist strategy configuration change asynchronously
+     */
+    @Async("persistenceExecutor")
+    public CompletableFuture<Void> persistStrategyConfigChangeAsync(String strategyName, String userId,
+                                                                      String changedBy, String configJson,
+                                                                      BigDecimal stopLossPoints,
+                                                                      BigDecimal targetPoints, Integer lots,
+                                                                      String instrumentType, String expiry,
+                                                                      String tradingMode, Boolean autoRestart,
+                                                                      String changeDescription) {
+        if (!persistenceConfig.isEnabled()) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        try {
+            StrategyConfigHistoryEntity history = StrategyConfigHistoryEntity.builder()
+                    .strategyName(strategyName)
+                    .userId(userId)
+                    .changedAt(LocalDateTime.now())
+                    .changedBy(changedBy)
+                    .configurationJson(configJson)
+                    .stopLossPoints(stopLossPoints)
+                    .targetPoints(targetPoints)
+                    .lots(lots)
+                    .instrumentType(instrumentType)
+                    .expiry(expiry)
+                    .tradingMode(tradingMode)
+                    .autoRestartEnabled(autoRestart)
+                    .changeDescription(changeDescription)
+                    .build();
+
+            strategyConfigHistoryRepository.save(history);
+            log.info("Persisted strategy config change: strategy={}, changedBy={}", strategyName, changedBy);
+            return CompletableFuture.completedFuture(null);
+        } catch (Exception e) {
+            log.error("Failed to persist strategy config change: {}", e.getMessage());
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    /**
+     * Get strategy config history
+     */
+    public List<StrategyConfigHistoryEntity> getStrategyConfigHistory(String strategyName) {
+        return strategyConfigHistoryRepository.findByStrategyNameOrderByChangedAtDesc(strategyName);
+    }
+
+    /**
+     * Get strategy config history by user
+     */
+    public List<StrategyConfigHistoryEntity> getStrategyConfigHistoryByUser(String userId) {
+        return strategyConfigHistoryRepository.findByUserIdOrderByChangedAtDesc(userId);
+    }
+
+    // ==================== WEBSOCKET EVENT PERSISTENCE ====================
+
+    /**
+     * Persist WebSocket event asynchronously
+     */
+    @Async("persistenceExecutor")
+    public CompletableFuture<Void> persistWebSocketEventAsync(String userId, String eventType,
+                                                                String details, Integer subscribedTokenCount,
+                                                                Integer reconnectAttempt, String errorMessage,
+                                                                String errorCode, Long latencyMs) {
+        if (!persistenceConfig.isEnabled()) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        try {
+            WebSocketEventEntity event = WebSocketEventEntity.builder()
+                    .userId(userId)
+                    .timestamp(LocalDateTime.now())
+                    .eventType(eventType)
+                    .details(details != null && details.length() > 500 ? details.substring(0, 500) : details)
+                    .subscribedTokenCount(subscribedTokenCount)
+                    .reconnectAttempt(reconnectAttempt)
+                    .errorMessage(errorMessage != null && errorMessage.length() > 500 ?
+                            errorMessage.substring(0, 500) : errorMessage)
+                    .errorCode(errorCode)
+                    .latencyMs(latencyMs)
+                    .build();
+
+            webSocketEventRepository.save(event);
+            log.debug("Persisted WebSocket event: type={}, userId={}", eventType, userId);
+            return CompletableFuture.completedFuture(null);
+        } catch (Exception e) {
+            log.error("Failed to persist WebSocket event: {}", e.getMessage());
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    /**
+     * Get recent WebSocket events
+     */
+    public List<WebSocketEventEntity> getRecentWebSocketEvents() {
+        return webSocketEventRepository.findTop100ByOrderByTimestampDesc();
+    }
+
+    /**
+     * Get WebSocket events by user
+     */
+    public List<WebSocketEventEntity> getWebSocketEventsByUser(String userId) {
+        return webSocketEventRepository.findTop100ByUserIdOrderByTimestampDesc(userId);
+    }
+
+    // ==================== SYSTEM HEALTH SNAPSHOT PERSISTENCE ====================
+
+    /**
+     * Persist system health snapshot asynchronously
+     */
+    @Async("persistenceExecutor")
+    public CompletableFuture<Void> persistSystemHealthSnapshotAsync(Long heapMemoryUsedMB, Long heapMemoryMaxMB,
+                                                                      Long nonHeapMemoryUsedMB, Integer activeThreads,
+                                                                      Integer peakThreads, Boolean kiteConnected,
+                                                                      Boolean websocketConnected,
+                                                                      Integer activeWebSocketSubscriptions,
+                                                                      Integer activeStrategies,
+                                                                      Integer completedStrategiesToday,
+                                                                      Long ticksReceivedLastMinute,
+                                                                      Long ordersProcessedLastMinute,
+                                                                      Double avgOrderLatencyMs,
+                                                                      Double maxOrderLatencyMs,
+                                                                      Boolean databaseHealthy,
+                                                                      Integer activeDbConnections,
+                                                                      Integer paperOrdersToday,
+                                                                      Integer liveOrdersToday) {
+        if (!persistenceConfig.isEnabled()) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        try {
+            SystemHealthSnapshotEntity snapshot = SystemHealthSnapshotEntity.builder()
+                    .timestamp(LocalDateTime.now())
+                    .heapMemoryUsedMB(heapMemoryUsedMB)
+                    .heapMemoryMaxMB(heapMemoryMaxMB)
+                    .nonHeapMemoryUsedMB(nonHeapMemoryUsedMB)
+                    .activeThreads(activeThreads)
+                    .peakThreads(peakThreads)
+                    .kiteConnected(kiteConnected)
+                    .websocketConnected(websocketConnected)
+                    .activeWebSocketSubscriptions(activeWebSocketSubscriptions)
+                    .activeStrategies(activeStrategies)
+                    .completedStrategiesToday(completedStrategiesToday)
+                    .ticksReceivedLastMinute(ticksReceivedLastMinute)
+                    .ordersProcessedLastMinute(ordersProcessedLastMinute)
+                    .avgOrderLatencyMs(avgOrderLatencyMs)
+                    .maxOrderLatencyMs(maxOrderLatencyMs)
+                    .databaseHealthy(databaseHealthy)
+                    .activeDbConnections(activeDbConnections)
+                    .paperOrdersToday(paperOrdersToday)
+                    .liveOrdersToday(liveOrdersToday)
+                    .build();
+
+            systemHealthSnapshotRepository.save(snapshot);
+            log.debug("Persisted system health snapshot");
+            return CompletableFuture.completedFuture(null);
+        } catch (Exception e) {
+            log.error("Failed to persist system health snapshot: {}", e.getMessage());
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    /**
+     * Get recent health snapshots
+     */
+    public List<SystemHealthSnapshotEntity> getRecentHealthSnapshots() {
+        return systemHealthSnapshotRepository.findTop100ByOrderByTimestampDesc();
+    }
+
+    /**
+     * Get latest health snapshot
+     */
+    public Optional<SystemHealthSnapshotEntity> getLatestHealthSnapshot() {
+        return systemHealthSnapshotRepository.findLatestSnapshot();
+    }
+
+    // ==================== CLEANUP METHODS ====================
+
+    /**
+     * Cleanup old alerts
+     */
+    @Transactional
+    public void cleanupOldAlerts(int retentionDays) {
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(retentionDays);
+        alertHistoryRepository.deleteByTimestampBefore(cutoff);
+        log.info("Cleaned up alerts older than {} days", retentionDays);
+    }
+
+    /**
+     * Cleanup old MTM snapshots
+     */
+    @Transactional
+    public void cleanupOldMTMSnapshots(int retentionDays) {
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(retentionDays);
+        mtmSnapshotRepository.deleteByTimestampBefore(cutoff);
+        log.info("Cleaned up MTM snapshots older than {} days", retentionDays);
+    }
+
+    /**
+     * Cleanup old strategy config history
+     */
+    @Transactional
+    public void cleanupOldStrategyConfigHistory(int retentionDays) {
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(retentionDays);
+        strategyConfigHistoryRepository.deleteByChangedAtBefore(cutoff);
+        log.info("Cleaned up strategy config history older than {} days", retentionDays);
+    }
+
+    /**
+     * Cleanup old WebSocket events
+     */
+    @Transactional
+    public void cleanupOldWebSocketEvents(int retentionDays) {
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(retentionDays);
+        webSocketEventRepository.deleteByTimestampBefore(cutoff);
+        log.info("Cleaned up WebSocket events older than {} days", retentionDays);
+    }
+
+    /**
+     * Cleanup old system health snapshots
+     */
+    @Transactional
+    public void cleanupOldSystemHealthSnapshots(int retentionDays) {
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(retentionDays);
+        systemHealthSnapshotRepository.deleteByTimestampBefore(cutoff);
+        log.info("Cleaned up system health snapshots older than {} days", retentionDays);
     }
 }
 
