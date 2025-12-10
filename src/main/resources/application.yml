@@ -102,20 +102,21 @@ historical:
 
 # Persistence Configuration
 persistence:
-  # Enable/disable persistence (can be disabled for testing)
+  # Enable/disable persistence globally
   enabled: true
 
-  # Data retention in days (older data will be archived/deleted)
+  # Data retention settings (in days)
   retention:
     trades-days: 365
     delta-snapshots-days: 90
     position-snapshots-days: 180
     order-timing-days: 90
 
-  # Cleanup job schedule (cron expression - runs at 2 AM daily)
+  # Cleanup job settings
   cleanup:
     enabled: true
-    cron: "0 0 2 * * ?"
+    cron: "0 0 2 * * ?"  # Run at 2 AM daily
+
 
 # Actuator endpoints
 management:

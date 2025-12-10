@@ -1,6 +1,9 @@
 package com.tradingbot.service.greeks;
 
+import com.tradingbot.config.PersistenceConfig;
+import com.tradingbot.entity.DeltaSnapshotEntity;
 import com.tradingbot.service.TradingService;
+import com.tradingbot.service.persistence.TradePersistenceService;
 import com.tradingbot.service.session.UserSessionManager;
 import com.tradingbot.util.CurrentUserContext;
 import com.zerodhatech.kiteconnect.KiteConnect;
@@ -9,10 +12,13 @@ import com.zerodhatech.models.Instrument;
 import com.zerodhatech.models.LTPQuote;
 import com.zerodhatech.models.Quote;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
@@ -39,6 +45,12 @@ public class DeltaCacheService {
 
     private final TradingService tradingService;
     private final UserSessionManager userSessionManager;
+    private final PersistenceConfig persistenceConfig;
+
+    // Lazy injection to break circular dependency
+    @Autowired
+    @Lazy
+    private TradePersistenceService persistenceService;
 
     // Cache for pre-computed ATM strikes by delta
     // Key format: "NIFTY_2024-12-19" (instrumentType_expiryDate)
@@ -82,9 +94,11 @@ public class DeltaCacheService {
     // HFT: ThreadLocal Calendar instances
     private static final ThreadLocal<Calendar> CALENDAR_IST = ThreadLocal.withInitial(() -> Calendar.getInstance(IST));
 
-    public DeltaCacheService(TradingService tradingService, UserSessionManager userSessionManager) {
+    public DeltaCacheService(TradingService tradingService, UserSessionManager userSessionManager,
+                              PersistenceConfig persistenceConfig) {
         this.tradingService = tradingService;
         this.userSessionManager = userSessionManager;
+        this.persistenceConfig = persistenceConfig;
     }
 
     /**
@@ -316,11 +330,84 @@ public class DeltaCacheService {
         DeltaCacheEntry entry = new DeltaCacheEntry(bestStrike, bestDelta, deltas, System.currentTimeMillis());
         deltaCache.put(cacheKey, entry);
 
+        // Persist delta snapshot asynchronously (non-blocking for HFT)
+        persistDeltaSnapshotIfEnabled(instrumentType, expiry, spotPrice, bestStrike, bestDelta, timeToExpiry);
+
         // HFT: Use ThreadLocal StringBuilder for logging to avoid String.format
         log.info("Delta cache updated for {}: ATM strike = {} (Δ = {})", cacheKey, bestStrike,
                 formatDelta(bestDelta));
 
         return bestStrike;
+    }
+
+    /**
+     * Persist delta snapshot to database if persistence is enabled.
+     * Non-blocking operation for HFT performance.
+     */
+    private void persistDeltaSnapshotIfEnabled(String instrumentType, Date expiry, double spotPrice,
+                                                 double atmStrike, double delta, double timeToExpiry) {
+        if (persistenceConfig == null || !persistenceConfig.isEnabled() || persistenceService == null) {
+            return;
+        }
+
+        try {
+            DeltaSnapshotEntity snapshot = DeltaSnapshotEntity.builder()
+                    .instrumentType(instrumentType)
+                    .spotPrice(BigDecimal.valueOf(spotPrice))
+                    .atmStrike(BigDecimal.valueOf(atmStrike))
+                    .delta(BigDecimal.valueOf(delta))
+                    .timeToExpiry(BigDecimal.valueOf(timeToExpiry))
+                    .riskFreeRate(BigDecimal.valueOf(RISK_FREE_RATE))
+                    .expiry(SDF_YYYY_MM_DD.get().format(expiry))
+                    .snapshotType("PERIODIC")
+                    .build();
+
+            persistenceService.persistDeltaSnapshotAsync(snapshot);
+            log.debug("Persisted delta snapshot for {}: ATM={}, delta={}", instrumentType, atmStrike, delta);
+        } catch (Exception e) {
+            log.warn("Failed to persist delta snapshot for {}: {}", instrumentType, e.getMessage());
+            // Don't fail the delta calculation if persistence fails
+        }
+    }
+
+    /**
+     * Persist delta snapshot for strategy entry/exit with full context.
+     * Called by strategy execution code when entering or exiting positions.
+     */
+    public void persistDeltaForStrategy(String executionId, String userId, String instrumentType,
+                                          String tradingSymbol, Long instrumentToken, String optionType,
+                                          Double strikePrice, String expiry, Double spotPrice,
+                                          Double optionPrice, Double atmStrike, Double delta,
+                                          String snapshotType) {
+        if (persistenceConfig == null || !persistenceConfig.isEnabled() || persistenceService == null) {
+            return;
+        }
+
+        try {
+            persistenceService.persistDeltaForStrategyAsync(
+                    executionId,
+                    userId,
+                    instrumentType,
+                    tradingSymbol,
+                    instrumentToken,
+                    optionType,
+                    strikePrice != null ? BigDecimal.valueOf(strikePrice) : null,
+                    expiry,
+                    spotPrice != null ? BigDecimal.valueOf(spotPrice) : null,
+                    optionPrice != null ? BigDecimal.valueOf(optionPrice) : null,
+                    atmStrike != null ? BigDecimal.valueOf(atmStrike) : null,
+                    delta != null ? BigDecimal.valueOf(delta) : null,
+                    null, // gamma
+                    null, // theta
+                    null, // vega
+                    null, // iv
+                    null, // timeToExpiry
+                    snapshotType
+            );
+            log.debug("Persisted strategy delta snapshot: execution={}, type={}", executionId, snapshotType);
+        } catch (Exception e) {
+            log.warn("Failed to persist strategy delta snapshot for {}: {}", executionId, e.getMessage());
+        }
     }
 
     /**

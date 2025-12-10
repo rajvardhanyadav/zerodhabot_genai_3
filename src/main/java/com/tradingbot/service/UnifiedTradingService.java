@@ -1,6 +1,7 @@
 package com.tradingbot.service;
 
 import com.tradingbot.config.PaperTradingConfig;
+import com.tradingbot.config.PersistenceConfig;
 import com.tradingbot.dto.BasketOrderRequest;
 import com.tradingbot.dto.BasketOrderResponse;
 import com.tradingbot.dto.DayPnLResponse;
@@ -11,6 +12,7 @@ import com.tradingbot.paper.PaperAccount;
 import com.tradingbot.paper.PaperOrder;
 import com.tradingbot.paper.PaperPosition;
 import com.tradingbot.paper.PaperTradingService;
+import com.tradingbot.service.persistence.TradePersistenceService;
 import com.tradingbot.util.CurrentUserContext;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Holding;
@@ -20,9 +22,13 @@ import com.zerodhatech.models.Trade;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -44,6 +50,12 @@ public class UnifiedTradingService {
     private final PaperTradingConfig config;
     private final PaperTradingService paperTradingService;
     private final TradingService liveTradingService;
+    private final PersistenceConfig persistenceConfig;
+
+    // Lazy injection to break circular dependency
+    @Autowired
+    @Lazy
+    private TradePersistenceService persistenceService;
 
     /**
      * Place order - routes to paper or live trading based on config
@@ -382,5 +394,41 @@ public class UnifiedTradingService {
 
     private void logLiveMode(String message) {
         log.info("{} [{}] {}", LIVE_MODE_EMOJI, LIVE_MODE, message);
+    }
+
+    // ==================== PERSISTENCE INTEGRATION ====================
+
+    /**
+     * Persist current positions snapshot.
+     * Typically called at end of day or on demand.
+     */
+    public void persistPositionSnapshot() throws KiteException, IOException {
+        if (persistenceConfig == null || !persistenceConfig.isEnabled() || persistenceService == null) {
+            log.debug("Persistence disabled or service unavailable, skipping position snapshot");
+            return;
+        }
+
+        String userId = getUserId();
+
+        if (isPaperTradingEnabled()) {
+            logPaperMode("Persisting paper position snapshot for user=" + userId);
+            List<PaperPosition> paperPositions = paperTradingService.getPositions(userId);
+            persistenceService.persistPositionSnapshotsAsync(paperPositions, userId, PAPER_MODE);
+        } else {
+            logLiveMode("Persisting live position snapshot for user=" + userId);
+            Map<String, List<Position>> positions = liveTradingService.getPositions();
+            if (positions.containsKey("net") && positions.get("net") != null) {
+                persistenceService.persistLivePositionSnapshotsAsync(positions.get("net"), userId);
+            }
+        }
+
+        log.info("Position snapshot persisted for user={}", userId);
+    }
+
+    /**
+     * Get current trading mode string
+     */
+    public String getTradingMode() {
+        return isPaperTradingEnabled() ? PAPER_MODE : LIVE_MODE;
     }
 }

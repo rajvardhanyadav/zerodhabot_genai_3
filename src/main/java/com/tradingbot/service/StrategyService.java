@@ -28,6 +28,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -212,6 +213,7 @@ public class StrategyService {
         try {
             // Calculate realized P&L from order legs
             double totalPnl = 0.0;
+            double totalCharges = 0.0;
             if (execution.getOrderLegs() != null) {
                 for (StrategyExecution.OrderLeg leg : execution.getOrderLegs()) {
                     if (leg.getRealizedPnl() != null) {
@@ -223,6 +225,31 @@ public class StrategyService {
 
             // Persist the strategy execution
             persistenceService.persistStrategyExecutionAsync(execution);
+
+            // Update strategy execution with final leg states
+            String status = execution.getStatus() != null ? execution.getStatus().name() : "COMPLETED";
+            String completionReason = execution.getCompletionReason() != null ?
+                    execution.getCompletionReason().name() : null;
+
+            persistenceService.updateStrategyExecutionWithLegsAsync(
+                    execution.getExecutionId(),
+                    status,
+                    completionReason,
+                    BigDecimal.valueOf(totalPnl),
+                    BigDecimal.valueOf(totalCharges),
+                    execution.getOrderLegs()
+            );
+
+            // Update daily summary
+            boolean isSuccess = execution.getCompletionReason() == StrategyCompletionReason.TARGET_HIT;
+            persistenceService.updateDailySummaryForStrategy(
+                    execution.getUserId(),
+                    LocalDate.now(),
+                    execution.getTradingMode(),
+                    BigDecimal.valueOf(totalPnl),
+                    BigDecimal.valueOf(totalCharges),
+                    isSuccess
+            );
 
             log.debug("Persisted strategy execution: {} with P&L: {}", execution.getExecutionId(), totalPnl);
         } catch (Exception e) {

@@ -2,8 +2,10 @@ package com.tradingbot.controller;
 
 import com.tradingbot.dto.ApiResponse;
 import com.tradingbot.entity.*;
+import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.service.persistence.TradePersistenceService;
 import com.tradingbot.util.CurrentUserContext;
+import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -13,6 +15,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -28,6 +31,7 @@ import java.util.List;
 public class TradingHistoryController {
 
     private final TradePersistenceService persistenceService;
+    private final UnifiedTradingService unifiedTradingService;
 
     // ==================== TRADE HISTORY ====================
 
@@ -130,6 +134,39 @@ public class TradingHistoryController {
         return persistenceService.getDailySummary(userId, today, tradingMode)
                 .map(summary -> ResponseEntity.ok(ApiResponse.success("Today's summary", summary)))
                 .orElse(ResponseEntity.ok(ApiResponse.success("No trading activity today", null)));
+    }
+
+    // ==================== POSITION SNAPSHOTS ====================
+
+    @PostMapping("/position-snapshot")
+    @Operation(summary = "Persist position snapshot",
+               description = "Manually trigger position snapshot persistence")
+    public ResponseEntity<ApiResponse<String>> persistPositionSnapshot() {
+        String userId = CurrentUserContext.getUserId();
+        if (userId == null) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error("X-User-Id header is required"));
+        }
+
+        try {
+            unifiedTradingService.persistPositionSnapshot();
+            return ResponseEntity.ok(ApiResponse.success(
+                    "Position snapshot persisted successfully for user: " + userId, null));
+        } catch (KiteException | IOException e) {
+            log.error("Failed to persist position snapshot for user={}: {}", userId, e.getMessage());
+            return ResponseEntity.internalServerError()
+                    .body(ApiResponse.error("Failed to persist position snapshot: " + e.getMessage()));
+        }
+    }
+
+    // ==================== TRADING MODE ====================
+
+    @GetMapping("/trading-mode")
+    @Operation(summary = "Get current trading mode",
+               description = "Get whether the system is in PAPER or LIVE trading mode")
+    public ResponseEntity<ApiResponse<String>> getTradingMode() {
+        String mode = unifiedTradingService.getTradingMode();
+        return ResponseEntity.ok(ApiResponse.success("Current trading mode", mode));
     }
 }
 

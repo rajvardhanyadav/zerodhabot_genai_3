@@ -374,5 +374,321 @@ public class TradePersistenceService {
     public Optional<DailyPnLSummaryEntity> getDailySummary(String userId, LocalDate date, String tradingMode) {
         return dailyPnLSummaryRepository.findByUserIdAndTradingDateAndTradingMode(userId, date, tradingMode);
     }
+
+    // ==================== LIVE TRADING PERSISTENCE ====================
+
+    /**
+     * Persist a trade from live Kite Order (for live trading mode)
+     */
+    @Async("persistenceExecutor")
+    @Transactional
+    public CompletableFuture<TradeEntity> persistLiveTradeAsync(com.zerodhatech.models.Order order,
+                                                                  String userId,
+                                                                  String executionId) {
+        try {
+            TradeEntity trade = TradeEntity.builder()
+                    .userId(userId)
+                    .orderId(order.orderId)
+                    .executionId(executionId)
+                    .exchangeOrderId(order.exchangeOrderId)
+                    .tradingSymbol(order.tradingSymbol)
+                    .exchange(order.exchange)
+                    .transactionType(order.transactionType)
+                    .orderType(order.orderType)
+                    .product(order.product)
+                    .quantity(parseIntSafe(order.quantity))
+                    .entryPrice(parseBigDecimalSafe(order.averagePrice))
+                    .entryTimestamp(order.exchangeTimestamp != null ?
+                            LocalDateTime.ofInstant(order.exchangeTimestamp.toInstant(),
+                                    java.time.ZoneId.systemDefault()) : LocalDateTime.now())
+                    .status(order.status)
+                    .statusMessage(order.statusMessage)
+                    .tradingMode("LIVE")
+                    .tradingDate(LocalDate.now())
+                    .build();
+
+            TradeEntity saved = tradeRepository.save(trade);
+            log.debug("Persisted live trade: orderId={}, symbol={}", order.orderId, order.tradingSymbol);
+
+            return CompletableFuture.completedFuture(saved);
+        } catch (Exception e) {
+            log.error("Failed to persist live trade: orderId={}", order.orderId, e);
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    /**
+     * Persist order timing for live trading
+     */
+    @Async("persistenceExecutor")
+    @Transactional
+    public CompletableFuture<Void> persistLiveOrderTimingAsync(com.zerodhatech.models.Order order,
+                                                                 String userId,
+                                                                 String executionId,
+                                                                 LocalDateTime orderInitiatedAt) {
+        try {
+            OrderTimingEntity timing = OrderTimingEntity.builder()
+                    .orderId(order.orderId)
+                    .exchangeOrderId(order.exchangeOrderId)
+                    .executionId(executionId)
+                    .userId(userId)
+                    .tradingSymbol(order.tradingSymbol)
+                    .transactionType(order.transactionType)
+                    .orderType(order.orderType)
+                    .orderInitiatedAt(orderInitiatedAt)
+                    .orderSentAt(order.orderTimestamp != null ?
+                            LocalDateTime.ofInstant(order.orderTimestamp.toInstant(),
+                                    java.time.ZoneId.systemDefault()) : null)
+                    .orderExecutedAt(order.exchangeTimestamp != null ?
+                            LocalDateTime.ofInstant(order.exchangeTimestamp.toInstant(),
+                                    java.time.ZoneId.systemDefault()) : null)
+                    .actualPrice(parseBigDecimalSafe(order.averagePrice))
+                    .orderStatus(order.status)
+                    .tradingMode("LIVE")
+                    .orderContext("STRATEGY_ENTRY")
+                    .orderTimestamp(orderInitiatedAt)
+                    .build();
+
+            timing.calculateLatencies();
+            orderTimingRepository.save(timing);
+            log.debug("Persisted live order timing: orderId={}, latency={}ms",
+                    order.orderId, timing.getTotalLatencyMs());
+
+            return CompletableFuture.completedFuture(null);
+        } catch (Exception e) {
+            log.error("Failed to persist live order timing: orderId={}", order.orderId, e);
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    // ==================== DELTA PERSISTENCE ====================
+
+    /**
+     * Persist delta snapshot during strategy entry/exit
+     */
+    @Async("persistenceExecutor")
+    @Transactional
+    public CompletableFuture<DeltaSnapshotEntity> persistDeltaForStrategyAsync(
+            String executionId,
+            String userId,
+            String instrumentType,
+            String tradingSymbol,
+            Long instrumentToken,
+            String optionType,
+            BigDecimal strikePrice,
+            String expiry,
+            BigDecimal spotPrice,
+            BigDecimal optionPrice,
+            BigDecimal atmStrike,
+            BigDecimal delta,
+            BigDecimal gamma,
+            BigDecimal theta,
+            BigDecimal vega,
+            BigDecimal iv,
+            BigDecimal timeToExpiry,
+            String snapshotType) {
+        try {
+            DeltaSnapshotEntity snapshot = DeltaSnapshotEntity.builder()
+                    .executionId(executionId)
+                    .userId(userId)
+                    .instrumentType(instrumentType)
+                    .tradingSymbol(tradingSymbol)
+                    .instrumentToken(instrumentToken)
+                    .optionType(optionType)
+                    .strikePrice(strikePrice)
+                    .expiry(expiry)
+                    .spotPrice(spotPrice)
+                    .optionPrice(optionPrice)
+                    .atmStrike(atmStrike)
+                    .delta(delta)
+                    .gamma(gamma)
+                    .theta(theta)
+                    .vega(vega)
+                    .impliedVolatility(iv)
+                    .timeToExpiry(timeToExpiry)
+                    .riskFreeRate(BigDecimal.valueOf(0.065))
+                    .snapshotType(snapshotType)
+                    .snapshotTimestamp(LocalDateTime.now())
+                    .build();
+
+            DeltaSnapshotEntity saved = deltaSnapshotRepository.save(snapshot);
+            log.debug("Persisted delta snapshot: instrument={}, type={}, delta={}",
+                    instrumentType, snapshotType, delta);
+
+            return CompletableFuture.completedFuture(saved);
+        } catch (Exception e) {
+            log.error("Failed to persist delta snapshot for execution={}", executionId, e);
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    // ==================== STRATEGY EXECUTION UPDATE ====================
+
+    /**
+     * Update strategy execution with final P&L and order legs
+     */
+    @Async("persistenceExecutor")
+    @Transactional
+    public CompletableFuture<Void> updateStrategyExecutionWithLegsAsync(String executionId,
+                                                                          String status,
+                                                                          String completionReason,
+                                                                          BigDecimal realizedPnl,
+                                                                          BigDecimal totalCharges,
+                                                                          List<com.tradingbot.model.StrategyExecution.OrderLeg> legs) {
+        try {
+            Optional<StrategyExecutionEntity> entityOpt = strategyExecutionRepository.findByExecutionId(executionId);
+            if (entityOpt.isPresent()) {
+                StrategyExecutionEntity entity = entityOpt.get();
+                entity.setStatus(status);
+                entity.setCompletionReason(completionReason);
+                entity.setRealizedPnl(realizedPnl);
+                entity.setTotalCharges(totalCharges);
+                entity.setCompletedAt(LocalDateTime.now());
+
+                // Update order legs
+                if (legs != null) {
+                    for (com.tradingbot.model.StrategyExecution.OrderLeg leg : legs) {
+                        for (OrderLegEntity legEntity : entity.getOrderLegs()) {
+                            if (legEntity.getOrderId().equals(leg.getOrderId())) {
+                                legEntity.setExitOrderId(leg.getExitOrderId());
+                                legEntity.setExitTransactionType(leg.getExitTransactionType());
+                                legEntity.setExitQuantity(leg.getExitQuantity());
+                                legEntity.setExitPrice(leg.getExitPrice() != null ?
+                                        BigDecimal.valueOf(leg.getExitPrice()) : null);
+                                legEntity.setExitTimestamp(leg.getExitTimestamp() != null ?
+                                        LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(leg.getExitTimestamp()),
+                                                java.time.ZoneId.systemDefault()) : null);
+                                legEntity.setExitStatus(leg.getExitStatus());
+                                legEntity.setExitMessage(leg.getExitMessage());
+                                legEntity.setRealizedPnl(leg.getRealizedPnl() != null ?
+                                        BigDecimal.valueOf(leg.getRealizedPnl()) : null);
+                                legEntity.setLifecycleState(leg.getLifecycleState() != null ?
+                                        leg.getLifecycleState().name() : "EXITED");
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                strategyExecutionRepository.save(entity);
+                log.debug("Updated strategy execution with legs: executionId={}, status={}", executionId, status);
+            }
+            return CompletableFuture.completedFuture(null);
+        } catch (Exception e) {
+            log.error("Failed to update strategy execution with legs: executionId={}", executionId, e);
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    // ==================== POSITION PERSISTENCE (LIVE) ====================
+
+    /**
+     * Persist live position snapshots
+     */
+    @Async("persistenceExecutor")
+    @Transactional
+    public CompletableFuture<List<PositionSnapshotEntity>> persistLivePositionSnapshotsAsync(
+            List<com.zerodhatech.models.Position> positions, String userId) {
+        try {
+            List<PositionSnapshotEntity> entities = positions.stream()
+                    .map(pos -> mapLivePositionToSnapshotEntity(pos, userId))
+                    .toList();
+
+            List<PositionSnapshotEntity> saved = positionSnapshotRepository.saveAll(entities);
+            log.debug("Persisted {} live position snapshots for user={}", saved.size(), userId);
+
+            return CompletableFuture.completedFuture(saved);
+        } catch (Exception e) {
+            log.error("Failed to persist live position snapshots for user={}", userId, e);
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    private PositionSnapshotEntity mapLivePositionToSnapshotEntity(com.zerodhatech.models.Position pos, String userId) {
+        return PositionSnapshotEntity.builder()
+                .userId(userId)
+                .tradingSymbol(pos.tradingSymbol)
+                .exchange(pos.exchange)
+                .product(pos.product)
+                .quantity(pos.netQuantity)
+                .overnightQuantity(pos.overnightQuantity)
+                .multiplier(pos.multiplier != null ? pos.multiplier.intValue() : 1)
+                .buyQuantity(pos.buyQuantity)
+                .buyPrice(BigDecimal.valueOf(pos.buyPrice))
+                .buyValue(BigDecimal.valueOf(pos.buyValue))
+                .sellQuantity(pos.sellQuantity)
+                .sellPrice(BigDecimal.valueOf(pos.sellPrice))
+                .sellValue(BigDecimal.valueOf(pos.sellValue))
+                .dayBuyQuantity((int) pos.dayBuyQuantity)
+                .dayBuyPrice(BigDecimal.valueOf(pos.dayBuyPrice))
+                .dayBuyValue(BigDecimal.valueOf(pos.dayBuyValue))
+                .daySellQuantity((int) pos.daySellQuantity)
+                .daySellPrice(BigDecimal.valueOf(pos.daySellPrice))
+                .daySellValue(BigDecimal.valueOf(pos.daySellValue))
+                .pnl(BigDecimal.valueOf(pos.pnl))
+                .realised(BigDecimal.valueOf(pos.realised))
+                .unrealised(BigDecimal.valueOf(pos.unrealised))
+                .m2m(BigDecimal.valueOf(pos.m2m))
+                .averagePrice(BigDecimal.valueOf(pos.averagePrice))
+                .lastPrice(BigDecimal.valueOf(pos.lastPrice))
+                .closePrice(BigDecimal.valueOf(pos.closePrice))
+                .value(BigDecimal.valueOf(pos.value))
+                .tradingMode("LIVE")
+                .snapshotDate(LocalDate.now())
+                .snapshotTimestamp(LocalDateTime.now())
+                .build();
+    }
+
+    // ==================== DAILY SUMMARY UPDATE ====================
+
+    /**
+     * Update daily summary when strategy completes
+     */
+    @Transactional
+    public void updateDailySummaryForStrategy(String userId, LocalDate date, String tradingMode,
+                                               BigDecimal realizedPnl, BigDecimal charges,
+                                               boolean success) {
+        DailyPnLSummaryEntity summary = getOrCreateDailySummary(userId, date, tradingMode);
+
+        summary.setStrategyExecutions(summary.getStrategyExecutions() + 1);
+        if (success) {
+            summary.setSuccessfulStrategies(summary.getSuccessfulStrategies() + 1);
+        } else {
+            summary.setFailedStrategies(summary.getFailedStrategies() + 1);
+        }
+
+        if (realizedPnl != null) {
+            summary.setRealizedPnl(summary.getRealizedPnl().add(realizedPnl));
+            summary.setNetPnl(summary.getRealizedPnl().subtract(
+                    summary.getTotalCharges() != null ? summary.getTotalCharges() : BigDecimal.ZERO));
+        }
+
+        if (charges != null) {
+            summary.setTotalCharges(summary.getTotalCharges().add(charges));
+        }
+
+        dailyPnLSummaryRepository.save(summary);
+        log.debug("Updated daily summary for strategy: userId={}, date={}, pnl={}", userId, date, realizedPnl);
+    }
+
+    // ==================== HELPER METHODS ====================
+
+    private Integer parseIntSafe(String value) {
+        if (value == null || value.isEmpty()) return null;
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private BigDecimal parseBigDecimalSafe(String value) {
+        if (value == null || value.isEmpty()) return null;
+        try {
+            return new BigDecimal(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
 }
 
