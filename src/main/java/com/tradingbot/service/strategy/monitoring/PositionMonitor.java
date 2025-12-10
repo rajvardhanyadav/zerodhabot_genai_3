@@ -79,6 +79,10 @@ public class PositionMonitor {
     // Cached immutable list - only rebuilt when legs change
     private volatile List<LegMonitor> cachedLegs;
 
+    // HFT: Pre-cached legs array for fixed-size straddles (avoids iterator allocation in hot path)
+    private volatile LegMonitor[] cachedLegsArray;
+    private volatile int cachedLegsCount = 0;
+
     public PositionMonitor(String executionId, double stopLossPoints, double targetPoints) {
         this(executionId, stopLossPoints, targetPoints, PositionDirection.LONG);
     }
@@ -106,9 +110,22 @@ public class PositionMonitor {
         LegMonitor leg = new LegMonitor(orderId, symbol, instrumentToken, entryPrice, quantity, type);
         legsBySymbol.put(symbol, leg);
         legsByInstrumentToken.put(instrumentToken, leg);
-        // Invalidate cached legs list
-        cachedLegs = null;
+
+        // HFT: Rebuild cached array for fast iteration (avoids iterator allocation)
+        rebuildCachedLegsArray();
+
         log.info("Added leg to monitor: {} at entry price: {}", symbol, entryPrice);
+    }
+
+    /**
+     * HFT: Rebuild the cached legs array when legs are added/removed.
+     * This is called infrequently (only on leg changes), so allocation is acceptable here.
+     */
+    private void rebuildCachedLegsArray() {
+        LegMonitor[] newArray = legsBySymbol.values().toArray(new LegMonitor[0]);
+        cachedLegsCount = newArray.length;
+        cachedLegsArray = newArray;
+        cachedLegs = null; // Invalidate list cache too
     }
 
     /**
@@ -154,12 +171,21 @@ public class PositionMonitor {
     /**
      * HFT-optimized cumulative exit check with inlined calculation.
      * Separated from main check method for JIT inlining optimization.
+     * Uses pre-cached array to avoid iterator allocation on every tick.
      */
     private void checkAndTriggerCumulativeExitFast() {
-        // HFT: Inline cumulative calculation to avoid method call overhead
+        // HFT: Use pre-cached array to avoid iterator allocation
+        final LegMonitor[] legs = cachedLegsArray;
+        final int count = cachedLegsCount;
+
+        if (legs == null || count == 0) {
+            return;
+        }
+
+        // HFT: Inline cumulative calculation with indexed loop
         double cumulative = 0.0;
-        for (LegMonitor leg : legsBySymbol.values()) {
-            cumulative += (leg.currentPrice - leg.entryPrice) * directionMultiplier;
+        for (int i = 0; i < count; i++) {
+            cumulative += (legs[i].currentPrice - legs[i].entryPrice) * directionMultiplier;
         }
 
         // HFT: Lazy debug logging - isDebugEnabled() is a simple boolean check
@@ -210,12 +236,20 @@ public class PositionMonitor {
 
     /**
      * Compute cumulative directional points across all legs using primitives.
-     * Inlined for maximum performance on hot path.
+     * Uses pre-cached array for maximum performance on hot path.
      */
     private double computeCumulativeDirectionalPointsFast() {
+        // HFT: Use pre-cached array to avoid iterator allocation
+        final LegMonitor[] legs = cachedLegsArray;
+        final int count = cachedLegsCount;
+
+        if (legs == null || count == 0) {
+            return 0.0;
+        }
+
         double cumulative = 0.0;
-        for (LegMonitor leg : legsBySymbol.values()) {
-            double rawDiff = leg.currentPrice - leg.entryPrice;
+        for (int i = 0; i < count; i++) {
+            double rawDiff = legs[i].currentPrice - legs[i].entryPrice;
             cumulative += rawDiff * directionMultiplier;
         }
         return cumulative;
@@ -280,6 +314,9 @@ public class PositionMonitor {
         // Remove the leg from monitoring
         legsBySymbol.remove(legSymbol);
         legsByInstrumentToken.remove(leg.getInstrumentToken());
+
+        // HFT: Rebuild cached array after leg removal
+        rebuildCachedLegsArray();
 
         // If individualLegExitCallback is set, use it; otherwise fall back to exitCallback
         if (individualLegExitCallback != null) {
