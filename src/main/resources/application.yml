@@ -93,6 +93,18 @@ strategy:
   # Default target in points (can be overridden via API request)
   default-target-points: 2.0
 
+  # Trailing Stop Loss Configuration
+  # When enabled, stop loss trails up as position becomes profitable
+  trailing-stop-enabled: true
+
+  # Activation threshold: trailing stop activates when cumulative P&L >= this value
+  # Example: 1.0 means trailing starts after 1 point profit
+  trailing-activation-points: 2.5
+
+  # Trail distance: how far behind the high-water mark the stop trails
+  # Example: 0.5 means stop is always 0.5 points below peak profit
+  trailing-distance-points: 2.5
+
   # Auto square off settings
   auto-square-off-enabled: false
   auto-square-off-time: "15:15"

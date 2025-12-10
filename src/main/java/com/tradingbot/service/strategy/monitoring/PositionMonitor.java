@@ -257,6 +257,12 @@ public class PositionMonitor {
      * 3. Update high-water mark and trailing stop level if profitable
      * 4. Check trailing stop hit (if activated)
      * 5. Check fixed stop loss hit (fallback)
+     *
+     * HFT Optimizations:
+     * - Early exit pattern for disabled trailing stop (single boolean check)
+     * - Flat conditional structure for better branch prediction
+     * - All arithmetic uses primitives (no boxing)
+     * - Logging only on state transitions (not every tick)
      */
     private void checkAndTriggerCumulativeExitFast() {
         // HFT: Use pre-cached array to avoid iterator allocation
@@ -276,12 +282,11 @@ public class PositionMonitor {
         // HFT: Lazy debug logging - isDebugEnabled() is a simple boolean check
         // No string formatting happens if debug logging is disabled
         if (log.isDebugEnabled()) {
-            log.debug("Cumulative P&L for {}: {} points (target: {}, stop: {}, trailing: {})",
-                    executionId, cumulative, cumulativeTargetPoints, cumulativeStopPoints,
-                    trailingStopEnabled ? "ON" : "OFF");
+            log.debug("Cumulative P&L for {}: {} points (target: {}, stop: {})",
+                    executionId, cumulative, cumulativeTargetPoints, cumulativeStopPoints);
         }
 
-        // Check target hit (profit) - highest priority
+        // Check target hit (profit) - highest priority, most likely exit in profitable strategies
         if (cumulative >= cumulativeTargetPoints) {
             log.warn("Cumulative target hit for execution {}: cumulative={} points, target={} - Closing ALL legs",
                     executionId, formatDouble(cumulative), formatDouble(cumulativeTargetPoints));
@@ -289,40 +294,42 @@ public class PositionMonitor {
             return;
         }
 
-        // ==================== TRAILING STOP LOSS LOGIC ====================
-        // HFT: All operations use primitives - no object allocation on hot path
+        // ==================== TRAILING STOP LOSS LOGIC (HFT OPTIMIZED) ====================
+        // HFT: Single boolean check at start - if disabled, skip entire trailing block
+        // This is the FAST PATH when trailing is disabled (default)
         if (trailingStopEnabled) {
-            // Update high-water mark if we have a new peak
-            if (cumulative > highWaterMark) {
-                highWaterMark = cumulative;
+            // HFT: Check trailing stop hit FIRST (most common check when activated)
+            // This ordering optimizes for the steady-state case where HWM isn't changing
+            if (trailingStopActivated) {
+                // Check if trailing stop was hit
+                if (cumulative <= currentTrailingStopLevel) {
+                    log.warn("Trailing stoploss hit for execution {}: P&L={} points, HWM={}, trailLevel={} - Closing ALL legs",
+                            executionId, formatDouble(cumulative), formatDouble(highWaterMark),
+                            formatDouble(currentTrailingStopLevel));
+                    triggerExitAllLegs(buildExitReasonTrailingStop(cumulative, highWaterMark, currentTrailingStopLevel));
+                    return;
+                }
 
-                // Check if trailing stop should be activated
-                if (!trailingStopActivated && highWaterMark >= trailingActivationPoints) {
+                // HFT: Update HWM only if we have a new peak (branch predicted as unlikely)
+                if (cumulative > highWaterMark) {
+                    highWaterMark = cumulative;
+                    // HFT: Single arithmetic operation, no branching
+                    currentTrailingStopLevel = cumulative - trailingDistancePoints;
+                }
+            } else {
+                // Not yet activated - check for activation condition
+                if (cumulative >= trailingActivationPoints) {
+                    // HFT: Activation is rare (happens once), OK to have logging here
+                    highWaterMark = cumulative;
+                    currentTrailingStopLevel = cumulative - trailingDistancePoints;
                     trailingStopActivated = true;
-                    currentTrailingStopLevel = highWaterMark - trailingDistancePoints;
                     log.info("Trailing stop ACTIVATED for execution {}: HWM={} points, trailLevel={} points",
                             executionId, formatDouble(highWaterMark), formatDouble(currentTrailingStopLevel));
-                } else if (trailingStopActivated) {
-                    // Update trailing stop level (it only moves up, never down)
-                    currentTrailingStopLevel = highWaterMark - trailingDistancePoints;
-                    if (log.isDebugEnabled()) {
-                        log.debug("Trailing stop updated for {}: HWM={}, trailLevel={}",
-                                executionId, formatDouble(highWaterMark), formatDouble(currentTrailingStopLevel));
-                    }
                 }
-            }
-
-            // Check trailing stop hit (only if activated)
-            if (trailingStopActivated && cumulative <= currentTrailingStopLevel) {
-                log.warn("Trailing stoploss hit for execution {}: P&L={} points, HWM={}, trailLevel={} - Closing ALL legs",
-                        executionId, formatDouble(cumulative), formatDouble(highWaterMark),
-                        formatDouble(currentTrailingStopLevel));
-                triggerExitAllLegs(buildExitReasonTrailingStop(cumulative, highWaterMark, currentTrailingStopLevel));
-                return;
             }
         }
 
-        // Check fixed stoploss hit (loss) - fallback when trailing not active
+        // Check fixed stoploss hit (loss) - fallback when trailing not active or not hit
         if (cumulative <= -cumulativeStopPoints) {
             log.warn("Cumulative stoploss hit for execution {}: cumulative={} points, stopLoss={} - Closing ALL legs",
                     executionId, formatDouble(cumulative), formatDouble(cumulativeStopPoints));
@@ -378,6 +385,11 @@ public class PositionMonitor {
      * Check cumulative thresholds and trigger exit if met.
      * Uses fast primitive comparison - no BigDecimal overhead.
      * Includes trailing stop loss logic for historical replay path.
+     *
+     * HFT Optimizations (same as fast path):
+     * - Early exit pattern for disabled trailing stop
+     * - Flat conditional structure for better branch prediction
+     * - All arithmetic uses primitives (no boxing)
      */
     private void checkAndTriggerCumulativeExit() {
         final double cumulative = computeCumulativeDirectionalPointsFast();
@@ -390,27 +402,32 @@ public class PositionMonitor {
             return;
         }
 
-        // Trailing stop loss logic (same as fast path)
+        // Trailing stop loss logic (HFT optimized - same structure as fast path)
         if (trailingStopEnabled) {
-            if (cumulative > highWaterMark) {
-                highWaterMark = cumulative;
+            if (trailingStopActivated) {
+                // Check if trailing stop was hit
+                if (cumulative <= currentTrailingStopLevel) {
+                    log.warn("Trailing stoploss hit for execution {}: P&L={} points, HWM={}, trailLevel={} - Closing ALL legs",
+                            executionId, formatDouble(cumulative), formatDouble(highWaterMark),
+                            formatDouble(currentTrailingStopLevel));
+                    triggerExitAllLegs(buildExitReasonTrailingStop(cumulative, highWaterMark, currentTrailingStopLevel));
+                    return;
+                }
 
-                if (!trailingStopActivated && highWaterMark >= trailingActivationPoints) {
+                // Update HWM only if new peak
+                if (cumulative > highWaterMark) {
+                    highWaterMark = cumulative;
+                    currentTrailingStopLevel = cumulative - trailingDistancePoints;
+                }
+            } else {
+                // Not yet activated - check for activation
+                if (cumulative >= trailingActivationPoints) {
+                    highWaterMark = cumulative;
+                    currentTrailingStopLevel = cumulative - trailingDistancePoints;
                     trailingStopActivated = true;
-                    currentTrailingStopLevel = highWaterMark - trailingDistancePoints;
                     log.info("Trailing stop ACTIVATED for execution {}: HWM={} points, trailLevel={} points",
                             executionId, formatDouble(highWaterMark), formatDouble(currentTrailingStopLevel));
-                } else if (trailingStopActivated) {
-                    currentTrailingStopLevel = highWaterMark - trailingDistancePoints;
                 }
-            }
-
-            if (trailingStopActivated && cumulative <= currentTrailingStopLevel) {
-                log.warn("Trailing stoploss hit for execution {}: P&L={} points, HWM={}, trailLevel={} - Closing ALL legs",
-                        executionId, formatDouble(cumulative), formatDouble(highWaterMark),
-                        formatDouble(currentTrailingStopLevel));
-                triggerExitAllLegs(buildExitReasonTrailingStop(cumulative, highWaterMark, currentTrailingStopLevel));
-                return;
             }
         }
 
