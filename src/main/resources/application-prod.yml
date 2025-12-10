@@ -1,0 +1,118 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: zerodha-trading-bot
+
+  # Database Configuration (PostgreSQL for production)
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:tradingbot}
+    driver-class-name: org.postgresql.Driver
+    username: ${DB_USERNAME:tradingbot}
+    password: ${DB_PASSWORD:tradingbot}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 30000
+      connection-timeout: 20000
+      max-lifetime: 1800000
+      pool-name: TradingBotHikariCP
+
+  # JPA/Hibernate Configuration
+  jpa:
+    # database-platform is auto-detected by Hibernate 6+ from JDBC URL
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        use_sql_comments: true
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+  # Flyway Migration
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+    validate-on-migrate: true
+
+# Kite Connect Configuration
+kite:
+  api-key: ${KITE_API_KEY}
+  api-secret: ${KITE_API_SECRET}
+  access-token: ${KITE_ACCESS_TOKEN:}
+  login-url: https://kite.zerodha.com/connect/login
+
+# Paper Trading Configuration
+trading:
+  paper-trading-enabled: false
+  initial-balance: 1000000.0
+  apply-brokerage-charges: true
+  brokerage-per-order: 20.0
+  stt-percentage: 0.025
+  transaction-charges: 0.00325
+  gst-percentage: 18.0
+  sebi-charges: 0.0001
+  stamp-duty: 0.003
+  slippage-percentage: 0.05
+  enable-execution-delay: false
+  execution-delay-ms: 100
+  enable-order-rejection: false
+  rejection-probability: 0.0
+
+# Strategy Configuration
+strategy:
+  default-stop-loss-points: 2.0
+  default-target-points: 2.0
+  auto-square-off-enabled: true
+  auto-square-off-time: "15:15"
+  auto-restart-enabled: true
+  auto-restart-paper-enabled: true
+
+# Historical Replay Configuration
+historical:
+  replay:
+    sleep-millis-per-second: 0
+
+# Persistence Configuration
+persistence:
+  enabled: true
+  retention:
+    trades-days: 730
+    delta-snapshots-days: 180
+    position-snapshots-days: 365
+    order-timing-days: 180
+  cleanup:
+    enabled: true
+    cron: "0 0 2 * * ?"
+
+# Actuator endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# Logging
+logging:
+  level:
+    com.tradingbot: INFO
+    org.hibernate.SQL: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# Swagger/OpenAPI
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+

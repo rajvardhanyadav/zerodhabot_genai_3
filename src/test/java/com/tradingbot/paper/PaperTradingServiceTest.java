@@ -1,6 +1,7 @@
 package com.tradingbot.paper;
 
 import com.tradingbot.config.PaperTradingConfig;
+import com.tradingbot.config.PersistenceConfig;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.paper.ZerodhaChargeCalculator;
@@ -23,6 +24,7 @@ public class PaperTradingServiceTest {
     private PaperTradingService paperTradingService;
     private TradingService tradingService;
     private ZerodhaChargeCalculator chargeCalculator;
+    private PersistenceConfig persistenceConfig;
 
     @BeforeEach
     void setup() {
@@ -35,6 +37,11 @@ public class PaperTradingServiceTest {
 
         tradingService = Mockito.mock(TradingService.class);
         chargeCalculator = Mockito.mock(ZerodhaChargeCalculator.class);
+
+        // Create PersistenceConfig with persistence disabled for tests
+        persistenceConfig = new PersistenceConfig();
+        persistenceConfig.setEnabled(false);
+
         Mockito.when(chargeCalculator.calculateCharges(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any()))
                 .thenReturn(com.tradingbot.paper.entity.OrderCharges.builder()
                         .brokerage(java.math.BigDecimal.ZERO)
@@ -45,7 +52,7 @@ public class PaperTradingServiceTest {
                         .stampDuty(java.math.BigDecimal.ZERO)
                         .totalCharges(java.math.BigDecimal.ZERO)
                         .build());
-        paperTradingService = new PaperTradingService(config, tradingService, chargeCalculator);
+        paperTradingService = new PaperTradingService(config, tradingService, chargeCalculator, persistenceConfig);
     }
 
     private void stubLtp(double price) {

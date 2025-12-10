@@ -5,6 +5,48 @@ spring:
   application:
     name: zerodha-trading-bot
 
+  # Database Configuration (H2 for development)
+  datasource:
+    url: jdbc:h2:file:./data/tradingbot;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      idle-timeout: 30000
+      connection-timeout: 20000
+      max-lifetime: 1800000
+
+  # JPA/Hibernate Configuration
+  jpa:
+    # database-platform is auto-detected by Hibernate 6+ from JDBC URL
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        use_sql_comments: true
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+  # H2 Console (development only)
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+      settings:
+        web-allow-others: false
+
+  # Flyway Migration (disabled for now, using Hibernate auto-ddl)
+  flyway:
+    enabled: false
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
 # Kite Connect Configuration
 kite:
   api-key: ${KITE_API_KEY:4u07o35o6w5uhd2r}
@@ -58,6 +100,23 @@ historical:
     # Set to 0 for fastest possible replay
     sleep-millis-per-second: 2
 
+# Persistence Configuration
+persistence:
+  # Enable/disable persistence (can be disabled for testing)
+  enabled: true
+
+  # Data retention in days (older data will be archived/deleted)
+  retention:
+    trades-days: 365
+    delta-snapshots-days: 90
+    position-snapshots-days: 180
+    order-timing-days: 90
+
+  # Cleanup job schedule (cron expression - runs at 2 AM daily)
+  cleanup:
+    enabled: true
+    cron: "0 0 2 * * ?"
+
 # Actuator endpoints
 management:
   endpoints:
@@ -72,6 +131,8 @@ management:
 logging:
   level:
     com.tradingbot: DEBUG
+    # Suppress Hibernate JTA platform warning (not needed for local transactions)
+    org.hibernate.engine.transaction.jta.platform.internal: ERROR
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
 

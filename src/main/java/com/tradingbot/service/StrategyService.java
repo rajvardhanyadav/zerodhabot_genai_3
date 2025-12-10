@@ -1,5 +1,6 @@
 package com.tradingbot.service;
 
+import com.tradingbot.config.PersistenceConfig;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
@@ -8,6 +9,7 @@ import com.tradingbot.model.StrategyCompletionReason;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyStatus;
 import com.tradingbot.model.StrategyExecution.LegLifecycleState;
+import com.tradingbot.service.persistence.TradePersistenceService;
 import com.tradingbot.service.strategy.StrategyFactory;
 import com.tradingbot.service.strategy.TradingStrategy;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
@@ -24,6 +26,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,11 +46,16 @@ public class StrategyService {
     private final StrategyFactory strategyFactory;
     private final WebSocketService webSocketService;
     private final ApplicationEventPublisher eventPublisher;
+    private final PersistenceConfig persistenceConfig;
 
     // Field injection with @Lazy to break circular dependency
     @Autowired
     @Lazy
     private com.tradingbot.service.strategy.StrategyRestartScheduler strategyRestartScheduler;
+
+    @Autowired
+    @Lazy
+    private TradePersistenceService persistenceService;
 
     // Keyed by executionId but owned by userId; maintain both maps for efficient lookups
     private final Map<String, StrategyExecution> executionsById = new ConcurrentHashMap<>();
@@ -183,9 +191,43 @@ public class StrategyService {
             execution.setCompletionReason(reason);
             execution.setMessage("Strategy completed - " + reason);
             log.info("Strategy {} marked as COMPLETED: {} (user={})", executionId, reason, execution.getUserId());
+
+            // Persist strategy execution asynchronously
+            persistStrategyExecutionAsync(execution);
+
             eventPublisher.publishEvent(new StrategyCompletionEvent(this, execution));
         } else {
             log.warn("Attempted to mark non-existent strategy as completed: {}", executionId);
+        }
+    }
+
+    /**
+     * Persist strategy execution data asynchronously
+     */
+    private void persistStrategyExecutionAsync(StrategyExecution execution) {
+        if (!persistenceConfig.isEnabled() || persistenceService == null) {
+            return;
+        }
+
+        try {
+            // Calculate realized P&L from order legs
+            double totalPnl = 0.0;
+            if (execution.getOrderLegs() != null) {
+                for (StrategyExecution.OrderLeg leg : execution.getOrderLegs()) {
+                    if (leg.getRealizedPnl() != null) {
+                        totalPnl += leg.getRealizedPnl();
+                    }
+                }
+            }
+            execution.setProfitLoss(totalPnl);
+
+            // Persist the strategy execution
+            persistenceService.persistStrategyExecutionAsync(execution);
+
+            log.debug("Persisted strategy execution: {} with P&L: {}", execution.getExecutionId(), totalPnl);
+        } catch (Exception e) {
+            log.warn("Failed to persist strategy execution {}: {}", execution.getExecutionId(), e.getMessage());
+            // Don't fail the completion if persistence fails
         }
     }
 

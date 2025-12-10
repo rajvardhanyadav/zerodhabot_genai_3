@@ -1,21 +1,28 @@
 package com.tradingbot.paper;
 
 import com.tradingbot.config.PaperTradingConfig;
+import com.tradingbot.config.PersistenceConfig;
 import com.tradingbot.dto.BasketOrderRequest;
 import com.tradingbot.dto.BasketOrderResponse;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.OrderChargesResponse;
+import com.tradingbot.entity.TradeEntity;
+import com.tradingbot.entity.OrderTimingEntity;
 import com.tradingbot.paper.entity.OrderCharges;
 import com.tradingbot.service.TradingService;
+import com.tradingbot.service.persistence.TradePersistenceService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.LTPQuote;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,6 +42,12 @@ public class PaperTradingService {
     private final PaperTradingConfig config;
     private final TradingService tradingService;
     private final ZerodhaChargeCalculator chargeCalculator;
+    private final PersistenceConfig persistenceConfig;
+
+    // Lazy injection to break circular dependency
+    @Autowired
+    @Lazy
+    private TradePersistenceService persistenceService;
 
     // In-memory storage for paper trading
     private final Map<String, PaperOrder> orders = new ConcurrentHashMap<>();
@@ -442,6 +455,8 @@ public class PaperTradingService {
      * Complete an order with execution price
      */
     private void completeOrder(PaperOrder order, Double executionPrice, PaperAccount account) {
+        LocalDateTime orderInitiatedAt = order.getOrderTimestamp();
+
         order.setStatus(STATUS_COMPLETE);
         order.setAveragePrice(executionPrice);
         order.setExecutionPrice(executionPrice);
@@ -463,6 +478,55 @@ public class PaperTradingService {
 
         // Update order history
         addToHistory(order.getOrderId(), order);
+
+        // Persist trade asynchronously (non-blocking for HFT)
+        persistTradeAsync(order, orderInitiatedAt);
+    }
+
+    /**
+     * Persist trade data asynchronously
+     */
+    private void persistTradeAsync(PaperOrder order, LocalDateTime orderInitiatedAt) {
+        if (!persistenceConfig.isEnabled() || persistenceService == null) {
+            return;
+        }
+
+        try {
+            // Create trade entity
+            TradeEntity trade = persistenceService.createTradeFromPaperOrder(order, "PAPER");
+
+            // Calculate entry latency
+            if (orderInitiatedAt != null && order.getExchangeTimestamp() != null) {
+                long latencyMs = java.time.Duration.between(orderInitiatedAt, order.getExchangeTimestamp()).toMillis();
+                trade.setEntryLatencyMs(latencyMs);
+            }
+
+            // Persist asynchronously
+            persistenceService.persistTradeAsync(trade);
+
+            // Also persist timing metrics
+            OrderTimingEntity timing = OrderTimingEntity.builder()
+                    .orderId(order.getOrderId())
+                    .exchangeOrderId(order.getExchangeOrderId())
+                    .userId(order.getPlacedBy())
+                    .tradingSymbol(order.getTradingSymbol())
+                    .transactionType(order.getTransactionType())
+                    .orderType(order.getOrderType())
+                    .orderInitiatedAt(orderInitiatedAt)
+                    .orderExecutedAt(order.getExchangeTimestamp())
+                    .actualPrice(order.getAveragePrice() != null ? BigDecimal.valueOf(order.getAveragePrice()) : null)
+                    .orderStatus(order.getStatus())
+                    .tradingMode("PAPER")
+                    .orderContext("TRADE")
+                    .orderTimestamp(order.getOrderTimestamp())
+                    .build();
+
+            persistenceService.persistOrderTimingAsync(timing);
+
+        } catch (Exception e) {
+            log.warn("[PAPER TRADING] Failed to persist trade: {}", e.getMessage());
+            // Don't fail the trade if persistence fails
+        }
     }
 
     /**
