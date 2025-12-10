@@ -34,8 +34,6 @@ public class WebSocketService implements DisposableBean {
     private final UserSessionManager sessionManager;
     private final KiteConfig kiteConfig;
 
-    // Global override for live subscription. Historical replay toggles this.
-    private volatile boolean globalLiveSubscriptionEnabled = true;
 
     /** Per-user WebSocket context */
     private static class UserWSContext {
@@ -47,7 +45,6 @@ public class WebSocketService implements DisposableBean {
         final AtomicBoolean isConnecting = new AtomicBoolean(false);
         final ReentrantLock connectionLock = new ReentrantLock();
         ScheduledExecutorService reconnectScheduler;
-        volatile boolean liveSubscriptionEnabled = true; // per-user toggle
 
         UserWSContext(String userId) {
             this.userId = userId;
@@ -58,7 +55,7 @@ public class WebSocketService implements DisposableBean {
 
     @PostConstruct
     public void init() {
-        log.info("WebSocketService initialized. Global live subscription: {}", globalLiveSubscriptionEnabled);
+        log.info("WebSocketService initialized.");
     }
 
     // Helper to get or create the per-user context
@@ -94,18 +91,6 @@ public class WebSocketService implements DisposableBean {
         return ctx().activeMonitors.size();
     }
 
-    /** Global toggle retained for Historical Replay compatibility */
-    public void setLiveSubscriptionEnabled(boolean enabled) {
-        this.globalLiveSubscriptionEnabled = enabled;
-        log.info("Global live WebSocket subscription {}", enabled ? "ENABLED" : "DISABLED");
-    }
-
-    /** Optional per-user live subscription toggle */
-    public void setLiveSubscriptionEnabledForCurrentUser(boolean enabled) {
-        UserWSContext c = ctx();
-        c.liveSubscriptionEnabled = enabled;
-        log.info("[user={}] Live subscription {}", c.userId, enabled ? "ENABLED" : "DISABLED");
-    }
 
     /** Connect WebSocket for current user (idempotent) */
     public void connect() {
@@ -114,10 +99,6 @@ public class WebSocketService implements DisposableBean {
     }
 
     private void tryConnect(UserWSContext c) {
-        if (!globalLiveSubscriptionEnabled || !c.liveSubscriptionEnabled) {
-            log.info("[user={}] Live subscription disabled; skipping connect().", c.userId);
-            return;
-        }
         if (c.isConnected.get() || c.isConnecting.get()) {
             log.debug("[user={}] Connect ignored: already connected or connecting.", c.userId);
             return;
@@ -304,10 +285,6 @@ public class WebSocketService implements DisposableBean {
     }
 
     private void scheduleReconnection(UserWSContext c, int attempt) {
-        if (!globalLiveSubscriptionEnabled || !c.liveSubscriptionEnabled) {
-            log.info("[user={}] Live subscription disabled; not scheduling reconnection.", c.userId);
-            return;
-        }
         if (attempt > 10) {
             log.error("[user={}] Exceeded max reconnection attempts.", c.userId);
             return;
@@ -324,10 +301,6 @@ public class WebSocketService implements DisposableBean {
     }
 
     private void subscribe(UserWSContext c, List<Long> tokens) {
-        if (!globalLiveSubscriptionEnabled || !c.liveSubscriptionEnabled) {
-            log.info("[user={}] Live subscription disabled; skipping subscribe() for {} tokens.", c.userId, tokens.size());
-            return;
-        }
         if (!c.isConnected.get()) {
             log.warn("[user={}] Not connected. Attempting to connect before subscribing.", c.userId);
             tryConnect(c);
@@ -346,10 +319,6 @@ public class WebSocketService implements DisposableBean {
     }
 
     private void unsubscribe(UserWSContext c, List<Long> tokens) {
-        if (!globalLiveSubscriptionEnabled || !c.liveSubscriptionEnabled) {
-            log.info("[user={}] Live subscription disabled; skipping unsubscribe() for {} tokens.", c.userId, tokens.size());
-            return;
-        }
         if (!c.isConnected.get() || c.ticker == null) {
             log.warn("[user={}] Cannot unsubscribe - not connected.", c.userId);
             return;
@@ -426,10 +395,6 @@ public class WebSocketService implements DisposableBean {
     }
 
     private void resubscribeAll(UserWSContext c) {
-        if (!globalLiveSubscriptionEnabled || !c.liveSubscriptionEnabled) {
-            log.info("[user={}] Live subscription disabled; skipping resubscribeAll().", c.userId);
-            return;
-        }
         Set<Long> allTokens = c.instrumentToExecutions.keySet();
         if (!allTokens.isEmpty()) {
             log.info("[user={}] Resubscribing to {} instruments.", c.userId, allTokens.size());
