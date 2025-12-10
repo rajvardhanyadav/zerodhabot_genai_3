@@ -20,6 +20,25 @@ public class StrategyConfig {
     private double defaultStopLossPoints = 2.0;
     private double defaultTargetPoints = 2.0;
 
+    // ==================== TRAILING STOP LOSS CONFIGURATION ====================
+
+    /**
+     * Enable trailing stop loss globally.
+     * When enabled, stop loss will trail up as position becomes profitable.
+     */
+    private boolean trailingStopEnabled = false;
+
+    /**
+     * Activation threshold: trailing stop activates when cumulative P&L >= this value.
+     * Example: 1.0 means trailing starts after 1 point profit.
+     */
+    private double trailingActivationPoints = 1.0;
+
+    /**
+     * Trail distance: how far behind the high-water mark the stop trails.
+     * Example: 0.5 means stop is always 0.5 points below peak profit.
+     */
+    private double trailingDistancePoints = 0.5;
 
     // Auto square-off configuration
     private boolean autoSquareOffEnabled = false;
