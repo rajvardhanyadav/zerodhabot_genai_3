@@ -282,8 +282,14 @@ public class PositionMonitor {
         // HFT: Lazy debug logging - isDebugEnabled() is a simple boolean check
         // No string formatting happens if debug logging is disabled
         if (log.isDebugEnabled()) {
-            log.debug("Cumulative P&L for {}: {} points (target: {}, stop: {})",
-                    executionId, cumulative, cumulativeTargetPoints, cumulativeStopPoints);
+            // Build leg prices only when debug is enabled - no allocation on hot path
+            StringBuilder legPrices = new StringBuilder();
+            for (int i = 0; i < count; i++) {
+                if (i > 0) legPrices.append(", ");
+                legPrices.append(legs[i].symbol).append("=").append(legs[i].currentPrice);
+            }
+            log.debug("Cumulative P&L for {}: {} points (target: {}, stop: {}) | Legs: [{}]",
+                    executionId, cumulative, cumulativeTargetPoints, cumulativeStopPoints, legPrices);
         }
 
         // Check target hit (profit) - highest priority, most likely exit in profitable strategies

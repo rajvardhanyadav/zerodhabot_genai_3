@@ -94,9 +94,15 @@ public class StrategyController {
     @GetMapping("/instruments")
     @Operation(summary = "Get available instruments",
                description = "Fetch available instruments with their lot sizes and strike intervals")
-    public ResponseEntity<ApiResponse<List<InstrumentInfo>>> getInstruments() throws KiteException, IOException {
+    public ResponseEntity<ApiResponse<List<InstrumentInfo>>> getInstruments() {
         log.debug(ApiConstants.LOG_GET_INSTRUMENTS_REQUEST);
-        List<StrategyService.InstrumentDetail> instrumentDetails = strategyService.getAvailableInstruments();
+        List<StrategyService.InstrumentDetail> instrumentDetails = null;
+        try {
+            instrumentDetails = strategyService.getAvailableInstruments();
+        } catch (KiteException e) {
+            logKiteExceptionDetails(e);
+            throw new RuntimeException(e);
+        }
 
         List<InstrumentInfo> instruments = instrumentDetails.stream()
             .map(detail -> new InstrumentInfo(
@@ -107,6 +113,20 @@ public class StrategyController {
             ))
             .collect(Collectors.toList());
         return ResponseEntity.ok(ApiResponse.success(instruments));
+    }
+
+    private void logKiteExceptionDetails(KiteException e) {
+        log.error("╔═══════════════════════════════════════════════════════════════╗");
+        log.error("║              KITE API EXCEPTION DETAILS                       ║");
+        log.error("╠═══════════════════════════════════════════════════════════════╣");
+        log.error("║ Error Code     : {}", e.code);
+        log.error("║ Error Message  : {}", e.message);
+        log.error("║ Exception Class: {}", e.getClass().getSimpleName());
+        log.error("║ getMessage()   : {}", e.getMessage());
+        log.error("║ Cause          : {}", e.getCause() != null ? e.getCause().getMessage() : "null");
+        log.error("╠═══════════════════════════════════════════════════════════════╣");
+        log.error("║ FULL STACK TRACE:                                             ║");
+        log.error("╚═══════════════════════════════════════════════════════════════╝", e);
     }
 
     @GetMapping("/expiries/{instrumentType}")
