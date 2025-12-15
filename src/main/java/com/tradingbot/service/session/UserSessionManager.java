@@ -49,7 +49,7 @@ public class UserSessionManager {
         String userId = getCurrentUserIdRequired();
         KiteConnect kc = sessions.get(userId);
         if (kc == null) {
-            throw new IllegalStateException("No active session for user. Please authenticate via /api/auth/session.");
+            throw new IllegalStateException("No active session for user "+userId+". Please authenticate via /api/auth/session.");
         }
         return kc;
     }
