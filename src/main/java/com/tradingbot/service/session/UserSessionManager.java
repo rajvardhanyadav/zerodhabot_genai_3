@@ -86,15 +86,40 @@ public class UserSessionManager {
     // IST timezone for market hours check
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
+    /**
+     * Get the current user ID from thread context, with fallback for paper trading mode.
+     *
+     * CLOUD RUN NOTE: If this returns null unexpectedly in Cloud Run, check:
+     * 1. Is this called from a scheduled task without explicit context setting?
+     * 2. Is this called from an executor thread that doesn't inherit InheritableThreadLocal?
+     * 3. Is the X-User-Id header being passed correctly from the load balancer?
+     *
+     * @return User ID (never null)
+     * @throws IllegalStateException if user context is missing and not in paper mode
+     */
     public String getCurrentUserIdRequired() {
-        String id = CurrentUserContext.getUserId();
+        // Use debug version in Cloud Run to get detailed logging
+        String id = CurrentUserContext.getUserIdWithDebug();
+
         if (id == null || id.isBlank()) {
+            // Log detailed diagnostic info for Cloud Run debugging
+            log.warn("User context is null/blank. Thread: {}, ActiveSessions: {}, SessionKeys: {}",
+                    Thread.currentThread().getName(),
+                    sessions.size(),
+                    sessions.keySet());
+
             if (paperTradingConfig.isPaperTradingEnabled()) {
                 String fallback = "PAPER_DEFAULT_USER";
                 log.warn("UserContext missing in UserSessionManager; falling back to {} in paper mode", fallback);
                 return fallback;
             }
-            throw new IllegalStateException("User context is missing. Provide X-User-Id header.");
+
+            // Provide actionable error message
+            throw new IllegalStateException(
+                    "User context is missing (thread=" + Thread.currentThread().getName() + "). " +
+                    "Ensure X-User-Id header is passed, or if this is a scheduled task, " +
+                    "use CurrentUserContext.setUserId() before calling this method."
+            );
         }
         return id;
     }

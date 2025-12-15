@@ -141,27 +141,27 @@ public class DeltaCacheService {
      * @return Calculated ATM strike
      */
     public CompletableFuture<Double> calculateAndCacheATMStrike(String instrumentType, Date expiry, double spotPrice) {
-        // Capture current user context for async execution
+        // Capture current user context for async execution (Cloud Run compatible)
         final String userId = CurrentUserContext.getUserId();
 
         return CompletableFuture.supplyAsync(() -> {
             try {
-                // Set user context in the async thread
+                // Use callWithUserContext for guaranteed cleanup
                 if (userId != null && !userId.isBlank()) {
-                    CurrentUserContext.setUserId(userId);
+                    return CurrentUserContext.callWithUserContext(userId, () -> {
+                        try {
+                            return computeDeltaForInstrument(instrumentType, expiry, spotPrice);
+                        } catch (KiteException | IOException e) {
+                            log.error("Error calculating delta for {}: {}", instrumentType, e.getMessage());
+                            return getSimpleATMStrike(spotPrice, instrumentType);
+                        }
+                    });
+                } else {
+                    log.warn("No user context for calculateAndCacheATMStrike, using simple ATM");
+                    return getSimpleATMStrike(spotPrice, instrumentType);
                 }
-                try {
-                    return computeDeltaForInstrument(instrumentType, expiry, spotPrice);
-                } finally {
-                    CurrentUserContext.clear();
-                }
-            } catch (KiteException | IOException e) {
-                log.error("Error calculating delta for {}: {}", instrumentType, e.getMessage());
-                // Fallback to simple ATM
-                return getSimpleATMStrike(spotPrice, instrumentType);
             } catch (Exception e) {
                 log.error("Error calculating delta for {}: {}", instrumentType, e.getMessage());
-                // Fallback to simple ATM
                 return getSimpleATMStrike(spotPrice, instrumentType);
             }
         }, DELTA_EXECUTOR);
@@ -213,20 +213,19 @@ public class DeltaCacheService {
         List<CompletableFuture<Void>> futures = new ArrayList<>();
 
         for (String instrumentType : SUPPORTED_INSTRUMENTS) {
+            // Capture userId for use in async thread (Cloud Run compatible)
+            final String capturedUserId = userId;
             futures.add(CompletableFuture.runAsync(() -> {
-                try {
-                    // Set user context for this thread so TradingService can find the session
-                    CurrentUserContext.setUserId(userId);
+                // Use runWithUserContext for guaranteed context cleanup
+                CurrentUserContext.runWithUserContext(capturedUserId, () -> {
                     try {
                         refreshDeltaForInstrument(instrumentType);
-                    } finally {
-                        CurrentUserContext.clear();
+                    } catch (KiteException | IOException e) {
+                        log.error("Error refreshing delta cache for {}: {}", instrumentType, e.getMessage());
+                    } catch (Exception e) {
+                        log.error("Error refreshing delta cache for {}: {}", instrumentType, e.getMessage());
                     }
-                } catch (KiteException | IOException e) {
-                    log.error("Error refreshing delta cache for {}: {}", instrumentType, e.getMessage());
-                } catch (Exception e) {
-                    log.error("Error refreshing delta cache for {}: {}", instrumentType, e.getMessage());
-                }
+                });
             }, DELTA_EXECUTOR));
         }
 

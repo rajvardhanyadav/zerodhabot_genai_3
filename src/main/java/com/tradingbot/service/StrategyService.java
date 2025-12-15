@@ -175,6 +175,37 @@ public class StrategyService {
         return list;
     }
 
+    // ============ SYSTEM-LEVEL MONITORING METHODS (No User Context Required) ============
+
+    /**
+     * Get count of ALL active strategies across ALL users.
+     * Used by SystemHealthMonitorService for system-wide health checks.
+     * DOES NOT require user context.
+     *
+     * @return total count of active strategies across all users
+     */
+    public int getTotalActiveStrategiesCount() {
+        int count = 0;
+        for (StrategyExecution se : executionsById.values()) {
+            StrategyStatus status = se.getStatus();
+            // Count strategies that are still running (not completed or failed)
+            if (status == StrategyStatus.ACTIVE || status == StrategyStatus.EXECUTING || status == StrategyStatus.PENDING) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Get all strategy executions across ALL users (for system monitoring only).
+     * DOES NOT require user context.
+     *
+     * @return unmodifiable collection of all strategy executions
+     */
+    public Collection<StrategyExecution> getAllStrategiesSystemWide() {
+        return Collections.unmodifiableCollection(executionsById.values());
+    }
+
     /**
      * Get strategy by execution ID for current user
      */

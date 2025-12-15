@@ -95,7 +95,7 @@ strategy:
 
   # Trailing Stop Loss Configuration
   # When enabled, stop loss trails up as position becomes profitable
-  trailing-stop-enabled: true
+  trailing-stop-enabled: false
 
   # Activation threshold: trailing stop activates when cumulative P&L >= this value
   # Example: 1.0 means trailing starts after 1 point profit

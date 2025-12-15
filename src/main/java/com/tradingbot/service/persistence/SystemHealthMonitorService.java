@@ -116,20 +116,22 @@ public class SystemHealthMonitorService {
             int activeThreads = threadBean.getThreadCount();
             int peakThreads = threadBean.getPeakThreadCount();
 
-            // Connection status (use cached values, avoid blocking calls)
+            // Connection status (use system-level methods that don't require user context)
             boolean wsConnected = false;
             int wsSubscriptions = 0;
             try {
-                wsConnected = webSocketService != null && webSocketService.isConnected();
-                wsSubscriptions = webSocketService != null ? webSocketService.getActiveMonitorsCount() : 0;
+                // Use system-wide methods that don't require user context
+                wsConnected = webSocketService != null && webSocketService.isAnyWebSocketConnected();
+                wsSubscriptions = webSocketService != null ? webSocketService.getTotalActiveMonitorsCount() : 0;
             } catch (Exception e) {
                 log.trace("Error getting WebSocket status: {}", e.getMessage());
             }
 
-            // Strategy metrics
+            // Strategy metrics (use system-level method that doesn't require user context)
             int activeStrategies = 0;
             try {
-                activeStrategies = strategyService != null ? strategyService.getActiveStrategies().size() : 0;
+                // Use system-wide method that doesn't require user context
+                activeStrategies = strategyService != null ? strategyService.getTotalActiveStrategiesCount() : 0;
             } catch (Exception e) {
                 log.trace("Error getting strategy count: {}", e.getMessage());
             }

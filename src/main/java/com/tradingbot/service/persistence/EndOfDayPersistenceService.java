@@ -54,23 +54,20 @@ public class EndOfDayPersistenceService {
 
         for (String userId : activeUsers) {
             try {
-                // Set user context for this thread
-                CurrentUserContext.setUserId(userId);
-
-                unifiedTradingService.persistPositionSnapshot();
+                // Use runWithUserContext for guaranteed cleanup (Cloud Run compatible)
+                CurrentUserContext.runWithUserContext(userId, () -> {
+                    try {
+                        unifiedTradingService.persistPositionSnapshot();
+                        log.debug("End-of-day position snapshot persisted for user: {}", userId);
+                    } catch (KiteException | IOException e) {
+                        throw new RuntimeException("Kite error: " + e.getMessage(), e);
+                    }
+                });
                 successCount++;
-
-                log.debug("End-of-day position snapshot persisted for user: {}", userId);
-            } catch (KiteException | IOException e) {
-                failureCount++;
-                log.error("Failed to persist end-of-day position snapshot for user={}: {}",
-                        userId, e.getMessage());
             } catch (Exception e) {
                 failureCount++;
                 log.error("Failed to persist end-of-day position snapshot for user={}: {}",
                         userId, e.getMessage());
-            } finally {
-                CurrentUserContext.clear();
             }
         }
 
@@ -102,19 +99,19 @@ public class EndOfDayPersistenceService {
 
         for (String userId : activeUsers) {
             try {
-                CurrentUserContext.setUserId(userId);
-                unifiedTradingService.persistPositionSnapshot();
+                // Use runWithUserContext for guaranteed cleanup (Cloud Run compatible)
+                CurrentUserContext.runWithUserContext(userId, () -> {
+                    try {
+                        unifiedTradingService.persistPositionSnapshot();
+                    } catch (KiteException | IOException e) {
+                        throw new RuntimeException("Kite error: " + e.getMessage(), e);
+                    }
+                });
                 successCount++;
-            } catch (KiteException | IOException e) {
-                failureCount++;
-                log.error("Failed to persist pre-market position snapshot for user={}: {}",
-                        userId, e.getMessage());
             } catch (Exception e) {
                 failureCount++;
                 log.error("Failed to persist pre-market position snapshot for user={}: {}",
                         userId, e.getMessage());
-            } finally {
-                CurrentUserContext.clear();
             }
         }
 

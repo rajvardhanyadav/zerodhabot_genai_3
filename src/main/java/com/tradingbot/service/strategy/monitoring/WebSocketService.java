@@ -105,6 +105,56 @@ public class WebSocketService implements DisposableBean {
         return ctx().activeMonitors.size();
     }
 
+    // ============ SYSTEM-LEVEL MONITORING METHODS (No User Context Required) ============
+
+    /**
+     * Check if ANY user has a connected WebSocket.
+     * Used by SystemHealthMonitorService for system-wide health checks.
+     * DOES NOT require user context.
+     *
+     * @return true if at least one user has an active WebSocket connection
+     */
+    public boolean isAnyWebSocketConnected() {
+        for (UserWSContext c : contexts.values()) {
+            if (c.isConnected.get()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Get total count of active WebSocket connections across all users.
+     * Used by SystemHealthMonitorService for system-wide monitoring.
+     * DOES NOT require user context.
+     *
+     * @return count of connected WebSocket sessions
+     */
+    public int getConnectedWebSocketCount() {
+        int count = 0;
+        for (UserWSContext c : contexts.values()) {
+            if (c.isConnected.get()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Get total count of active monitors across ALL users.
+     * Used by SystemHealthMonitorService for system-wide monitoring.
+     * DOES NOT require user context.
+     *
+     * @return total active monitors count across all users
+     */
+    public int getTotalActiveMonitorsCount() {
+        int total = 0;
+        for (UserWSContext c : contexts.values()) {
+            total += c.activeMonitors.size();
+        }
+        return total;
+    }
+
 
     /** Connect WebSocket for current user (idempotent) */
     public void connect() {
