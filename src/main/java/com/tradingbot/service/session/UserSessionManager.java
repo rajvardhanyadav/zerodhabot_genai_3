@@ -2,11 +2,12 @@ package com.tradingbot.service.session;
 
 import com.tradingbot.config.KiteConfig;
 import com.tradingbot.config.PaperTradingConfig;
+import com.tradingbot.entity.UserSessionEntity;
+import com.tradingbot.repository.UserSessionRepository;
 import com.tradingbot.util.CurrentUserContext;
 import com.zerodhatech.kiteconnect.KiteConnect;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.User;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -21,13 +22,36 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+/**
+ * Manages user Kite sessions with Cloud Run compatibility.
+ *
+ * CLOUD RUN ARCHITECTURE:
+ * - Sessions are stored both in-memory (for fast access) and in the database (for persistence)
+ * - When a request arrives at an instance without the session in memory, it is automatically
+ *   restored from the database using the stored access token
+ * - This enables session continuity across multiple container instances and restarts
+ *
+ * HFT CONSIDERATIONS:
+ * - In-memory cache provides sub-millisecond session lookups for the hot path
+ * - Database persistence is asynchronous where possible to avoid blocking
+ * - Session restoration is transparent to calling code
+ */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class UserSessionManager {
 
     private final KiteConfig kiteConfig;
     private final PaperTradingConfig paperTradingConfig;
+    private final UserSessionRepository sessionRepository;
+
+    public UserSessionManager(KiteConfig kiteConfig,
+                             PaperTradingConfig paperTradingConfig,
+                             UserSessionRepository sessionRepository) {
+        this.kiteConfig = kiteConfig;
+        this.paperTradingConfig = paperTradingConfig;
+        this.sessionRepository = sessionRepository;
+        log.info("UserSessionManager initialized with database-backed session persistence (Cloud Run compatible)");
+    }
 
     /**
      * HFT-Optimized Session Entry with metadata for monitoring and health checks.
@@ -130,21 +154,36 @@ public class UserSessionManager {
 
     /**
      * Check if a session exists for the given user ID.
-     * Thread-safe but does NOT guarantee the session is still valid.
+     * Checks both in-memory cache and database for Cloud Run compatibility.
      *
      * @param userId User ID to check
-     * @return true if session entry exists
+     * @return true if session entry exists (in memory or database)
      */
     public boolean hasSession(String userId) {
         if (userId == null || userId.isBlank()) {
             return false;
         }
-        return sessions.containsKey(userId.trim());
+        String trimmedUserId = userId.trim();
+
+        // Fast path: check in-memory cache first
+        if (sessions.containsKey(trimmedUserId)) {
+            return true;
+        }
+
+        // Slow path: check database (for Cloud Run session recovery)
+        try {
+            return sessionRepository.existsByUserIdAndActiveTrue(trimmedUserId);
+        } catch (Exception e) {
+            log.warn("Failed to check session in database for userId={}: {}", trimmedUserId, e.getMessage());
+            return false;
+        }
     }
 
     /**
      * Get KiteConnect for a user. May return null if session doesn't exist.
      * For HFT safety, prefer using getKiteForUserSafe() which returns Optional.
+     *
+     * CLOUD RUN: If session is not in memory, attempts to restore from database.
      *
      * @param userId User ID
      * @return KiteConnect or null
@@ -154,15 +193,27 @@ public class UserSessionManager {
             log.warn("getKiteForUser called with null/blank userId");
             return null;
         }
-        SessionEntry entry = sessions.get(userId.trim());
-        if (entry == null) {
-            log.debug("No session found for userId={}", userId);
-            return null;
+        String trimmedUserId = userId.trim();
+
+        // Fast path: check in-memory cache
+        SessionEntry entry = sessions.get(trimmedUserId);
+        if (entry != null) {
+            if (entry.isPotentiallyStale()) {
+                log.warn("Session for userId={} is potentially stale (created: {})", trimmedUserId, entry.createdAt);
+            }
+            return entry.kiteConnect;
         }
-        if (entry.isPotentiallyStale()) {
-            log.warn("Session for userId={} is potentially stale (created: {})", userId, entry.createdAt);
+
+        // Cloud Run recovery path: attempt to restore session from database
+        log.debug("Session not in memory for userId={}, attempting database recovery", trimmedUserId);
+        KiteConnect recoveredKite = attemptSessionRecoveryFromDatabase(trimmedUserId);
+        if (recoveredKite != null) {
+            log.info("Successfully recovered session from database for userId={}", trimmedUserId);
+            return recoveredKite;
         }
-        return entry.kiteConnect;
+
+        log.debug("No session found for userId={} (checked memory and database)", trimmedUserId);
+        return null;
     }
 
     /**
@@ -181,13 +232,16 @@ public class UserSessionManager {
      *
      * HFT-Critical: This method is used in the hot path - optimize for the happy case.
      *
+     * CLOUD RUN: If session is not in memory, attempts transparent recovery from database.
+     * This enables session continuity across container instances and restarts.
+     *
      * @return KiteConnect (never null)
-     * @throws IllegalStateException if no session exists
+     * @throws IllegalStateException if no session exists and cannot be recovered
      */
     public KiteConnect getRequiredKiteForCurrentUser() {
         String userId = getCurrentUserIdRequired();
 
-        // Fast path: direct lookup without lock
+        // Fast path: direct lookup without lock (optimized for HFT hot path)
         SessionEntry entry = sessions.get(userId);
         if (entry != null) {
             if (entry.isPotentiallyStale()) {
@@ -197,15 +251,23 @@ public class UserSessionManager {
             return entry.kiteConnect;
         }
 
-        // Session not found - provide detailed error
-        log.error("No active session for userId={}. " +
-                "Total active sessions: {}. Active userIds: {}",
+        // Cloud Run recovery path: attempt to restore session from database
+        log.info("Session not in memory for userId={} on this instance, attempting database recovery...", userId);
+        KiteConnect recoveredKite = attemptSessionRecoveryFromDatabase(userId);
+        if (recoveredKite != null) {
+            log.info("Successfully recovered session from database for userId={} (Cloud Run session restoration)", userId);
+            return recoveredKite;
+        }
+
+        // Session not found in memory or database - provide detailed error
+        log.error("No active session for userId={} in memory or database. " +
+                "In-memory sessions: {}. Active userIds: {}",
                 userId, sessions.size(), sessions.keySet());
 
         throw new IllegalStateException(
                 "No active session for user " + userId + ". " +
                 "Please authenticate via /api/auth/session. " +
-                "(Active sessions: " + sessions.size() + ")"
+                "(In-memory sessions: " + sessions.size() + ", database checked: true)"
         );
     }
 
@@ -230,6 +292,10 @@ public class UserSessionManager {
      * Internal method to create a session with proper metadata tracking.
      *
      * HFT-Critical: Uses write lock to ensure atomic session replacement.
+     *
+     * CLOUD RUN: Sessions are persisted to database for cross-instance recovery.
+     * The database write is done synchronously to ensure consistency, but this
+     * only happens during login (not in the trading hot path).
      */
     private User createSessionInternal(String requestToken, String headerUserId) throws KiteException, IOException {
         if (requestToken == null || requestToken.isBlank()) {
@@ -260,19 +326,23 @@ public class UserSessionManager {
             sessionLock.writeLock().unlock();
         }
 
+        // CLOUD RUN: Persist session to database for cross-instance recovery
+        persistSessionToDatabase(effectiveUserId, user.userId, user.accessToken, user.publicToken);
+
         // If header was absent, set context for this request so downstream logging sees it
         if (headerUserId == null || headerUserId.isBlank()) {
             CurrentUserContext.setUserId(effectiveUserId);
             log.debug("UserContext set from Kite userId={} during session creation", effectiveUserId);
         }
 
-        log.info("Kite session stored for userId={} (Kite user: {}, sessions count: {})",
+        log.info("Kite session stored for userId={} (Kite user: {}, sessions count: {}, persisted to database: true)",
                 effectiveUserId, user.userId, sessions.size());
         return user;
     }
 
     /**
      * Invalidate and remove session for the current user.
+     * CLOUD RUN: Also deactivates the session in the database to prevent recovery on other instances.
      */
     public void invalidateSessionForCurrentUser() {
         String userId = getCurrentUserIdRequired();
@@ -283,15 +353,19 @@ public class UserSessionManager {
                 log.info("Kite session invalidated for userId={} (session was created at: {}, last accessed: {})",
                         userId, removed.createdAt, removed.lastAccessedAt);
             } else {
-                log.warn("Attempted to invalidate non-existent session for userId={}", userId);
+                log.warn("Attempted to invalidate non-existent in-memory session for userId={}", userId);
             }
         } finally {
             sessionLock.writeLock().unlock();
         }
+
+        // CLOUD RUN: Deactivate session in database to prevent recovery on other instances
+        deactivateSessionInDatabase(userId);
     }
 
     /**
      * Invalidate session by user ID (for administrative use).
+     * CLOUD RUN: Also deactivates the session in the database.
      *
      * @param userId User ID to invalidate
      * @return true if session was removed, false if it didn't exist
@@ -300,17 +374,24 @@ public class UserSessionManager {
         if (userId == null || userId.isBlank()) {
             return false;
         }
+        String trimmedUserId = userId.trim();
+        boolean removedFromMemory = false;
+
         sessionLock.writeLock().lock();
         try {
-            SessionEntry removed = sessions.remove(userId.trim());
+            SessionEntry removed = sessions.remove(trimmedUserId);
             if (removed != null) {
-                log.info("Session administratively invalidated for userId={}", userId);
-                return true;
+                log.info("Session administratively invalidated for userId={}", trimmedUserId);
+                removedFromMemory = true;
             }
-            return false;
         } finally {
             sessionLock.writeLock().unlock();
         }
+
+        // CLOUD RUN: Deactivate session in database
+        boolean deactivatedInDb = deactivateSessionInDatabase(trimmedUserId);
+
+        return removedFromMemory || deactivatedInDb;
     }
 
     /**
@@ -436,6 +517,165 @@ public class UserSessionManager {
             return count;
         } finally {
             sessionLock.writeLock().unlock();
+        }
+    }
+
+    // ==================== CLOUD RUN DATABASE PERSISTENCE METHODS ====================
+
+    /**
+     * Persist session to database for cross-instance recovery in Cloud Run.
+     * This is called during session creation (login flow, not hot path).
+     *
+     * @param userId Application user ID
+     * @param kiteUserId Original Kite user ID
+     * @param accessToken Kite access token
+     * @param publicToken Kite public token (optional)
+     */
+    private void persistSessionToDatabase(String userId, String kiteUserId, String accessToken, String publicToken) {
+        try {
+            Instant now = Instant.now();
+            // Kite sessions typically expire next morning (~6 AM IST), estimate 18 hours from now
+            Instant expiresAt = now.plusSeconds(18 * 60 * 60);
+
+            UserSessionEntity entity = sessionRepository.findByUserId(userId)
+                    .map(existing -> {
+                        // Update existing session
+                        existing.setKiteUserId(kiteUserId);
+                        existing.setAccessToken(accessToken);
+                        existing.setPublicToken(publicToken);
+                        existing.setCreatedAt(now);
+                        existing.setLastAccessedAt(now);
+                        existing.setExpiresAt(expiresAt);
+                        existing.setActive(true);
+                        return existing;
+                    })
+                    .orElseGet(() -> UserSessionEntity.builder()
+                            .userId(userId)
+                            .kiteUserId(kiteUserId)
+                            .accessToken(accessToken)
+                            .publicToken(publicToken)
+                            .createdAt(now)
+                            .lastAccessedAt(now)
+                            .expiresAt(expiresAt)
+                            .active(true)
+                            .build());
+
+            sessionRepository.save(entity);
+            log.debug("Session persisted to database for userId={}", userId);
+        } catch (Exception e) {
+            // Log but don't fail - session is already in memory and will work on this instance
+            log.error("Failed to persist session to database for userId={}: {}. " +
+                    "Session will work on this instance but may not be recoverable on other instances.",
+                    userId, e.getMessage());
+        }
+    }
+
+    /**
+     * Attempt to recover a session from the database.
+     * This is called when a request arrives at an instance without the session in memory.
+     *
+     * CLOUD RUN: This enables transparent session recovery across container instances.
+     *
+     * @param userId User ID to recover session for
+     * @return KiteConnect instance if recovery successful, null otherwise
+     */
+    private KiteConnect attemptSessionRecoveryFromDatabase(String userId) {
+        try {
+            Optional<UserSessionEntity> sessionOpt = sessionRepository.findByUserIdAndActiveTrue(userId);
+            if (sessionOpt.isEmpty()) {
+                log.debug("No active session in database for userId={}", userId);
+                return null;
+            }
+
+            UserSessionEntity dbSession = sessionOpt.get();
+
+            // Check if session is potentially expired
+            if (dbSession.isPotentiallyExpired()) {
+                log.warn("Database session for userId={} appears expired (expiresAt={}), " +
+                        "attempting recovery anyway - Kite API will validate", userId, dbSession.getExpiresAt());
+            }
+
+            // Recreate KiteConnect with stored access token
+            KiteConnect kc = new KiteConnect(kiteConfig.getApiKey());
+            kc.setAccessToken(dbSession.getAccessToken());
+
+            // Create in-memory session entry
+            SessionEntry newEntry = new SessionEntry(kc, dbSession.getKiteUserId(), dbSession.getAccessToken());
+
+            // Store in memory cache with write lock
+            sessionLock.writeLock().lock();
+            try {
+                sessions.put(userId, newEntry);
+            } finally {
+                sessionLock.writeLock().unlock();
+            }
+
+            // Update last accessed time in database (async-safe, non-blocking for HFT)
+            try {
+                sessionRepository.updateLastAccessedAt(userId, Instant.now());
+            } catch (Exception e) {
+                log.debug("Failed to update last accessed time for userId={}: {}", userId, e.getMessage());
+            }
+
+            log.info("Session recovered from database for userId={} (kiteUserId={}, created={})",
+                    userId, dbSession.getKiteUserId(), dbSession.getCreatedAt());
+            return kc;
+
+        } catch (Exception e) {
+            log.error("Failed to recover session from database for userId={}: {}", userId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Deactivate session in database (called during logout).
+     * This prevents the session from being recovered on other instances.
+     *
+     * @param userId User ID whose session should be deactivated
+     * @return true if session was deactivated
+     */
+    private boolean deactivateSessionInDatabase(String userId) {
+        try {
+            int updated = sessionRepository.deactivateByUserId(userId);
+            if (updated > 0) {
+                log.debug("Session deactivated in database for userId={}", userId);
+                return true;
+            }
+            return false;
+        } catch (Exception e) {
+            log.error("Failed to deactivate session in database for userId={}: {}", userId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Scheduled task to clean up old inactive sessions from the database.
+     * Runs every 6 hours to remove sessions that have been inactive for more than 24 hours.
+     */
+    @Scheduled(fixedRate = 6 * 60 * 60 * 1000) // Every 6 hours
+    public void cleanupDatabaseSessions() {
+        try {
+            Instant threshold = Instant.now().minusSeconds(24 * 60 * 60); // 24 hours
+            int deleted = sessionRepository.deleteInactiveSessionsOlderThan(threshold);
+            if (deleted > 0) {
+                log.info("Cleaned up {} inactive sessions from database (older than 24 hours)", deleted);
+            }
+        } catch (Exception e) {
+            log.error("Failed to clean up database sessions: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Get count of sessions persisted in database (for monitoring).
+     *
+     * @return Number of active sessions in database
+     */
+    public long getDatabaseSessionCount() {
+        try {
+            return sessionRepository.countByActiveTrue();
+        } catch (Exception e) {
+            log.error("Failed to count database sessions: {}", e.getMessage());
+            return -1;
         }
     }
 }

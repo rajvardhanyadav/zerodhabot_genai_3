@@ -153,6 +153,42 @@ Content-Type: application/json
 
 If `X-User-Id` header is omitted, userId is derived from Kite profile.
 
+### Cloud Run Session Recovery (v4.2+)
+
+Sessions are persisted to the database to survive container restarts and enable cross-instance recovery:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Request arrives at Cloud Run                   │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼
+┌───────────────────────────────────────────────────────────────────┐
+│                  UserSessionManager.getKiteForUser()               │
+├───────────────────────────────────────────────────────────────────┤
+│  1. Check in-memory cache (fast path - sub-millisecond)           │
+│     ├── If found: return KiteConnect                              │
+│     └── If not found: continue to step 2                          │
+│                                                                    │
+│  2. Query database for active session (recovery path)              │
+│     ├── If found: restore KiteConnect using stored access token   │
+│     │            → cache in memory for future requests            │
+│     │            → return KiteConnect                             │
+│     └── If not found: return null (user must re-authenticate)     │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+**Session Storage:**
+- `user_sessions` table stores: userId, accessToken, creation/expiry times
+- Sessions are persisted on login, deactivated on logout
+- Automatic cleanup of inactive sessions (24+ hours old)
+
+**Monitoring Endpoint:**
+```http
+GET /api/health/sessions
+```
+Returns diagnostic info: instance hostname, in-memory session count, database session count.
+
 ---
 
 ## 5. Trading Strategies
