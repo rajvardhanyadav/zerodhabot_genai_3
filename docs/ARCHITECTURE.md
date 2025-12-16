@@ -1,207 +1,582 @@
-# Zerodha Trading Bot - Architecture Overview
+# Zerodha Trading Bot - Technical Documentation
 
-Last updated: 2025-12-10 (IST)
+**Version 4.2** | **December 2025**
 
-This document captures the high-level architecture, key modules, data flows, and extension points of the backend.
-It’s meant to preserve shared context for future contributors and to accelerate onboarding and changes.
+> 🚀 **Quick Start**: See [README.md](../README.md)
 
-## 1. What this app is
-- Spring Boot backend integrating Zerodha Kite Connect for options trading.
-- Exposes REST APIs for UI to perform login, orders, portfolio, market data, strategies, monitoring, paper trading, GTT, and historical replay.
-- Supports both Live trading and Paper trading via a unified routing layer.
-- Multi-tenant by design: every request is processed in the context of a specific user identified by the `X-User-Id` header.
-- **Persistence layer** for storing daily trading data including trades, strategy executions, order timing metrics, delta snapshots, and daily P&L summaries.
+---
 
-## 2. Runtime modes
-- Live: Uses `KiteConnect` directly for orders, positions, trades, etc.
-- Paper: Uses in-memory simulation (`PaperTradingService`) with margin, brokerage/taxes, slippage and delays.
-- Routing: `UnifiedTradingService` decides based on `trading.paper-trading-enabled` in `application.yml` (reads current user via request context).
+## Table of Contents
 
-## 3. Key packages and responsibilities
-- `config/`
-  - `KiteConfig`: Loads credentials; provides base settings (API key/secret). Per-user sessions are managed by `UserSessionManager` (not a global singleton connection).
-  - `PaperTradingConfig`: Paper mode flags and economics (charges, slippage, delay, rejection probability).
-  - `StrategyConfig`: Defaults for stop-loss and target; autosquare-off options (reserved).
-  - `PersistenceConfig`: Data retention settings and cleanup job configuration.
-  - `AsyncPersistenceConfig`: Dedicated thread pool for asynchronous persistence operations (non-blocking for HFT).
-  - `SwaggerConfig`, `SwaggerGlobalHeaderConfig`: OpenAPI setup and global header parameter injection for `X-User-Id`.
-  - `UserContextFilter`: Extracts `X-User-Id` from incoming requests and stores it in `CurrentUserContext` (ThreadLocal) for downstream services.
-  - `CorsConfig`.
+1. [Architecture Overview](#1-architecture-overview)
+2. [Package Structure](#2-package-structure)
+3. [Runtime Modes](#3-runtime-modes)
+4. [Multi-User Model](#4-multi-user-model)
+5. [Trading Strategies](#5-trading-strategies)
+6. [Position Monitoring](#6-position-monitoring)
+7. [P&L Calculation](#7-pl-calculation)
+8. [Data Persistence](#8-data-persistence)
+9. [Configuration Reference](#9-configuration-reference)
+10. [API Reference](#10-api-reference)
+11. [Extension Points](#11-extension-points)
 
-- `controller/`
-  - `AuthController`: login URL, session generation, profile (per-user session creation; requires `X-User-Id`).
-  - `OrderController`: place/modify/cancel orders, list orders/history, order charges.
-  - `PortfolioController`: positions, holdings (live only), trades (live only), convert position, day P&L.
-  - `MarketDataController`: quote/ohlc/ltp/historical data, instruments.
-  - `GTTController`: list/place/get/modify/cancel GTTs.
-  - `StrategyController`: execute strategy, list active, get details by id, stop one/all, list types, instruments, expiries, bot status.
-  - `MonitoringController`: per-user WebSocket connect/disconnect/status, stop monitoring for id. Connect requires a valid per-user access token.
-  - `HealthController`: liveness endpoint.
-  - `BacktestController`: Runs single or batch backtests and exposes execution history/health endpoints.
-  - `TradingHistoryController`: Query persisted trade history, strategy executions, and daily P&L summaries.
+---
 
-- `entity/` (NEW - JPA Entities)
-  - `TradeEntity`: Individual trade records with entry/exit prices, timestamps, P&L, and charges.
-  - `StrategyExecutionEntity`: Strategy execution lifecycle with order legs.
-  - `OrderLegEntity`: Individual legs within a strategy (CE/PE).
-  - `DeltaSnapshotEntity`: Greeks/Delta snapshots for analysis.
-  - `DailyPnLSummaryEntity`: Aggregated daily P&L, win rate, trade statistics.
-  - `PositionSnapshotEntity`: End-of-day position snapshots.
-  - `OrderTimingEntity`: HFT latency metrics for order placements.
+## 1. Architecture Overview
 
-- `repository/` (NEW - Spring Data JPA Repositories)
-  - `TradeRepository`, `StrategyExecutionRepository`, `OrderLegRepository`
-  - `DeltaSnapshotRepository`, `DailyPnLSummaryRepository`
-  - `PositionSnapshotRepository`, `OrderTimingRepository`
+Spring Boot backend integrating Zerodha Kite Connect for options trading.
 
-- `service/`
-  - `UserSessionManager`: Manages per-user `KiteConnect` sessions (create/replace/invalidate) keyed by `X-User-Id`.
-  - `TradingService` (live): Thin wrapper around `KiteConnect` for all live operations; resolves the current user's `KiteConnect` via `UserSessionManager`.
-  - `UnifiedTradingService`: Routes calls to live vs paper, converts paper types to Kite-like DTOs, computes day P&L; always reads the current user from `CurrentUserContext`.
-  - `PaperTradingService` (paper): In-memory order execution, positions, account P&L, brokerage/taxes, simple price fetch via LTP; all state is keyed per user. Now also persists trades asynchronously.
-  - `BotStatusService`: Holds an in-memory `RUNNING`/`STOPPED` status with `lastUpdated`; flipped on `/api/strategies/execute` and `/api/strategies/stop-all`.
-  - `persistence/TradePersistenceService` (NEW): Asynchronous persistence of trades, strategy executions, delta snapshots, positions, and order timing. Uses write-behind pattern to avoid blocking HFT hot paths.
-  - `persistence/DataCleanupService` (NEW): Scheduled job to clean up old data based on retention policies.
-  - `strategy/*`:
-    - `StrategyService`: lifecycle, registry of active executions, exits for stop/stop-all, instruments meta, expiries. Now persists strategy executions on completion.
-    - `StrategyFactory`: returns implementation for `ATM_STRADDLE`, `SELL_ATM_STRADDLE`.
-    - `BaseStrategy`: shared helpers (spot price, ATM/delta calc w/ BS + IV estimation, lot sizes, instruments filter, order creation, entry price lookup).
-    - `ATMStraddleStrategy`: two-leg option buy strategy (Buy 1 ATM Call + Buy 1 ATM Put) with monitoring and exits.
-    - `SellATMStraddleStrategy`: two-leg option sell strategy (Sell 1 ATM Call + Sell 1 ATM Put) with monitoring and exits.
-    - `monitoring/WebSocketService`: Per-user KiteTicker connections, per-user instrument subscriptions and resubscription on reconnect, routes live ticks to that user's monitors.
-    - `monitoring/PositionMonitor`: Tracks legs, prices, triggers exits and callbacks.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        REST Controllers                          │
+├─────────────────────────────────────────────────────────────────┤
+│  Auth │ Orders │ Portfolio │ Market │ Strategies │ Monitoring   │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────────────┐
+│                    UnifiedTradingService                         │
+│              (Routes to Live or Paper mode)                      │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+        ┌───────────────────┴───────────────────┐
+        ▼                                       ▼
+┌───────────────────┐                 ┌───────────────────┐
+│  TradingService   │                 │ PaperTradingService│
+│   (Kite Connect)  │                 │  (In-memory sim)   │
+└───────────────────┘                 └───────────────────┘
+```
 
-- `dto/` and `model/`
-  - `StrategyRequest`, `StrategyExecutionResponse`, `OrderRequest`, `OrderResponse`, `DayPnLResponse`, etc.
-  - `StrategyExecution`, `StrategyStatus`, `StrategyType`.
-  - `BotStatusResponse`, `BotStatus`.
+---
 
-- `util/` and `service/TradingConstants`
-  - Centralized constants for exchanges, products, order types/status, messages, and strategy messages.
-  - `CurrentUserContext`: ThreadLocal per-request user id used by services to resolve per-user state.
+## 2. Package Structure
 
-## 4. Strategy execution and monitoring flow
-1) UI calls `POST /api/strategies/execute` with `StrategyRequest` (include `X-User-Id`).
-2) `StrategyService` creates `executionId` and selects a strategy via `StrategyFactory`.
-3) Strategy implementation (e.g., Straddle):
-   - Gets spot price and instruments, computes ATM or OTM strikes.
-   - Places two BUY orders via `UnifiedTradingService` (routes to paper or live) for the current user.
-   - Looks up entry prices from order history.
-   - Creates a `PositionMonitor` with legs and sets:
-     - Exit ALL legs callback (SL/Target/threshold) -> place SELL market orders for both legs.
-     - Exit INDIVIDUAL leg callback (per-leg loss threshold) -> place SELL market for that leg.
-   - Registers monitor in the per-user `WebSocketService` (live ticks) or gets synthetic ticks from historical replay.
-4) `PositionMonitor` thresholds (defaults in code):
-   - All-legs exit at +3.0 points price diff on any leg.
-   - Individual leg exit at -1.5 points price diff.
-   - Price diff = current - entry price.
-5) Stops monitoring once exits complete; `StrategyService` marks execution status accordingly.
+```
+com.tradingbot/
+├── config/
+│   ├── KiteConfig              # Kite API credentials
+│   ├── PaperTradingConfig      # Paper mode settings
+│   ├── StrategyConfig          # Strategy defaults
+│   ├── PersistenceConfig       # Data retention
+│   ├── AsyncPersistenceConfig  # Async thread pool
+│   ├── PnLConfig               # P&L calculation mode
+│   ├── UserContextFilter       # X-User-Id extraction
+│   └── SwaggerConfig           # OpenAPI setup
+│
+├── controller/
+│   ├── AuthController          # Login, session, profile
+│   ├── OrderController         # Order CRUD
+│   ├── PortfolioController     # Positions, holdings
+│   ├── MarketDataController    # Quotes, OHLC, LTP
+│   ├── StrategyController      # Strategy execution
+│   ├── MonitoringController    # WebSocket management
+│   ├── PaperTradingController  # Paper mode APIs
+│   ├── TradingHistoryController# Historical data
+│   ├── GTTController           # GTT orders
+│   └── HealthController        # Health check
+│
+├── service/
+│   ├── UserSessionManager      # Per-user Kite sessions
+│   ├── TradingService          # Live trading via Kite
+│   ├── PaperTradingService     # Simulated trading
+│   ├── UnifiedTradingService   # Routes live/paper
+│   ├── BotStatusService        # RUNNING/STOPPED status
+│   ├── LogoutService           # Comprehensive user logout (v4.2)
+│   ├── strategy/
+│   │   ├── StrategyService     # Lifecycle management
+│   │   ├── StrategyFactory     # Strategy instantiation
+│   │   ├── BaseStrategy        # Common helpers
+│   │   ├── ATMStraddleStrategy # Buy straddle
+│   │   └── SellATMStraddleStrategy # Sell straddle
+│   ├── monitoring/
+│   │   ├── WebSocketService    # Per-user KiteTicker
+│   │   └── PositionMonitor     # P&L tracking, exits
+│   ├── pnl/
+│   │   ├── PnLCalculationStrategy    # Interface
+│   │   ├── FixedPnLCalculationStrategy   # Fixed mode
+│   │   └── DynamicPnLCalculationStrategy # Dynamic mode
+│   └── persistence/
+│       ├── TradePersistenceService # Async persistence
+│       └── DataCleanupService      # Retention cleanup
+│
+├── entity/
+│   ├── TradeEntity             # Trade records
+│   ├── StrategyExecutionEntity # Strategy lifecycle
+│   ├── OrderLegEntity          # Strategy legs
+│   ├── DailyPnLSummaryEntity   # Daily P&L
+│   ├── DeltaSnapshotEntity     # Greeks snapshots
+│   ├── PositionSnapshotEntity  # EOD snapshots
+│   └── OrderTimingEntity       # Latency metrics
+│
+└── util/
+    ├── CurrentUserContext      # ThreadLocal user ID
+    └── TradingConstants        # Constants
+```
 
-## 5. Configuration
-- `application.yml` keys of interest:
-  - `kite.api-key`, `kite.api-secret` (recommend using env vars; do not commit secrets).
-  - `trading.paper-trading-enabled` (switch between paper and live).
-  - Charges/fees/slippage/delay/rejection parameters under `trading.*`.
-  - `strategy.default-stop-loss-points`, `strategy.default-target-points`, and square-off flags.
-  - Swagger UI at `/swagger-ui.html` (OpenAPI at `/api-docs`) with global header parameter `X-User-Id`.
+---
 
-## 6. Exposed API surface (by group)
-- Auth: `/api/auth/*` (`/api/auth/session` does NOT require `X-User-Id`; if absent the Kite `user.userId` is inferred and returned. Subsequent protected calls must include `X-User-Id`.)
-- Orders: `/api/orders/*`
-- Portfolio: `/api/portfolio/*`
-- Market Data: `/api/market/*`
-- Account: `/api/account/*`
-- GTT: `/api/gtt/*`
-- Strategies: `/api/strategies/*` (includes `/api/strategies/bot-status`)
-- Monitoring: `/api/monitoring/*` (connect/disconnect/status are per-user)
-- Paper trading: `/api/paper-trading/*`
-- **Trading History: `/api/history/*`** (NEW - trades, strategy executions, daily summaries)
-- Health: `/api/health`
+## 3. Runtime Modes
 
-For full request/response payloads, see `COMPLETE_API_DOCUMENTATION.md` and Swagger UI.
+### Live Mode
+- Uses `KiteConnect` SDK directly
+- Real orders, positions, and market data
+- Set `trading.paper-trading-enabled: false`
 
-## 7. Multi-user and request scoping
-- The header `X-User-Id` must be provided on protected endpoints (all except initial `/api/auth/session`).
-- If `/api/auth/session` is called without the header, the backend stores the session under the Kite `user.userId` and returns that id to the client; the client must then use it in `X-User-Id` for subsequent requests.
-- `UserSessionManager` maintains one `KiteConnect` session per user id key.
-- `WebSocketService` keeps per-user ticker connections, subscriptions, and monitors; reconnects resubscribe per user only.
-- `PaperTradingService` stores accounts, orders, and positions per user; resetting one user doesn’t affect others.
-- Swagger adds the `X-User-Id` parameter globally so it can be set once in the UI.
+### Paper Mode
+- In-memory simulation via `PaperTradingService`
+- Virtual balance, brokerage, slippage simulation
+- Set `trading.paper-trading-enabled: true`
 
-## 8. Extension points (recommended next steps)
-- Implement additional strategies: Bull Call Spread, Bear Put Spread, Iron Condor.
-- Make monitor thresholds configurable (global + request-level override).
-- Paper mode enhancements: add trades tracking and partial fill/slippage models.
-- Security hygiene: remove fallback defaults for Kite API key/secret from `application.yml` and rely solely on environment variables.
-- Improve test coverage: unit tests for strategies and routing.
+### Runtime Toggle
+```http
+POST /api/paper-trading/mode?paperTradingEnabled=false
+```
 
-## 9. Quickstart (dev)
-- Build (Windows): `./mvnw.cmd -DskipTests=false test`
-- Build (macOS/Linux): `./mvnw -DskipTests=false test`
-- Run (Windows): `./mvnw.cmd spring-boot:run`
-- Run (macOS/Linux): `./mvnw spring-boot:run`
-- Swagger UI: `http://localhost:8080/swagger-ui.html`
-- Toggle paper/live: set `trading.paper-trading-enabled` in `application.yml` or via env var.
+---
 
-## 10. Persistence Layer (NEW)
+## 4. Multi-User Model
 
-### Database Configuration
-- **Development**: H2 in-memory/file database (`jdbc:h2:file:./data/tradingbot`)
-- **Production**: PostgreSQL with connection pooling via HikariCP
-- **Migrations**: Flyway for schema versioning (`src/main/resources/db/migration/`)
+Every request requires `X-User-Id` header (except `/api/auth/session`).
 
-### Entities Persisted
+### Per-User Isolation
+- **Sessions**: `UserSessionManager` maintains per-user KiteConnect
+- **WebSocket**: Per-user KiteTicker connections
+- **Paper Trading**: Isolated accounts, orders, positions
+- **Monitoring**: Scoped PositionMonitors
+
+### Session Creation
+```http
+POST /api/auth/session
+Content-Type: application/json
+
+{"requestToken": "your_request_token"}
+```
+
+If `X-User-Id` header is omitted, userId is derived from Kite profile.
+
+---
+
+## 5. Trading Strategies
+
+### Execution Flow
+1. `POST /api/strategies/execute` with StrategyRequest
+2. StrategyService creates executionId, selects strategy
+3. Strategy fetches spot price, computes ATM strikes
+4. Places orders via UnifiedTradingService
+5. Creates PositionMonitor with SL/Target
+6. Subscribes to WebSocket for price updates
+7. Monitors and executes exits based on triggers
+
+### Available Strategies
+
+| Strategy | Direction | Description |
+|----------|-----------|-------------|
+| `ATM_STRADDLE` | LONG | Buy ATM Call + Put |
+| `SELL_ATM_STRADDLE` | SHORT | Sell ATM Call + Put |
+
+### Exit Conditions (Priority Order)
+1. **Cumulative Target** - Total P&L ≥ target points → Exit all
+2. **Individual Leg SL** - Leg P&L ≤ -5 points → Exit that leg
+3. **Trailing Stop** - If activated and hit → Exit all
+4. **Fixed Cumulative SL** - Total P&L ≤ -stopLoss → Exit all
+
+---
+
+## 6. Position Monitoring
+
+### WebSocket Architecture
+```
+KiteTicker (Per User)
+       ↓
+  Price Ticks
+       ↓
+  PositionMonitor.updatePrice()
+       ↓
+  Check Exit Conditions
+       ↓
+  Execute Exits (if triggered)
+```
+
+### Monitor Features
+- Real-time price tracking from WebSocket
+- Multi-leg support (CE + PE)
+- Cumulative P&L calculation
+- Configurable SL/Target/Trailing stops
+- Callbacks for exit events
+
+---
+
+## 7. P&L Calculation
+
+### Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `FIXED` (default) | Full position at entry price | Simple strategies, atomic exits |
+| `DYNAMIC` | Tracks partial exits | Advanced strategies |
+
+### Configuration
+```yaml
+pnl:
+  calculation-mode: FIXED  # or DYNAMIC
+  enable-per-leg-tracking: false
+  enable-debug-logging: false
+```
+
+### FIXED Mode Formula
+```
+P&L = (currentPrice - entryPrice) * originalQuantity * direction
+```
+
+### DYNAMIC Mode
+Tracks realized + unrealized P&L with partial exit support.
+
+---
+
+## 8. Data Persistence
+
+### Async Write-Behind Pattern
+- All persistence uses `@Async` with dedicated thread pool
+- Trading hot path is NOT blocked
+- HFT-optimized for low latency
+
+### Entities & Retention
+
 | Entity | Description | Retention |
 |--------|-------------|-----------|
-| `TradeEntity` | Individual trades with entry/exit, P&L, charges | 365 days |
-| `StrategyExecutionEntity` | Strategy lifecycle with order legs | 365 days |
-| `DeltaSnapshotEntity` | Greeks/IV snapshots for analysis | 90 days |
-| `DailyPnLSummaryEntity` | Daily aggregated P&L and statistics | 365 days |
-| `PositionSnapshotEntity` | EOD position snapshots | 180 days |
-| `OrderTimingEntity` | HFT latency metrics | 90 days |
+| TradeEntity | Trade records with P&L | 365 days |
+| StrategyExecutionEntity | Strategy lifecycle | 365 days |
+| DeltaSnapshotEntity | Greeks snapshots | 90 days |
+| DailyPnLSummaryEntity | Daily aggregates | 365 days |
+| PositionSnapshotEntity | EOD snapshots | 180 days |
+| OrderTimingEntity | Latency metrics | 90 days |
 
-### Async Persistence (HFT Optimized)
-- All persistence operations use `@Async` with a dedicated thread pool (`persistenceExecutor`)
-- Write-behind caching pattern ensures trading hot path is not blocked
-- Default thread pool: 4-8 threads with 500 operation queue capacity
+### Cleanup Job
+Runs daily at 2 AM, configurable via `persistence.cleanup.cron`.
 
-### Data Cleanup
-- Scheduled job runs daily at 2 AM (configurable via `persistence.cleanup.cron`)
-- Automatically removes data older than configured retention periods
-- Can be disabled via `persistence.cleanup.enabled=false`
+---
 
-### Configuration Keys
+## 9. Configuration Reference
+
+### application.yml
+
 ```yaml
+# Kite Connect
+kite:
+  api-key: ${KITE_API_KEY}
+  api-secret: ${KITE_API_SECRET}
+
+# Trading Mode
+trading:
+  paper-trading-enabled: true
+  initial-balance: 1000000.0
+  apply-brokerage-charges: true
+  brokerage-per-order: 20.0
+  stt-percentage: 0.025
+  slippage-percentage: 0.05
+  execution-delay-ms: 500
+  enable-order-rejection: false
+
+# Strategy Defaults
+strategy:
+  default-stop-loss-points: 2.0
+  default-target-points: 2.0
+  trailing-stop-enabled: false
+  auto-square-off-enabled: false
+  auto-square-off-time: "15:15"
+
+# P&L Calculation
+pnl:
+  calculation-mode: FIXED
+  enable-per-leg-tracking: false
+
+# Persistence
 persistence:
   enabled: true
   retention:
     trades-days: 365
     delta-snapshots-days: 90
     position-snapshots-days: 180
-    order-timing-days: 90
   cleanup:
     enabled: true
     cron: "0 0 2 * * ?"
+
+# Database
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/tradingbot
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+# Logging
+logging:
+  level:
+    com.tradingbot: DEBUG
 ```
 
-## 11. Troubleshooting
-- **Common issues**:
-  - 401 Unauthorized: Missing or invalid `X-User-Id` header. Ensure it’s set for all protected endpoints.
-  - 404 Not Found: Check if the endpoint is correct and requires authentication.
-  - 500 Internal Server Error: Check server logs for stack traces; common in strategy execution errors.
+---
 
-- **Debugging tips**:
-  - Enable debug logging for `com.zerodhatradingbot` packages to trace request handling.
-  - Check database connectivity and migrations if encountering persistence errors.
-  - Use Postman or curl to manually test and debug API requests/responses.
+## 10. API Reference
 
-- **Log locations**:
-  - Application logs: `logs/trading-bot.log`
-  - Access logs: `logs/access.log`
-  - Error logs: `logs/error.log`
+### Common Headers
+```http
+X-User-Id: your-user-id
+Content-Type: application/json
+```
 
-## 12. Glossary
-- ATM: At-The-Money. OTM: Out-Of-The-Money.
-- CE/PE: Call/Put European style options.
-- SL/Target: Stop-Loss/Target.
-- LTP/Quote/OHLC: Market data quote types from Kite.
+### Response Format
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": { }
+}
+```
+
+---
+
+### Authentication
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/auth/login-url` | Get Kite OAuth URL |
+| POST | `/api/auth/session` | Generate session (X-User-Id optional) |
+| GET | `/api/auth/profile` | Get user profile |
+| POST | `/api/auth/logout` | Logout and cleanup all resources |
+
+**Generate Session:**
+```http
+POST /api/auth/session
+{"requestToken": "your_token"}
+```
+
+**Logout (v4.2):**
+
+Performs comprehensive cleanup of all user-related resources:
+- Stops all active trading strategies (closes open positions)
+- **Clears strategy execution registry** (prevents stale data in APIs)
+- Cancels scheduled strategy auto-restarts
+- Disconnects WebSocket connections and clears subscriptions
+- Resets paper trading state (orders, positions, accounts)
+- Invalidates the Kite session
+
+```http
+POST /api/auth/logout
+X-User-Id: your-user-id
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Logout successful",
+  "data": {
+    "userId": "ABC123",
+    "strategiesStopped": 2,
+    "scheduledRestartsCancelled": 1,
+    "webSocketDisconnected": true,
+    "paperTradingReset": true,
+    "sessionInvalidated": true,
+    "durationMs": 145
+  }
+}
+```
+
+> **Idempotency:** Multiple logout calls are safe. Concurrent logout calls for the same user are serialized using per-user locks.
+
+---
+
+### Orders
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/orders` | Place order |
+| PUT | `/api/orders/{orderId}` | Modify order |
+| DELETE | `/api/orders/{orderId}` | Cancel order |
+| GET | `/api/orders` | List all orders |
+| GET | `/api/orders/{orderId}/history` | Order history |
+| GET | `/api/orders/trades` | Get trades |
+| GET | `/api/orders/charges` | Get order charges |
+
+**Place Order:**
+```json
+{
+  "tradingSymbol": "NIFTY24DEC50000CE",
+  "exchange": "NFO",
+  "transactionType": "BUY",
+  "orderType": "MARKET",
+  "quantity": 50,
+  "product": "NRML"
+}
+```
+
+---
+
+### Portfolio
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/portfolio/positions` | Get positions |
+| GET | `/api/portfolio/holdings` | Get holdings |
+| POST | `/api/portfolio/convert` | Convert position |
+
+---
+
+### Market Data
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/market/quote?instruments=NFO:SYMBOL` | Get quote |
+| GET | `/api/market/ohlc?instruments=NFO:SYMBOL` | Get OHLC |
+| GET | `/api/market/ltp?instruments=NFO:SYMBOL` | Get LTP |
+| GET | `/api/market/historical` | Get historical data |
+| GET | `/api/market/instruments` | Get all instruments |
+| GET | `/api/market/instruments/{exchange}` | Get by exchange |
+
+---
+
+### Strategies
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/strategies/execute` | Execute strategy |
+| GET | `/api/strategies/active` | Get active strategies |
+| GET | `/api/strategies/{executionId}` | Get strategy details |
+| DELETE | `/api/strategies/{executionId}` | Stop strategy |
+| DELETE | `/api/strategies/stop-all` | Stop all strategies |
+| GET | `/api/strategies/types` | Get strategy types |
+| GET | `/api/strategies/instruments` | Get instruments |
+| GET | `/api/strategies/expiries?instrumentType=NIFTY` | Get expiries |
+| GET | `/api/strategies/bot-status` | Get bot status |
+
+**Execute Strategy:**
+```json
+{
+  "strategyType": "ATM_STRADDLE",
+  "instrumentType": "NIFTY",
+  "expiry": "2025-12-26",
+  "lots": 1,
+  "orderType": "MARKET",
+  "stopLossPoints": 20.0,
+  "targetPoints": 30.0
+}
+```
+
+---
+
+### Monitoring
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/monitoring/connect` | Connect WebSocket |
+| POST | `/api/monitoring/disconnect` | Disconnect WebSocket |
+| GET | `/api/monitoring/status` | Get connection status |
+| DELETE | `/api/monitoring/{executionId}` | Stop monitoring |
+
+---
+
+### Paper Trading
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/paper-trading/status` | Get paper trading status |
+| POST | `/api/paper-trading/mode?paperTradingEnabled=true` | Toggle mode |
+| POST | `/api/paper-trading/reset` | Reset account |
+
+---
+
+### Trading History
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/history/trades?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD` | Trade history |
+| GET | `/api/history/trades/today` | Today's trades |
+| GET | `/api/history/strategies` | Strategy executions |
+| GET | `/api/history/daily-summary?startDate=&endDate=` | Daily P&L |
+
+---
+
+### GTT Orders
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/gtt` | List GTT orders |
+| POST | `/api/gtt` | Place GTT order |
+| GET | `/api/gtt/{triggerId}` | Get GTT by ID |
+| PUT | `/api/gtt/{triggerId}` | Modify GTT |
+| DELETE | `/api/gtt/{triggerId}` | Delete GTT |
+
+---
+
+### Account
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/account/margins/{segment}` | Get margins (equity/NFO) |
+
+---
+
+### Health
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/health` | Health check |
+
+---
+
+## 11. Extension Points
+
+### Add New Strategy
+1. Create class extending `BaseStrategy`
+2. Implement `execute()` method
+3. Register in `StrategyFactory`
+4. Add to `StrategyType` enum
+
+### Custom P&L Logic
+1. Implement `PnLCalculationStrategy` interface
+2. Register in factory
+
+### New Exit Condition
+Extend `PositionMonitor.checkAndTriggerCumulativeExitFast()`
+
+### Additional Persistence
+Create new entity and repository following existing patterns.
+
+---
+
+## Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| 401 Unauthorized | Missing X-User-Id | Add header to all requests |
+| No active session | Session expired | Re-authenticate |
+| Strategy fails | Insufficient margin | Check `/api/account/margins/NFO` |
+| WebSocket disconnect | Network issues | Auto-reconnect enabled |
+
+### Debug Logging
+```yaml
+logging:
+  level:
+    com.tradingbot: DEBUG
+    com.tradingbot.service.strategy: TRACE
+```
+
+---
+
+## Known Limitations
+
+1. **No Backtesting** - Historical replay not implemented
+2. **Single Region** - No multi-region support
+3. **Session Persistence** - Sessions not persisted across restarts
+4. **Partial Fills** - Not tracked in FIXED P&L mode
+
+---
+
+## Resources
+
+- **Swagger UI**: http://localhost:8080/swagger-ui.html
+- **Kite Connect Docs**: https://kite.trade/docs/connect/v3/
+- **H2 Console**: http://localhost:8080/h2-console
+

@@ -175,6 +175,66 @@ public class StrategyService {
         return list;
     }
 
+    /**
+     * Clear all strategy executions for a specific user from the in-memory registry.
+     * This is called during logout to ensure complete cleanup of user data.
+     *
+     * <p><b>Thread Safety:</b> Uses ConcurrentHashMap's removeIf which is thread-safe.
+     *
+     * <p><b>Note:</b> This only clears the in-memory registry. Persisted data in the database
+     * is retained for historical/audit purposes.
+     *
+     * @param userId The user ID whose strategies should be cleared
+     * @return The number of strategy executions removed
+     * @since 4.2
+     */
+    public int clearUserStrategies(String userId) {
+        if (userId == null || userId.isBlank()) {
+            log.warn("clearUserStrategies called with null/blank userId");
+            return 0;
+        }
+
+        // Collect execution IDs to remove (cannot modify map while iterating with removeIf safely)
+        List<String> executionIdsToRemove = new ArrayList<>();
+        for (Map.Entry<String, StrategyExecution> entry : executionsById.entrySet()) {
+            if (userId.equals(entry.getValue().getUserId())) {
+                executionIdsToRemove.add(entry.getKey());
+            }
+        }
+
+        // Remove all collected entries
+        int removedCount = 0;
+        for (String executionId : executionIdsToRemove) {
+            StrategyExecution removed = executionsById.remove(executionId);
+            if (removed != null) {
+                removedCount++;
+                log.debug("Cleared strategy execution {} for user {}", executionId, userId);
+            }
+        }
+
+        if (removedCount > 0) {
+            log.info("Cleared {} strategy executions from in-memory registry for user {}", removedCount, userId);
+        }
+
+        return removedCount;
+    }
+
+    /**
+     * Get a strategy execution by ID without user validation.
+     * This is used internally by system processes (like StrategyRestartScheduler) that need
+     * to access executions without requiring user context.
+     *
+     * <p><b>Note:</b> This method bypasses user ownership validation. Use with caution
+     * and only for system-level operations.
+     *
+     * @param executionId The execution ID to look up
+     * @return The strategy execution or null if not found
+     * @since 4.2
+     */
+    public StrategyExecution getStrategyByIdInternal(String executionId) {
+        return executionsById.get(executionId);
+    }
+
     // ============ SYSTEM-LEVEL MONITORING METHODS (No User Context Required) ============
 
     /**

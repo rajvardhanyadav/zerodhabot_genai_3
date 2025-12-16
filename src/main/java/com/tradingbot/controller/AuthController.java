@@ -2,6 +2,8 @@ package com.tradingbot.controller;
 
 import com.tradingbot.dto.ApiResponse;
 import com.tradingbot.dto.LoginRequest;
+import com.tradingbot.dto.LogoutResponse;
+import com.tradingbot.service.LogoutService;
 import com.tradingbot.service.TradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Profile;
@@ -24,6 +26,7 @@ import java.io.IOException;
 public class AuthController {
 
     private final TradingService tradingService;
+    private final LogoutService logoutService;
 
     @GetMapping("/login-url")
     @Operation(summary = "Get Kite Connect login URL",
@@ -54,5 +57,48 @@ public class AuthController {
         Profile profile = tradingService.getUserProfile();
         log.debug("API Response - Profile fetched for user: {}", profile.userName);
         return ResponseEntity.ok(ApiResponse.success(profile));
+    }
+
+    /**
+     * Logout the current user and clean up all associated resources.
+     *
+     * <p>This endpoint performs a comprehensive cleanup including:
+     * <ul>
+     *   <li>Stopping all active trading strategies</li>
+     *   <li>Cancelling scheduled strategy auto-restarts</li>
+     *   <li>Disconnecting WebSocket connections</li>
+     *   <li>Resetting paper trading state</li>
+     *   <li>Invalidating the Kite session</li>
+     * </ul>
+     *
+     * <p><b>Idempotency:</b> Multiple logout calls are safe and will not cause errors.
+     *
+     * @return Logout result with cleanup statistics
+     */
+    @PostMapping("/logout")
+    @Operation(summary = "Logout user",
+               description = "Logout the current user and clean up all session data, strategies, and WebSocket connections")
+    public ResponseEntity<ApiResponse<LogoutResponse>> logout() {
+        log.info("API Request - User logout initiated");
+
+        LogoutService.LogoutResult result = logoutService.logout();
+
+        LogoutResponse response = LogoutResponse.builder()
+                .userId(result.userId())
+                .strategiesStopped(result.strategiesStopped())
+                .scheduledRestartsCancelled(result.scheduledRestartsCancelled())
+                .webSocketDisconnected(result.webSocketDisconnected())
+                .paperTradingReset(result.paperTradingReset())
+                .sessionInvalidated(result.sessionInvalidated())
+                .durationMs(result.durationMs())
+                .build();
+
+        if (result.success()) {
+            log.info("API Response - Logout successful for user: {}", result.userId());
+            return ResponseEntity.ok(ApiResponse.success(result.message(), response));
+        } else {
+            log.warn("API Response - Logout failed: {}", result.message());
+            return ResponseEntity.badRequest().body(ApiResponse.error(result.message()));
+        }
     }
 }

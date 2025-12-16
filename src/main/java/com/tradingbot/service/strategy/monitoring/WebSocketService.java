@@ -201,6 +201,94 @@ public class WebSocketService implements DisposableBean {
         }
     }
 
+    /**
+     * Disconnect WebSocket and clean up all subscriptions for logout.
+     * This is a more thorough cleanup than regular disconnect().
+     *
+     * <p>Performs the following cleanup:
+     * <ul>
+     *   <li>Stops all active position monitors</li>
+     *   <li>Clears all instrument subscriptions</li>
+     *   <li>Disconnects the WebSocket connection</li>
+     *   <li>Shuts down the reconnect scheduler</li>
+     *   <li>Removes the user context from the contexts map</li>
+     * </ul>
+     *
+     * <p><b>Thread Safety:</b> Uses connection lock to ensure safe cleanup.
+     */
+    public void disconnectForLogout() {
+        String userId = CurrentUserContext.getUserId();
+        if (userId == null || userId.isBlank()) {
+            log.warn("disconnectForLogout called without user context");
+            return;
+        }
+
+        UserWSContext c = contexts.get(userId);
+        if (c == null) {
+            log.debug("No WebSocket context found for user {} during logout", userId);
+            return;
+        }
+
+        c.connectionLock.lock();
+        try {
+            log.info("[user={}] Starting WebSocket cleanup for logout...", c.userId);
+
+            // Step 1: Stop all active monitors
+            int monitorCount = c.activeMonitors.size();
+            for (PositionMonitor monitor : c.activeMonitors.values()) {
+                try {
+                    monitor.stop();
+                } catch (Exception e) {
+                    log.warn("[user={}] Error stopping monitor: {}", c.userId, e.getMessage());
+                }
+            }
+            c.activeMonitors.clear();
+            log.debug("[user={}] Stopped {} active monitors", c.userId, monitorCount);
+
+            // Step 2: Clear instrument subscriptions
+            int subscriptionCount = c.instrumentToExecutions.size();
+            c.instrumentToExecutions.clear();
+            log.debug("[user={}] Cleared {} instrument subscriptions", c.userId, subscriptionCount);
+
+            // Step 3: Disconnect WebSocket
+            if (c.ticker != null) {
+                try {
+                    if (c.isConnected.get()) {
+                        c.ticker.disconnect();
+                    }
+                } catch (Exception e) {
+                    log.warn("[user={}] Error disconnecting ticker: {}", c.userId, e.getMessage());
+                }
+                c.ticker = null;
+            }
+            c.isConnected.set(false);
+            c.isConnecting.set(false);
+
+            // Step 4: Shutdown reconnect scheduler
+            if (c.reconnectScheduler != null) {
+                try {
+                    c.reconnectScheduler.shutdownNow();
+                } catch (Exception e) {
+                    log.warn("[user={}] Error shutting down reconnect scheduler: {}", c.userId, e.getMessage());
+                }
+                c.reconnectScheduler = null;
+            }
+
+            // Step 5: Remove context from map
+            contexts.remove(userId);
+
+            // Persist logout disconnect event
+            persistWebSocketEvent(c.userId, "LOGOUT_DISCONNECT", "WebSocket cleanup for logout",
+                    null, null, null, null, null);
+
+            log.info("[user={}] WebSocket cleanup for logout complete. Monitors stopped: {}, Subscriptions cleared: {}",
+                    c.userId, monitorCount, subscriptionCount);
+
+        } finally {
+            c.connectionLock.unlock();
+        }
+    }
+
     /** Start monitoring for current user */
     public void startMonitoring(String executionId, PositionMonitor monitor) {
         UserWSContext c = ctx();

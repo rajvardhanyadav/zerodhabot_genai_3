@@ -254,10 +254,14 @@ public class StrategyRestartScheduler {
 
     /**
      * Cancel all scheduled restarts for a specific user.
-     * This is useful when stopping all strategies for a user.
+     * This is useful when stopping all strategies for a user or during logout.
+     *
+     * <p><b>Note:</b> This method does NOT require user context to be set. It directly
+     * iterates through all scheduled restarts and matches by userId from the execution.
      *
      * @param userId The user ID whose scheduled restarts should be cancelled
      * @return count of cancelled restarts
+     * @since 4.2 - Fixed to not rely on current user context
      */
     public int cancelScheduledRestartsForUser(String userId) {
         if (userId == null || userId.isBlank()) {
@@ -266,24 +270,19 @@ public class StrategyRestartScheduler {
         }
 
         int cancelledCount = 0;
-        // Get all executions for this user from StrategyService and cancel their scheduled restarts
-        List<StrategyExecution> userExecutions = strategyService.getActiveStrategies();
 
-        for (StrategyExecution execution : userExecutions) {
-            if (userId.equals(execution.getUserId())) {
-                if (cancelScheduledRestart(execution.getExecutionId())) {
-                    cancelledCount++;
-                }
-            }
-        }
-
-        // Also check completed executions that might have scheduled restarts
-        // We need to iterate through all scheduled restarts and match by looking up the execution
+        // Iterate through ALL scheduled restarts and match by userId
+        // Use getStrategyByIdInternal to bypass user context validation
         for (String executionId : List.copyOf(scheduledRestarts.keySet())) {
-            StrategyExecution execution = strategyService.getStrategy(executionId);
+            StrategyExecution execution = strategyService.getStrategyByIdInternal(executionId);
             if (execution != null && userId.equals(execution.getUserId())) {
-                if (cancelScheduledRestart(executionId)) {
-                    cancelledCount++;
+                ScheduledFuture<?> future = scheduledRestarts.remove(executionId);
+                if (future != null) {
+                    boolean cancelled = future.cancel(false);
+                    if (cancelled) {
+                        cancelledCount++;
+                        log.debug("Cancelled scheduled restart for execution {} (user={})", executionId, userId);
+                    }
                 }
             }
         }

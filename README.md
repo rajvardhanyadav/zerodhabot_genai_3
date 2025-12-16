@@ -1,249 +1,186 @@
-# Zerodha Trading Bot - Backend API
+# Zerodha Trading Bot
 
-A comprehensive Spring Boot backend application for automated trading using Zerodha's Kite Connect API.
+[![Java 17](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/projects/jdk/17/)
+[![Spring Boot 3.2.0](https://img.shields.io/badge/Spring%20Boot-3.2.0-green.svg)](https://spring.io/projects/spring-boot)
+[![Version 4.2](https://img.shields.io/badge/Version-4.2-blue.svg)]()
 
-## 📚 Complete Documentation
-
-**For detailed API documentation, please refer to:** [COMPLETE_API_DOCUMENTATION.md](COMPLETE_API_DOCUMENTATION.md)
-
-- Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- **NEW** Backtesting Quick Start: [docs/BACKTESTING_QUICK_START.md](docs/BACKTESTING_QUICK_START.md)
-- Backtesting Feature Reference: [docs/BACKTESTING_FEATURE.md](docs/BACKTESTING_FEATURE.md)
-- Backtesting Implementation Summary: [docs/BACKTESTING_IMPLEMENTATION_SUMMARY.md](docs/BACKTESTING_IMPLEMENTATION_SUMMARY.md)
-- Implementation Checklist & Status: [BACKTESTING_COMPLETE.md](BACKTESTING_COMPLETE.md)
-
-This comprehensive guide includes:
-- Complete API Reference for all endpoints
-- Trading Strategies documentation
-- Paper Trading guide
-- Position Monitoring with WebSocket
-- Historical Replay (backtest-like)
-- Auto-reentry behavior for ATM strategies (live & historical)
-- Configuration options
-- Code examples in JavaScript/TypeScript and Python
-- Error handling and troubleshooting
+A **Spring Boot backend** for automated options trading using **Zerodha Kite Connect API**. Supports live trading, paper trading, real-time position monitoring, and multi-user isolation.
 
 ## Features
 
-- **Authentication**: Kite Connect OAuth integration
-- **Order Management**: Place, modify, and cancel orders
-- **Portfolio Management**: View positions, holdings, and trades
-- **Market Data**: Real-time quotes, OHLC, LTP, and historical data
-- **GTT Orders**: Good Till Triggered order management
-- **Trading Strategies**: ATM Straddle, Sell ATM Straddle with auto SL/Target and optional auto-reentry
-- **Position Monitoring**: Real-time WebSocket-based monitoring (per-user)
-- **Paper Trading**: Risk-free testing with real market data
-- **Historical Replay**: Backtest-like execution using recent day's data (per-second replay) with the same auto-reentry logic
-- **Backtesting**: Comprehensive backtesting framework with detailed performance metrics, batch testing, and aggregate statistics
-- **Order Charges**: Fetch brokerage/charges for executed orders today
-- **API Documentation**: Interactive Swagger UI
-- **Multi-User Support**: Per-user sessions, WebSockets, and paper trading via `X-User-Id` header
-- **Runtime Mode Toggle**: Switch between paper and live trading via `/api/paper-trading/mode`
-- **Bot Status**: In-memory RUNNING/STOPPED status toggled on strategy execute and stop-all, exposed via `/api/strategies/bot-status`
+- 🔐 OAuth authentication with Kite Connect
+- 📊 Order management (place, modify, cancel)
+- 💼 Portfolio tracking (positions, holdings, P&L)
+- 📈 Real-time market data (quotes, OHLC, LTP, historical)
+- 🎯 Trading strategies (ATM Straddle, Sell ATM Straddle)
+- 🔄 Real-time WebSocket position monitoring
+- 📝 Paper trading with realistic simulation
+- 👥 Multi-user isolation via `X-User-Id` header
+- 💾 Async data persistence (H2/PostgreSQL)
+- 🚀 GTT (Good Till Triggered) orders
 
-## Technology Stack
-
-- **Java 17**
-- **Spring Boot 3.2.0**
-- **Kite Connect Java SDK 3.5.1**
-- **Maven (Wrapper included)**
-- **Swagger/OpenAPI** for API documentation
-- **Lombok** for reducing boilerplate code
-- **WebSocket** for real-time market data
+---
 
 ## Quick Start
 
 ### Prerequisites
-
-1. Java 17 or higher
-2. Zerodha Kite Connect API credentials (API Key and API Secret)
-3. Active Zerodha trading account
-
-Note: Maven Wrapper is included; you do not need a global Maven installation.
+- Java 17+
+- Maven 3.6+
+- [Kite Connect API](https://kite.trade/) credentials
 
 ### Setup
 
-1. **Get Kite Connect Credentials**
-   - Visit [Kite Connect](https://kite.trade/)
-   - Create a new app to get your API Key and API Secret
+```bash
+# Clone and configure
+git clone <repository-url>
+cd zerodhabot_genai_3
 
-2. **Configure Application**
+# Create local config
+cp src/main/resources/application-local.yml.example src/main/resources/application-local.yml
+# Edit with your Kite API key/secret
+```
 
-Edit `src/main/resources/application.yml`:
+### Configuration (`application-local.yml`)
 
 ```yaml
 kite:
-  api-key: YOUR_API_KEY_HERE
-  api-secret: YOUR_API_SECRET_HERE
+  api-key: YOUR_KITE_API_KEY
+  api-secret: YOUR_KITE_API_SECRET
 
 trading:
-  paper-trading-enabled: true  # false for live trading
-
-strategy:
-  default-stop-loss-points: 10.0
-  default-target-points: 15.0
+  paper-trading-enabled: true  # Start with paper trading
 ```
 
-3. **Build and Run**
-
-Windows (PowerShell):
-```powershell
-# Build and run tests
-./mvnw.cmd -DskipTests=false test
-
-# Run the application
-./mvnw.cmd spring-boot:run
-```
-
-macOS/Linux (bash):
-```bash
-# Build and run tests
-./mvnw -DskipTests=false test
-
-# Run the application
-./mvnw spring-boot:run
-```
-
-## Backtesting (NEW ⭐)
-
-Test your strategies on historical data before going live:
+### Build & Run
 
 ```bash
-curl -X POST http://localhost:8080/api/backtest/execute \
+./mvnw clean package -DskipTests
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+```
+
+### Access
+- **API**: http://localhost:8080
+- **Swagger UI**: http://localhost:8080/swagger-ui.html
+- **H2 Console**: http://localhost:8080/h2-console
+
+---
+
+## Authentication Flow
+
+```
+1. GET /api/auth/login-url     → Get Kite OAuth URL
+2. User logs in on Kite        → Redirected with request_token
+3. POST /api/auth/session      → Exchange token for session
+4. Use X-User-Id header        → All subsequent requests
+5. POST /api/auth/logout       → Logout and cleanup (v4.2)
+```
+
+---
+
+## API Overview
+
+| Group | Base Path | Key Endpoints |
+|-------|-----------|---------------|
+| Auth | `/api/auth` | `login-url`, `session`, `profile`, `logout` |
+| Orders | `/api/orders` | Place, modify, cancel, list |
+| Portfolio | `/api/portfolio` | `positions`, `holdings` |
+| Market | `/api/market` | `quote`, `ohlc`, `ltp`, `historical` |
+| Strategies | `/api/strategies` | `execute`, `active`, `stop-all`, `bot-status` |
+| Monitoring | `/api/monitoring` | `connect`, `disconnect`, `status` |
+| Paper Trading | `/api/paper-trading` | `status`, `mode`, `reset` |
+| History | `/api/history` | `trades`, `strategies`, `daily-summary` |
+| GTT | `/api/gtt` | CRUD for GTT orders |
+
+> 📖 **Full API Reference**: See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#api-reference)
+
+---
+
+## Trading Strategies
+
+### Execute ATM Straddle
+```bash
+curl -X POST http://localhost:8080/api/strategies/execute \
   -H "Content-Type: application/json" \
-  -H "X-User-Id: testuser" \
+  -H "X-User-Id: user-123" \
   -d '{
     "strategyType": "ATM_STRADDLE",
     "instrumentType": "NIFTY",
-    "expiry": "2025-11-28",
+    "expiry": "2025-12-26",
     "lots": 1,
-    "stopLossPoints": 10.0,
-    "targetPoints": 15.0
+    "stopLossPoints": 20.0,
+    "targetPoints": 30.0
   }'
 ```
 
-**📖 For detailed backtesting documentation:** [docs/BACKTESTING_QUICK_START.md](docs/BACKTESTING_QUICK_START.md)
+**Available Strategies:**
+- `ATM_STRADDLE` - Buy ATM Call + Put (profits from volatility)
+- `SELL_ATM_STRADDLE` - Sell ATM Call + Put (profits from low volatility)
 
-The application will start on `http://localhost:8080`
+---
 
-4. **Access API Documentation**
+## Multi-User Support
 
-Open Swagger UI: `http://localhost:8080/swagger-ui.html`
+All requests require `X-User-Id` header for user isolation:
 
-## Key Features
-
-### 🎯 Trading Strategies
-- **ATM Straddle**: Buy ATM Call + Buy ATM Put (profits from high volatility)
-- **Sell ATM Straddle**: Sell ATM Call + Sell ATM Put (profits from low volatility and time decay)
-- Configurable Stop-Loss and Target
-- Individual leg exit capability
-- Delta-based strike selection using Black-Scholes model
-- **Auto-Reentry**: Optional automatic reentry for ATM strategies on SL/Target hit
-
-### 📈 Position Monitoring
-- Real-time price updates via WebSocket (per-user connections)
-- Automatic SL/Target execution
-- P&L tracking for each leg
-- Individual and full position exits
-
-### 🧪 Paper Trading
-- Test strategies with real market data
-- No real money at risk
-- Realistic order execution with slippage
-- Complete position and P&L tracking
-
-### 💾 Historical Replay
-- Run strategies on the most recent trading day using per-second replay derived from minute candles
-- Fast, asynchronous replay; uses the same monitoring and exit logic as live mode
-- **Auto-Reentry**: Strategies automatically reenter positions based on historical data
-
-### 💰 Order Charges
-- Fetch brokerage and statutory charges for all executed orders today (from Kite charges API)
-
-### 🤖 Bot Status
-- The bot keeps an in-memory status that flips to `RUNNING` on successful `POST /api/strategies/execute` and to `STOPPED` on successful `DELETE /api/strategies/stop-all`.
-- Read the status at:
-  - `GET /api/strategies/bot-status`
-- Example response:
-```json
-{
-  "success": true,
-  "message": "Success",
-  "data": {
-    "status": "RUNNING",
-    "lastUpdated": "2025-11-18T09:30:00Z"
-  }
-}
+```http
+X-User-Id: user-123
 ```
 
-## API Endpoints Overview
+Each user has isolated: sessions, WebSocket connections, paper trading accounts, position monitors.
 
-- **Authentication**: `/api/auth/*`
-- **Orders**: `/api/orders/*`
-- **Portfolio**: `/api/portfolio/*`
-- **Market Data**: `/api/market/*`
-- **Account**: `/api/account/*` (e.g., `margins/{segment}`)
-- **GTT Orders**: `/api/gtt/*`
-- **Strategies**: `/api/strategies/*`
-- **Bot Status**: `GET /api/strategies/bot-status`
-- **Monitoring**: `/api/monitoring/*`
-- **Paper Trading**: `/api/paper-trading/*`
-- **Trading Mode**: `/api/paper-trading/mode` (new)
+---
 
-For complete API documentation with request/response examples, see [COMPLETE_API_DOCUMENTATION.md](COMPLETE_API_DOCUMENTATION.md)
+## Project Structure
 
-## Configuration
+```
+src/main/java/com/tradingbot/
+├── config/        # Spring configuration
+├── controller/    # REST API endpoints
+├── dto/           # Data Transfer Objects
+├── entity/        # JPA entities
+├── service/       # Business logic
+│   ├── strategy/  # Trading strategies
+│   └── pnl/       # P&L calculation
+└── util/          # Utilities
+```
 
-Key configuration options in `application.yml`:
+---
 
+## Documentation
+
+| File | Purpose |
+|------|---------|
+| [README.md](README.md) | Quick start (this file) |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Complete technical docs, API reference |
+
+---
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| "No active session" | Ensure X-User-Id matches session |
+| WebSocket fails | Check session with `/api/auth/profile` |
+| Strategy fails | Check margin with `/api/account/margins/NFO` |
+
+Enable debug logging:
 ```yaml
-# Trading Mode
-trading:
-  paper-trading-enabled: true  # Switch between paper and live trading
-
-# Strategy Defaults
-strategy:
-  default-stop-loss-points: 10.0  # Default SL in points
-  default-target-points: 15.0      # Default target in points
+logging:
+  level:
+    com.tradingbot: DEBUG
 ```
 
-Security note:
-- Prefer environment variables for `KITE_API_KEY` and `KITE_API_SECRET`. Do not commit real credentials.
+---
 
-## Multi-User Support and X-User-Id header
+## Development
 
-This API is multi-tenant by design. Each request is processed under a specific user and all runtime state (Kite sessions, WebSocket connections, paper-trading accounts, orders, and positions) is isolated per user.
-
-- Provide a header on every protected API call:
-  - Header name: `X-User-Id`
-  - Value: an opaque identifier for the calling user (e.g., an email, UUID, or username)
-- Session creation (`POST /api/auth/session`) is flexible: if you omit `X-User-Id` the backend will infer the user id from the Kite response (`user.userId`) and store the session under that id. It will also return that id so you can reuse it.
-- If you supply `X-User-Id` during session creation, that value becomes the key, allowing mapping to an external identity.
-- A request filter propagates the header into a per-request context. Services read the context to segregate state.
-- WebSocket connections are per user. Subscriptions and monitors are scoped to the current user and won’t affect others.
-- Paper trading accounts and positions are maintained per user. Resetting one user does not impact others.
-
-Example (PowerShell) with explicit header:
-```powershell
-$headers = @{ 'X-User-Id' = 'user-123' }
-Invoke-RestMethod -Uri http://localhost:8080/api/auth/session -Method Post -Headers $headers -Body '{"requestToken":"<KITE_REQUEST_TOKEN>"}' -ContentType 'application/json'
+```bash
+./mvnw test                           # Run tests
+./mvnw clean package -DskipTests      # Build JAR
+docker build -t zerodha-trading-bot . # Docker build
 ```
 
-Example without header (user id inferred from Kite):
-```powershell
-Invoke-RestMethod -Uri http://localhost:8080/api/auth/session -Method Post -Body '{"requestToken":"<KITE_REQUEST_TOKEN>"}' -ContentType 'application/json'
-# Response data.userId => use this value as X-User-Id for subsequent calls
-```
+---
 
-Swagger UI: All protected operations expose the `X-User-Id` header parameter so you can set it once and try requests interactively.
+**Version 4.1** | **December 2025**
 
-## License
-
-This project is for educational and testing purposes only. Use at your own risk.
-
-## Support
-
-- Review the complete documentation: [COMPLETE_API_DOCUMENTATION.md](COMPLETE_API_DOCUMENTATION.md)
-- Check the Swagger UI at `http://localhost:8080/swagger-ui.html`
-- Verify your Kite Connect credentials are valid
-- Ensure you're within market hours for trading operations
