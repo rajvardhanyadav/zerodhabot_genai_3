@@ -33,7 +33,8 @@ import java.util.function.Consumer;
 public class PositionMonitor {
 
     // Use primitive doubles for fast threshold checks - no BigDecimal overhead
-    private final double cumulativeTargetPoints;
+    // cumulativeTargetPoints is mutable to allow dynamic adjustment when individual legs are exited
+    private volatile double cumulativeTargetPoints;
     private final double cumulativeStopPoints;
 
     // Pre-computed direction multiplier: 1.0 for LONG, -1.0 for SHORT
@@ -319,7 +320,7 @@ public class PositionMonitor {
                 final double legPnl = rawDiff * directionMultiplier; // directionMultiplier = -1 for SHORT
 
                 // Exit condition: leg moved +5 points against us (legPnl <= -5.0)
-                if (legPnl <= -3.0) {
+                if (legPnl <= -cumulativeStopPoints) {
                     log.warn("Individual leg stop loss hit for execution {}: symbol={}, entry={}, current={}, P&L={} points - Exiting this leg only",
                             executionId, leg.symbol, formatDouble(leg.entryPrice),
                             formatDouble(leg.currentPrice), formatDouble(legPnl));
@@ -339,6 +340,17 @@ public class PositionMonitor {
 
                     log.info("Leg {} removed from monitoring. Remaining legs: {}",
                             leg.symbol, legsBySymbol.keySet());
+
+                    // Adjust target for remaining leg(s): new target = original target + stop-loss points
+                    // This allows remaining legs to compensate for the loss incurred by the exited leg
+                    // HFT: Read volatile once, compute, then write back for atomic-like behavior
+                    double previousTarget = cumulativeTargetPoints;
+                    double newTarget = previousTarget + cumulativeStopPoints;
+                    cumulativeTargetPoints = newTarget;
+
+                    log.info("Target adjusted for execution {} after leg {} exit: previous target={} points, new target={} points (added {} stop-loss points)",
+                            executionId, leg.symbol, formatDouble(previousTarget),
+                            formatDouble(newTarget), formatDouble(cumulativeStopPoints));
 
                     // Continue monitoring remaining legs - don't return here
                     // This allows cumulative logic to apply to remaining legs
