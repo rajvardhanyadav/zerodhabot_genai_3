@@ -13,21 +13,65 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
- * High-performance position monitor for tracking individual legs of a strategy.
- * Optimized for HFT with minimal object allocation and fast primitive operations.
+ * High-performance position monitor for tracking and managing multi-leg options strategies.
+ * <p>
+ * This monitor tracks cumulative P&amp;L across all legs and triggers exits based on configurable
+ * thresholds. Designed for high-frequency trading (HFT) with minimal object allocation and
+ * fast primitive operations.
  *
- * HFT Optimizations:
- * - Primitive doubles for threshold checks (no BigDecimal overhead)
- * - Pre-computed direction multiplier for single multiplication
- * - ConcurrentHashMap for thread-safe leg lookups without locking
- * - Volatile fields for thread-safe price updates without synchronization
- * - Cached immutable list for getLegs() to avoid repeated allocations
- * - Indexed loop iteration to avoid iterator allocation
+ * <h2>Exit Logic Priority (evaluated in order)</h2>
+ * <ol>
+ *   <li><b>Cumulative Target Hit</b> - Exits all legs when total profit reaches target</li>
+ *   <li><b>Individual Leg Stop Loss</b> - Exits specific leg when it loses threshold points (SHORT strategies only)</li>
+ *   <li><b>Trailing Stop Loss</b> - Exits all legs when P&amp;L falls below dynamic trailing level</li>
+ *   <li><b>Fixed Cumulative Stop Loss</b> - Exits all legs when total loss reaches stop loss threshold</li>
+ * </ol>
  *
- * Trailing Stop Loss:
- * - Tracks high-water mark (best cumulative P&L achieved)
- * - Stop loss level trails up as position becomes profitable
- * - Configurable activation threshold and trail distance
+ * <h2>Individual Leg Exit (SHORT strategies only)</h2>
+ * <p>
+ * When a leg hits its individual stop loss (e.g., -3 points):
+ * <ul>
+ *   <li>Only that leg is exited</li>
+ *   <li>Target is adjusted for remaining legs: newTarget = originalTarget + stopLossPoints</li>
+ *   <li>Remaining legs continue monitoring with the adjusted target</li>
+ * </ul>
+ *
+ * <h2>Position Direction</h2>
+ * <ul>
+ *   <li><b>LONG</b> - Buy strategies (e.g., BUY ATM straddle): profit when price increases</li>
+ *   <li><b>SHORT</b> - Sell strategies (e.g., SELL ATM straddle): profit when price decreases</li>
+ * </ul>
+ *
+ * <h2>Thread Safety</h2>
+ * <ul>
+ *   <li>Safe for concurrent price updates from WebSocket threads</li>
+ *   <li>Uses volatile fields for visibility without synchronization overhead</li>
+ *   <li>ConcurrentHashMap for thread-safe leg lookups</li>
+ *   <li>Callbacks executed on the WebSocket thread - keep them fast</li>
+ * </ul>
+ *
+ * <h2>HFT Optimizations</h2>
+ * <ul>
+ *   <li>Primitive doubles for arithmetic (no BigDecimal overhead)</li>
+ *   <li>Pre-computed direction multiplier for single multiplication</li>
+ *   <li>Cached legs array to avoid iterator allocation on hot path</li>
+ *   <li>ThreadLocal StringBuilder for zero-allocation string building</li>
+ *   <li>Lazy debug logging to avoid formatting when disabled</li>
+ * </ul>
+ *
+ * <h2>Usage Example</h2>
+ * <pre>{@code
+ * PositionMonitor monitor = new PositionMonitor("exec123", 2.0, 2.0, PositionDirection.SHORT);
+ * monitor.setExitCallback(reason -> closeAllPositions(reason));
+ * monitor.setIndividualLegExitCallback((orderId, reason) -> closePosition(orderId, reason));
+ * monitor.addLeg("order1", "NIFTY24350CE", 123456L, 100.0, 50, "CE");
+ * monitor.addLeg("order2", "NIFTY24350PE", 123457L, 95.0, 50, "PE");
+ * // Price updates come from WebSocket
+ * monitor.updatePriceWithDifferenceCheck(ticks);
+ * }</pre>
+ *
+ * @see LegMonitor
+ * @see PositionDirection
  */
 @Slf4j
 public class PositionMonitor {
@@ -94,9 +138,22 @@ public class PositionMonitor {
         ThreadLocal.withInitial(() -> new StringBuilder(64));
 
 
+    /**
+     * Position direction determines how price movements affect P&amp;L calculation.
+     * <p>
+     * The direction multiplier is applied to price differences:
+     * <ul>
+     *   <li><b>LONG (multiplier = 1.0)</b>: Profit when price increases (e.g., BUY strategies)</li>
+     *   <li><b>SHORT (multiplier = -1.0)</b>: Profit when price decreases (e.g., SELL strategies)</li>
+     * </ul>
+     * <p>
+     * Example for SHORT: If entry=100 and current=105, rawDiff=+5, but P&amp;L=-5 (loss)
+     */
     public enum PositionDirection {
-        LONG,  // e.g., BUY ATM straddle
-        SHORT  // e.g., SELL ATM straddle
+        /** Long position - profits when price increases */
+        LONG,
+        /** Short position - profits when price decreases */
+        SHORT
     }
 
     @Getter
@@ -128,10 +185,30 @@ public class PositionMonitor {
     private volatile LegMonitor[] cachedLegsArray;
     private volatile int cachedLegsCount = 0;
 
+    /**
+     * Creates a position monitor with default LONG direction.
+     * <p>
+     * This constructor is for backward compatibility. Defaults to LONG direction
+     * and disables trailing stop loss.
+     *
+     * @param executionId unique execution identifier
+     * @param stopLossPoints stop loss threshold in points (e.g., 2.0 = exit when loss reaches 2 points)
+     * @param targetPoints target profit threshold in points (e.g., 2.0 = exit when profit reaches 2 points)
+     */
     public PositionMonitor(String executionId, double stopLossPoints, double targetPoints) {
         this(executionId, stopLossPoints, targetPoints, PositionDirection.LONG);
     }
 
+    /**
+     * Creates a position monitor with specified direction.
+     * <p>
+     * Disables trailing stop loss by default. Use the full constructor if trailing stop is needed.
+     *
+     * @param executionId unique execution identifier
+     * @param stopLossPoints stop loss threshold in points
+     * @param targetPoints target profit threshold in points
+     * @param direction position direction (LONG for buy strategies, SHORT for sell strategies)
+     */
     public PositionMonitor(String executionId,
                            double stopLossPoints,
                            double targetPoints,
@@ -141,15 +218,18 @@ public class PositionMonitor {
     }
 
     /**
-     * Full constructor with trailing stop loss support.
+     * Creates a position monitor with full configuration including trailing stop loss.
+     * <p>
+     * Defaults: If invalid values provided, uses stopLossPoints=2.0, targetPoints=2.0,
+     * trailingActivationPoints=1.0, trailingDistancePoints=0.5.
      *
-     * @param executionId Unique execution identifier
-     * @param stopLossPoints Fixed stop loss in points (used when trailing is disabled or before activation)
-     * @param targetPoints Target profit in points
-     * @param direction Position direction (LONG for buy strategies, SHORT for sell strategies)
-     * @param trailingStopEnabled Enable trailing stop loss feature
-     * @param trailingActivationPoints P&L threshold to activate trailing (e.g., 1.0 = activate after 1 point profit)
-     * @param trailingDistancePoints Distance trailing stop follows behind high-water mark (e.g., 0.5 points)
+     * @param executionId unique execution identifier
+     * @param stopLossPoints fixed stop loss in points (used when trailing is disabled or before activation)
+     * @param targetPoints target profit in points (dynamically adjusted on individual leg exits)
+     * @param direction position direction (LONG for buy strategies, SHORT for sell strategies)
+     * @param trailingStopEnabled enable trailing stop loss feature
+     * @param trailingActivationPoints P&amp;L threshold to activate trailing (e.g., 1.0 = activate after 1 point profit)
+     * @param trailingDistancePoints distance trailing stop follows behind high-water mark (e.g., 0.5 points)
      */
     public PositionMonitor(String executionId,
                            double stopLossPoints,
@@ -180,7 +260,18 @@ public class PositionMonitor {
     }
 
     /**
-     * Add a leg to monitor
+     * Adds a leg to this position monitor for tracking.
+     * <p>
+     * Each leg represents a single option contract (CE or PE) in a multi-leg strategy.
+     * Legs are indexed by both symbol and instrument token for fast lookups during
+     * price updates.
+     *
+     * @param orderId unique order identifier for exit operations
+     * @param symbol trading symbol (e.g., "NIFTY24350CE")
+     * @param instrumentToken Zerodha instrument token for WebSocket price updates
+     * @param entryPrice entry price for this leg
+     * @param quantity number of contracts
+     * @param type leg type (typically "CE" for Call or "PE" for Put)
      */
     public void addLeg(String orderId, String symbol, long instrumentToken,
                        double entryPrice, int quantity, String type) {
@@ -195,8 +286,11 @@ public class PositionMonitor {
     }
 
     /**
-     * HFT: Rebuild the cached legs array when legs are added/removed.
-     * This is called infrequently (only on leg changes), so allocation is acceptable here.
+     * Rebuilds the cached legs array when legs are added or removed.
+     * <p>
+     * This is called infrequently (only on leg changes), so allocation overhead is acceptable.
+     * The cached array enables fast indexed iteration in the hot path (price update processing)
+     * without iterator allocation.
      */
     private void rebuildCachedLegsArray() {
         LegMonitor[] newArray = legsBySymbol.values().toArray(new LegMonitor[0]);
@@ -206,17 +300,18 @@ public class PositionMonitor {
     }
 
     /**
-     * Update price method with cumulative threshold monitoring.
-     * Optimized for HFT: minimal object allocation, primitive arithmetic only.
+     * Updates leg prices from WebSocket ticks and evaluates exit conditions.
+     * <p>
+     * This is the <b>hot path</b> - called on every tick from WebSocket thread.
+     * Optimized for minimal latency:
+     * <ul>
+     *   <li>Early exit if monitor is not active</li>
+     *   <li>Direct array access with indexed loop (no iterator allocation)</li>
+     *   <li>Inline cumulative calculation to avoid method call overhead</li>
+     *   <li>Primitive arithmetic only (no boxing/unboxing)</li>
+     * </ul>
      *
-     * HFT Critical Path - this method is called on every tick from WebSocket.
-     * Optimizations applied:
-     * - Early exit if not active
-     * - Direct array access with indexed loop (no iterator allocation)
-     * - Inline cumulative calculation to avoid method call overhead
-     * - Primitive arithmetic only (no boxing/unboxing)
-     *
-     * @param ticks ArrayList of Tick objects from WebSocket
+     * @param ticks list of tick updates from WebSocket (may be null or empty)
      */
     public void updatePriceWithDifferenceCheck(ArrayList<Tick> ticks) {
         // HFT: Ultra-fast early exit check
@@ -246,28 +341,32 @@ public class PositionMonitor {
     }
 
     /**
-     * HFT-optimized cumulative exit check with inlined calculation and individual leg exit support.
-     * Separated from main check method for JIT inlining optimization.
-     * Uses pre-cached array to avoid iterator allocation on every tick.
-     *
-     * Exit Priority (in order):
-     * 1. Cumulative target hit (highest priority - full exit)
-     * 2. Individual leg stop loss (SHORT strategies only: -5 P&L per leg - leg exit only)
-     * 3. Trailing stop loss hit (if activated - full exit)
-     * 4. Fixed cumulative stop loss hit (fallback - full exit)
-     *
-     * Individual Leg Exit Logic (for SELL ATM strategies):
-     * - Monitors each leg's P&L independently
-     * - Triggers exit if any leg moves +5 points against position (P&L <= -5)
-     * - For SHORT positions: entry=100, current=105 → P&L=-5 → EXIT that leg
-     * - After leg exit, continues monitoring remaining legs with cumulative logic
-     *
-     * HFT Optimizations:
-     * - Early exit pattern for disabled trailing stop (single boolean check)
-     * - Flat conditional structure for better branch prediction
-     * - All arithmetic uses primitives (no boxing)
-     * - Logging only on state transitions (not every tick)
-     * - Individual leg check only for SHORT direction (branch predicted)
+     * HFT-optimized exit evaluation with inlined P&amp;L calculation and individual leg exit support.
+     * <p>
+     * Evaluates exit conditions in priority order:
+     * <ol>
+     *   <li><b>Cumulative target</b> - Full exit when total profit >= target</li>
+     *   <li><b>Individual leg stop loss</b> - Leg exit when individual leg P&amp;L <= -stopLossPoints (SHORT only)</li>
+     *   <li><b>Trailing stop loss</b> - Full exit when P&amp;L <= trailing stop level (if activated)</li>
+     *   <li><b>Fixed cumulative stop loss</b> - Full exit when total loss <= -stopLossPoints</li>
+     * </ol>
+     * <p>
+     * <b>Individual Leg Exit Logic (SHORT strategies only):</b>
+     * <ul>
+     *   <li>Monitors each leg's P&amp;L independently</li>
+     *   <li>Exits leg if P&amp;L <= -stopLossPoints (e.g., -3 points)</li>
+     *   <li>Adjusts target for remaining legs: newTarget = currentTarget + stopLossPoints</li>
+     *   <li>Continues monitoring remaining legs</li>
+     * </ul>
+     * <p>
+     * <b>HFT Optimizations:</b>
+     * <ul>
+     *   <li>Uses pre-cached array to avoid iterator allocation</li>
+     *   <li>Inline cumulative calculation with indexed loop</li>
+     *   <li>Flat conditional structure for better branch prediction</li>
+     *   <li>All arithmetic uses primitives (no boxing)</li>
+     *   <li>Logging only on state transitions (not every tick)</li>
+     * </ul>
      */
     private void checkAndTriggerCumulativeExitFast() {
         // HFT: Use pre-cached array to avoid iterator allocation
@@ -405,7 +504,16 @@ public class PositionMonitor {
 
 
     /**
-     * Trigger exit for all legs
+     * Triggers exit for all legs by invoking the registered exit callback.
+     * <p>
+     * This method:
+     * <ul>
+     *   <li>Deactivates the monitor (prevents duplicate exits)</li>
+     *   <li>Records the exit reason</li>
+     *   <li>Invokes the exit callback if configured</li>
+     * </ul>
+     *
+     * @param reason exit reason string (formatted by build*ExitReason methods)
      */
     private void triggerExitAllLegs(String reason) {
         if (!active) {
@@ -424,7 +532,10 @@ public class PositionMonitor {
 
 
     /**
-     * Stop monitoring
+     * Stops monitoring and prevents further exit evaluations.
+     * <p>
+     * This method is idempotent - can be called multiple times safely.
+     * After calling this method, price updates will be ignored.
      */
     public void stop() {
         active = false;
@@ -436,6 +547,9 @@ public class PositionMonitor {
     /**
      * HFT: Fast double formatting without String.format overhead.
      * Uses ThreadLocal StringBuilder to avoid allocation on hot path.
+     *
+     * @param value the double value to format
+     * @return string representation with 2 decimal places (e.g., "3.14", "-2.50")
      */
     private static String formatDouble(double value) {
         // Simple 2 decimal place formatting without String.format
@@ -456,6 +570,9 @@ public class PositionMonitor {
 
     /**
      * HFT: Build target exit reason without String.format.
+     *
+     * @param cumulative current cumulative P&amp;L in points
+     * @return formatted exit reason string
      */
     private static String buildExitReasonTarget(double cumulative) {
         StringBuilder sb = EXIT_REASON_BUILDER.get();
@@ -468,6 +585,9 @@ public class PositionMonitor {
 
     /**
      * HFT: Build stoploss exit reason without String.format.
+     *
+     * @param cumulative current cumulative P&amp;L in points
+     * @return formatted exit reason string
      */
     private static String buildExitReasonStoploss(double cumulative) {
         StringBuilder sb = EXIT_REASON_BUILDER.get();
@@ -480,7 +600,12 @@ public class PositionMonitor {
 
     /**
      * HFT: Build trailing stoploss exit reason without String.format.
-     * Includes P&L, high-water mark, and trail level for full context.
+     * Includes P&amp;L, high-water mark, and trail level for full context.
+     *
+     * @param cumulative current cumulative P&amp;L in points
+     * @param hwm high-water mark (best P&amp;L achieved) in points
+     * @param trailLevel current trailing stop level in points
+     * @return formatted exit reason string
      */
     private static String buildExitReasonTrailingStop(double cumulative, double hwm, double trailLevel) {
         StringBuilder sb = EXIT_REASON_BUILDER.get();
@@ -497,7 +622,11 @@ public class PositionMonitor {
 
     /**
      * HFT: Build individual leg stop loss exit reason without String.format.
-     * Used when a single leg hits its -5 point stop loss threshold.
+     * Used when a single leg hits its stop loss threshold.
+     *
+     * @param symbol trading symbol of the exited leg
+     * @param legPnl P&amp;L of the individual leg in points
+     * @return formatted exit reason string
      */
     private static String buildExitReasonIndividualLegStop(String symbol, double legPnl) {
         StringBuilder sb = EXIT_REASON_BUILDER.get();
@@ -512,6 +641,9 @@ public class PositionMonitor {
 
     /**
      * HFT: Append double with 2 decimal places to StringBuilder.
+     *
+     * @param sb StringBuilder to append to
+     * @param value double value to format and append
      */
     private static void appendDouble(StringBuilder sb, double value) {
         long scaled = Math.round(value * 100);
@@ -527,7 +659,12 @@ public class PositionMonitor {
     }
 
     /**
-     * Get all legs - returns cached immutable list for performance
+     * Get all legs - returns cached immutable list for performance.
+     * <p>
+     * The list is cached and only rebuilt when legs are added or removed.
+     * This avoids repeated allocations for frequent read access.
+     *
+     * @return immutable list of all legs currently monitored
      */
     public List<LegMonitor> getLegs() {
         List<LegMonitor> cached = cachedLegs;
@@ -539,7 +676,9 @@ public class PositionMonitor {
     }
 
     /**
-     * Get legs map by symbol - for checking if specific legs are still active
+     * Get legs map by symbol - for checking if specific legs are still active.
+     *
+     * @return concurrent map of legs indexed by trading symbol
      */
     public Map<String, LegMonitor> getLegsBySymbol() {
         return legsBySymbol;
@@ -549,6 +688,7 @@ public class PositionMonitor {
 
     /**
      * Get the current high-water mark (best P&L achieved).
+     *
      * @return high-water mark in points
      */
     public double getHighWaterMark() {
@@ -557,6 +697,7 @@ public class PositionMonitor {
 
     /**
      * Get the current trailing stop level.
+     *
      * @return trailing stop level in points, or Double.NEGATIVE_INFINITY if not activated
      */
     public double getCurrentTrailingStopLevel() {
@@ -565,6 +706,7 @@ public class PositionMonitor {
 
     /**
      * Check if trailing stop has been activated.
+     *
      * @return true if trailing stop is active
      */
     public boolean isTrailingStopActivated() {
@@ -573,6 +715,7 @@ public class PositionMonitor {
 
     /**
      * Get trailing stop activation threshold.
+     *
      * @return activation threshold in points
      */
     public double getTrailingActivationPoints() {
@@ -581,6 +724,7 @@ public class PositionMonitor {
 
     /**
      * Get trailing stop distance.
+     *
      * @return trail distance in points
      */
     public double getTrailingDistancePoints() {
@@ -589,7 +733,17 @@ public class PositionMonitor {
 
     /**
      * Individual leg monitor - optimized for HFT with primitive doubles.
-     * Uses volatile for currentPrice to ensure visibility across threads.
+     * <p>
+     * Represents a single option contract within a multi-leg strategy.
+     * Uses volatile for currentPrice to ensure visibility across threads without synchronization.
+     * <p>
+     * Each leg tracks:
+     * <ul>
+     *   <li>Order ID for exit operations</li>
+     *   <li>Symbol and instrument token for price lookups</li>
+     *   <li>Entry price and current price for P&amp;L calculation</li>
+     *   <li>Quantity and type (CE/PE) for position management</li>
+     * </ul>
      */
     @Getter
     public static class LegMonitor {
@@ -603,6 +757,16 @@ public class PositionMonitor {
         // Volatile double for thread-safe price updates without synchronization overhead
         volatile double currentPrice;
 
+        /**
+         * Creates a new leg monitor.
+         *
+         * @param orderId unique order identifier
+         * @param symbol trading symbol (e.g., "NIFTY24350CE")
+         * @param instrumentToken Zerodha instrument token
+         * @param entryPrice entry price for this leg
+         * @param quantity number of contracts
+         * @param type leg type ("CE" or "PE")
+         */
         public LegMonitor(String orderId, String symbol, long instrumentToken,
                          double entryPrice, int quantity, String type) {
             this.orderId = orderId;
@@ -616,6 +780,7 @@ public class PositionMonitor {
 
         /**
          * Get P&L for this leg using primitive arithmetic.
+         *
          * @return raw P&L = (currentPrice - entryPrice) * quantity
          */
         public double getPnl() {
