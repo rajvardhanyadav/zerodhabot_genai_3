@@ -20,7 +20,9 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static com.tradingbot.service.TradingConstants.*;
 
@@ -32,6 +34,15 @@ public class TradingService {
     private final KiteConfig kiteConfig;
     private final UserSessionManager sessionManager;
     private final RateLimiterService rateLimiterService;
+
+    // ============ INSTRUMENTS CACHE ============
+    // Kite instruments API has strict rate limits (1 req/sec).
+    // Instrument data is static for the trading day, so we cache it.
+    // Cache TTL: 5 minutes (instruments don't change during the day)
+    private static final long INSTRUMENTS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+    private final Map<String, List<Instrument>> instrumentsCache = new ConcurrentHashMap<>();
+    private final Map<String, AtomicLong> instrumentsCacheTimestamp = new ConcurrentHashMap<>();
+    private final Object instrumentsCacheLock = new Object();
 
     /**
      * Generate login URL for Kite Connect authentication
@@ -441,23 +452,98 @@ public class TradingService {
     }
 
     /**
-     * Get all instruments
+     * Get all instruments (with caching to avoid 429 rate limit errors).
+     *
+     * Kite's instruments API has a strict rate limit. Since instrument data is static
+     * for the trading day, we cache the response for 5 minutes.
+     *
+     * @see <a href="https://kite.trade/docs/connect/v3/exceptions/">Kite API Rate Limits</a>
      */
     public List<Instrument> getInstruments() throws KiteException, IOException {
-        log.debug("Fetching all instruments");
-        List<Instrument> instruments = kc().getInstruments();
-        log.debug("Fetched {} instruments", instruments != null ? instruments.size() : 0);
-        return instruments;
+        return getInstrumentsCached("ALL");
     }
 
     /**
-     * Get instruments for specific exchange
+     * Get instruments for specific exchange (with caching to avoid 429 rate limit errors).
+     *
+     * Kite's instruments API has a strict rate limit. Since instrument data is static
+     * for the trading day, we cache the response for 5 minutes.
+     *
+     * @see <a href="https://kite.trade/docs/connect/v3/exceptions/">Kite API Rate Limits</a>
      */
     public List<Instrument> getInstruments(String exchange) throws KiteException, IOException {
-        log.debug("Fetching instruments for exchange: {}", exchange);
-        List<Instrument> instruments = kc().getInstruments(exchange);
-        log.debug("Fetched {} instruments for exchange: {}", instruments != null ? instruments.size() : 0, exchange);
-        return instruments;
+        return getInstrumentsCached(exchange);
+    }
+
+    /**
+     * Internal method to get instruments with caching.
+     * Uses synchronized block to prevent multiple concurrent API calls for the same exchange.
+     */
+    private List<Instrument> getInstrumentsCached(String cacheKey) throws KiteException, IOException {
+        // Check if cache is valid
+        AtomicLong timestampHolder = instrumentsCacheTimestamp.get(cacheKey);
+        if (timestampHolder != null) {
+            long cacheAge = System.currentTimeMillis() - timestampHolder.get();
+            if (cacheAge < INSTRUMENTS_CACHE_TTL_MS) {
+                List<Instrument> cached = instrumentsCache.get(cacheKey);
+                if (cached != null) {
+                    log.debug("Returning cached instruments for {}: {} instruments (cache age: {}ms)",
+                            cacheKey, cached.size(), cacheAge);
+                    return cached;
+                }
+            }
+        }
+
+        // Cache miss or expired - fetch from API with synchronization to prevent concurrent calls
+        synchronized (instrumentsCacheLock) {
+            // Double-check after acquiring lock (another thread might have populated cache)
+            timestampHolder = instrumentsCacheTimestamp.get(cacheKey);
+            if (timestampHolder != null) {
+                long cacheAge = System.currentTimeMillis() - timestampHolder.get();
+                if (cacheAge < INSTRUMENTS_CACHE_TTL_MS) {
+                    List<Instrument> cached = instrumentsCache.get(cacheKey);
+                    if (cached != null) {
+                        log.debug("Returning cached instruments for {} (populated by another thread): {} instruments",
+                                cacheKey, cached.size());
+                        return cached;
+                    }
+                }
+            }
+
+            // Acquire rate limit permit
+            log.info("Fetching instruments from Kite API for exchange: {} (cache miss/expired)", cacheKey);
+            if (!rateLimiterService.acquire(RateLimiterService.ApiType.INSTRUMENTS)) {
+                throw new RateLimiterService.RateLimitExceededException(
+                        "Rate limit exceeded for getInstruments. Please retry.");
+            }
+
+            // Fetch from API
+            List<Instrument> instruments;
+            if ("ALL".equals(cacheKey)) {
+                instruments = kc().getInstruments();
+            } else {
+                instruments = kc().getInstruments(cacheKey);
+            }
+
+            // Update cache
+            if (instruments != null) {
+                instrumentsCache.put(cacheKey, instruments);
+                instrumentsCacheTimestamp.put(cacheKey, new AtomicLong(System.currentTimeMillis()));
+                log.info("Cached {} instruments for exchange: {} (TTL: {}ms)",
+                        instruments.size(), cacheKey, INSTRUMENTS_CACHE_TTL_MS);
+            }
+
+            return instruments;
+        }
+    }
+
+    /**
+     * Clear instruments cache. Call this if you need fresh data.
+     */
+    public void clearInstrumentsCache() {
+        instrumentsCache.clear();
+        instrumentsCacheTimestamp.clear();
+        log.info("Instruments cache cleared");
     }
 
     /**

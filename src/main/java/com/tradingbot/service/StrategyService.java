@@ -352,17 +352,43 @@ public class StrategyService {
     }
 
     /**
-     * Get available instruments with their details
+     * Get available instruments with their details.
+     *
+     * OPTIMIZED: Fetches instruments from Kite API only ONCE and extracts lot sizes
+     * for all supported instruments from that single response.
+     * This avoids multiple sequential API calls that trigger Kite's 1 req/sec rate limit (429 error).
+     *
+     * @see <a href="https://kite.trade/docs/connect/v3/exceptions/">Kite API Rate Limits</a>
      */
     public List<InstrumentDetail> getAvailableInstruments() throws KiteException {
-        log.info("Fetching available instruments from Kite API");
+        log.info("Fetching available instruments from Kite API (single API call optimization)");
 
-        List<InstrumentDetail> instrumentDetails = new ArrayList<>();
         String[] supportedInstruments = {"NIFTY", "BANKNIFTY"};
         log.info("Supported instruments: {}", Arrays.toString(supportedInstruments));
+
+        // OPTIMIZATION: Fetch instruments from Kite API ONLY ONCE
+        List<Instrument> allInstruments;
+        try {
+            allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
+            log.info("Fetched {} instruments from NFO exchange in single API call",
+                    allInstruments != null ? allInstruments.size() : 0);
+        } catch (IOException e) {
+            log.error("Failed to fetch instruments from Kite API: {}", e.getMessage());
+            throw new RuntimeException("Failed to fetch instruments from Kite API", e);
+        }
+
+        // Handle null response from API
+        if (allInstruments == null) {
+            log.warn("Kite API returned null instruments list, using fallback values");
+            allInstruments = new ArrayList<>();
+        }
+
+        List<InstrumentDetail> instrumentDetails = new ArrayList<>();
+
+        // Extract lot sizes for all supported instruments from the single API response
         for (String instrumentCode : supportedInstruments) {
             try {
-                int lotSize = fetchLotSizeFromKite(instrumentCode);
+                int lotSize = extractLotSizeFromInstruments(allInstruments, instrumentCode);
                 double strikeInterval = getStrikeInterval(instrumentCode);
                 String displayName = getInstrumentDisplayName(instrumentCode);
 
@@ -376,20 +402,19 @@ public class StrategyService {
                 log.debug("Added instrument: {} with lot size: {}", instrumentCode, lotSize);
 
             } catch (Exception e) {
-                log.error("Error fetching details for instrument {}: {}", instrumentCode, e.getMessage());
+                log.error("Error processing instrument {}: {}", instrumentCode, e.getMessage());
             }
         }
 
-        log.info("Successfully fetched {} instruments", instrumentDetails.size());
+        log.info("Successfully processed {} instruments from single API response", instrumentDetails.size());
         return instrumentDetails;
     }
 
     /**
-     * Fetch lot size from Kite API
+     * Extract lot size for a specific instrument from pre-fetched instruments list.
+     * This avoids making additional API calls.
      */
-    private int fetchLotSizeFromKite(String instrumentType) throws KiteException, IOException {
-        log.info("Fetching lot size for instrument: {} from Kite API", instrumentType);
-        List<Instrument> allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
+    private int extractLotSizeFromInstruments(List<Instrument> allInstruments, String instrumentType) {
         String instrumentName = getInstrumentName(instrumentType);
 
         Optional<Instrument> instrument = allInstruments.stream()
@@ -399,12 +424,22 @@ public class StrategyService {
 
         if (instrument.isPresent()) {
             int lotSize = instrument.get().lot_size;
-            log.info("Found lot size for {}: {}", instrumentType, lotSize);
+            log.debug("Found lot size for {} from cached instruments: {}", instrumentType, lotSize);
             return lotSize;
         } else {
-            log.warn("Lot size not found in Kite API for {}, using fallback value", instrumentType);
+            log.warn("Lot size not found for {}, using fallback value", instrumentType);
             return getFallbackLotSize(instrumentType);
         }
+    }
+
+    /**
+     * Fetch lot size from Kite API (makes a fresh API call).
+     * Use extractLotSizeFromInstruments() when possible to avoid multiple API calls.
+     */
+    private int fetchLotSizeFromKite(String instrumentType) throws KiteException, IOException {
+        log.info("Fetching lot size for instrument: {} from Kite API", instrumentType);
+        List<Instrument> allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
+        return extractLotSizeFromInstruments(allInstruments, instrumentType);
     }
 
     /**
