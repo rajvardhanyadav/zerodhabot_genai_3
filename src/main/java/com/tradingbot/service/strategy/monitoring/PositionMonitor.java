@@ -9,8 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Consumer;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * High-performance position monitor for tracking individual legs of a strategy.
@@ -84,17 +84,12 @@ public class PositionMonitor {
     private static final String EXIT_PREFIX_TRAILING_STOP = "TRAILING_STOPLOSS_HIT (P&L: ";
     private static final String EXIT_TRAILING_HWM = ", HighWaterMark: ";
     private static final String EXIT_TRAILING_LEVEL = ", TrailLevel: ";
-    private static final String EXIT_PREFIX_INDIVIDUAL = "PRICE_DIFF_INDIVIDUAL (Leg: ";
     private static final String EXIT_SUFFIX_POINTS = " points)";
-    private static final String EXIT_SUFFIX_DIFF = ", Diff: ";
 
     // HFT: ThreadLocal StringBuilder for exit reason construction - avoids allocation
     private static final ThreadLocal<StringBuilder> EXIT_REASON_BUILDER =
         ThreadLocal.withInitial(() -> new StringBuilder(64));
 
-    // HFT: Direction constants to avoid enum comparison overhead
-    private static final double DIRECTION_LONG = 1.0;
-    private static final double DIRECTION_SHORT = -1.0;
 
     public enum PositionDirection {
         LONG,  // e.g., BUY ATM straddle
@@ -114,6 +109,7 @@ public class PositionMonitor {
 
     @Setter
     private Consumer<String> exitCallback;
+
     @Setter
     private BiConsumer<String, String> individualLegExitCallback;
 
@@ -343,107 +339,6 @@ public class PositionMonitor {
         }
     }
 
-    /**
-     * Update prices using a map of instrumentToken -> lastPrice and run threshold checks.
-     * Optimized for historical replay path.
-     */
-    public void updateWithTokenPrices(Map<Long, Double> tokenPrices) {
-        if (!active || tokenPrices == null || tokenPrices.isEmpty()) {
-            return;
-        }
-
-        // Update prices with minimal overhead
-        for (Map.Entry<Long, Double> e : tokenPrices.entrySet()) {
-            final LegMonitor leg = legsByInstrumentToken.get(e.getKey());
-            if (leg != null) {
-                final Double price = e.getValue();
-                if (price != null) {
-                    leg.currentPrice = price;
-                }
-            }
-        }
-
-        checkAndTriggerCumulativeExit();
-    }
-
-    /**
-     * Compute cumulative directional points across all legs using primitives.
-     * Uses pre-cached array for maximum performance on hot path.
-     */
-    private double computeCumulativeDirectionalPointsFast() {
-        // HFT: Use pre-cached array to avoid iterator allocation
-        final LegMonitor[] legs = cachedLegsArray;
-        final int count = cachedLegsCount;
-
-        if (legs == null || count == 0) {
-            return 0.0;
-        }
-
-        double cumulative = 0.0;
-        for (int i = 0; i < count; i++) {
-            double rawDiff = legs[i].currentPrice - legs[i].entryPrice;
-            cumulative += rawDiff * directionMultiplier;
-        }
-        return cumulative;
-    }
-
-    /**
-     * Check cumulative thresholds and trigger exit if met.
-     * Uses fast primitive comparison - no BigDecimal overhead.
-     * Includes trailing stop loss logic for historical replay path.
-     *
-     * HFT Optimizations (same as fast path):
-     * - Early exit pattern for disabled trailing stop
-     * - Flat conditional structure for better branch prediction
-     * - All arithmetic uses primitives (no boxing)
-     */
-    private void checkAndTriggerCumulativeExit() {
-        final double cumulative = computeCumulativeDirectionalPointsFast();
-
-        // Check target hit (highest priority)
-        if (cumulative >= cumulativeTargetPoints) {
-            log.warn("Cumulative target hit for execution {}: cumulative={} points, target={} - Closing ALL legs",
-                    executionId, formatDouble(cumulative), formatDouble(cumulativeTargetPoints));
-            triggerExitAllLegs(buildExitReasonTarget(cumulative));
-            return;
-        }
-
-        // Trailing stop loss logic (HFT optimized - same structure as fast path)
-        if (trailingStopEnabled) {
-            if (trailingStopActivated) {
-                // Check if trailing stop was hit
-                if (cumulative <= currentTrailingStopLevel) {
-                    log.warn("Trailing stoploss hit for execution {}: P&L={} points, HWM={}, trailLevel={} - Closing ALL legs",
-                            executionId, formatDouble(cumulative), formatDouble(highWaterMark),
-                            formatDouble(currentTrailingStopLevel));
-                    triggerExitAllLegs(buildExitReasonTrailingStop(cumulative, highWaterMark, currentTrailingStopLevel));
-                    return;
-                }
-
-                // Update HWM only if new peak
-                if (cumulative > highWaterMark) {
-                    highWaterMark = cumulative;
-                    currentTrailingStopLevel = cumulative - trailingDistancePoints;
-                }
-            } else {
-                // Not yet activated - check for activation
-                if (cumulative >= trailingActivationPoints) {
-                    highWaterMark = cumulative;
-                    currentTrailingStopLevel = cumulative - trailingDistancePoints;
-                    trailingStopActivated = true;
-                    log.info("Trailing stop ACTIVATED for execution {}: HWM={} points, trailLevel={} points",
-                            executionId, formatDouble(highWaterMark), formatDouble(currentTrailingStopLevel));
-                }
-            }
-        }
-
-        // Check fixed stoploss hit (negative cumulative >= configured stop)
-        if (cumulative <= -cumulativeStopPoints) {
-            log.warn("Cumulative stoploss hit for execution {}: cumulative={} points, stopLoss={} - Closing ALL legs",
-                    executionId, formatDouble(cumulative), formatDouble(cumulativeStopPoints));
-            triggerExitAllLegs(buildExitReasonStoploss(cumulative));
-        }
-    }
 
     /**
      * Trigger exit for all legs
@@ -463,43 +358,6 @@ public class PositionMonitor {
         }
     }
 
-    /**
-     * Trigger exit for an individual leg
-     */
-    private void triggerIndividualLegExit(String legSymbol, double priceDifference) {
-        LegMonitor leg = legsBySymbol.get(legSymbol);
-        if (leg == null) {
-            log.warn("Cannot close leg {}: not found in monitor", legSymbol);
-            return;
-        }
-
-        String exitReason = buildExitReasonIndividual(legSymbol, priceDifference);
-
-        log.warn("Triggering individual leg exit for {} in execution {} - Reason: {}",
-                 legSymbol, executionId, exitReason);
-
-        // Remove the leg from monitoring
-        legsBySymbol.remove(legSymbol);
-        legsByInstrumentToken.remove(leg.getInstrumentToken());
-
-        // HFT: Rebuild cached array after leg removal
-        rebuildCachedLegsArray();
-
-        // If individualLegExitCallback is set, use it; otherwise fall back to exitCallback
-        if (individualLegExitCallback != null) {
-            individualLegExitCallback.accept(legSymbol, exitReason);
-        } else if (exitCallback != null) {
-            // Fallback to full exit if individual callback not set
-            log.warn("Individual leg exit callback not set, falling back to full exit");
-            exitCallback.accept(exitReason);
-        }
-
-        // If no more legs remain, deactivate the monitor
-        if (legsBySymbol.isEmpty()) {
-            active = false;
-            log.info("All legs closed for execution {}, deactivating monitor", executionId);
-        }
-    }
 
     /**
      * Stop monitoring
@@ -569,20 +427,6 @@ public class PositionMonitor {
         appendDouble(sb, hwm);
         sb.append(EXIT_TRAILING_LEVEL);
         appendDouble(sb, trailLevel);
-        sb.append(EXIT_SUFFIX_POINTS);
-        return sb.toString();
-    }
-
-    /**
-     * HFT: Build individual leg exit reason without String.format.
-     */
-    private static String buildExitReasonIndividual(String legSymbol, double priceDifference) {
-        StringBuilder sb = EXIT_REASON_BUILDER.get();
-        sb.setLength(0);
-        sb.append(EXIT_PREFIX_INDIVIDUAL);
-        sb.append(legSymbol);
-        sb.append(EXIT_SUFFIX_DIFF);
-        appendDouble(sb, priceDifference);
         sb.append(EXIT_SUFFIX_POINTS);
         return sb.toString();
     }

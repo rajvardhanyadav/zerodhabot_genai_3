@@ -1,7 +1,9 @@
 package com.tradingbot.service.strategy.monitoring;
 
+import com.zerodhatech.models.Tick;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -18,8 +20,21 @@ public class PositionMonitorTest {
         AtomicBoolean exited = new AtomicBoolean(false);
         monitor.setExitCallback(reason -> exited.set(true));
 
-        // Run the check using token price map helper - this updates prices and checks thresholds
-        monitor.updateWithTokenPrices(java.util.Map.of(111L, 101.0, 222L, 51.0));
+        // Create tick data with updated prices
+        ArrayList<Tick> ticks = new ArrayList<>();
+        Tick tick1 = new Tick();
+        tick1.setInstrumentToken(111L);
+        tick1.setLastTradedPrice(101.0);
+
+        Tick tick2 = new Tick();
+        tick2.setInstrumentToken(222L);
+        tick2.setLastTradedPrice(51.0);
+
+        ticks.add(tick1);
+        ticks.add(tick2);
+
+        // Run the check using tick updates - this updates prices and checks thresholds
+        monitor.updatePriceWithDifferenceCheck(ticks);
 
         assertTrue(exited.get(), "Expected monitor to trigger cumulative exit");
     }
