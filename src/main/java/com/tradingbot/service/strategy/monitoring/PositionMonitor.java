@@ -82,9 +82,11 @@ public class PositionMonitor {
     private static final String EXIT_PREFIX_TARGET = "CUMULATIVE_TARGET_HIT (Signal: ";
     private static final String EXIT_PREFIX_STOPLOSS = "CUMULATIVE_STOPLOSS_HIT (Signal: ";
     private static final String EXIT_PREFIX_TRAILING_STOP = "TRAILING_STOPLOSS_HIT (P&L: ";
+    private static final String EXIT_PREFIX_INDIVIDUAL_LEG_STOP = "INDIVIDUAL_LEG_STOP (Symbol: ";
     private static final String EXIT_TRAILING_HWM = ", HighWaterMark: ";
     private static final String EXIT_TRAILING_LEVEL = ", TrailLevel: ";
     private static final String EXIT_SUFFIX_POINTS = " points)";
+    private static final String EXIT_SUFFIX_PNL = ", P&L: ";
 
     // HFT: ThreadLocal StringBuilder for exit reason construction - avoids allocation
     private static final ThreadLocal<StringBuilder> EXIT_REASON_BUILDER =
@@ -243,22 +245,28 @@ public class PositionMonitor {
     }
 
     /**
-     * HFT-optimized cumulative exit check with inlined calculation.
+     * HFT-optimized cumulative exit check with inlined calculation and individual leg exit support.
      * Separated from main check method for JIT inlining optimization.
      * Uses pre-cached array to avoid iterator allocation on every tick.
      *
-     * Includes trailing stop loss logic:
-     * 1. Calculate cumulative P&L
-     * 2. Check target hit (highest priority)
-     * 3. Update high-water mark and trailing stop level if profitable
-     * 4. Check trailing stop hit (if activated)
-     * 5. Check fixed stop loss hit (fallback)
+     * Exit Priority (in order):
+     * 1. Cumulative target hit (highest priority - full exit)
+     * 2. Individual leg stop loss (SHORT strategies only: -5 P&L per leg - leg exit only)
+     * 3. Trailing stop loss hit (if activated - full exit)
+     * 4. Fixed cumulative stop loss hit (fallback - full exit)
+     *
+     * Individual Leg Exit Logic (for SELL ATM strategies):
+     * - Monitors each leg's P&L independently
+     * - Triggers exit if any leg moves +5 points against position (P&L <= -5)
+     * - For SHORT positions: entry=100, current=105 → P&L=-5 → EXIT that leg
+     * - After leg exit, continues monitoring remaining legs with cumulative logic
      *
      * HFT Optimizations:
      * - Early exit pattern for disabled trailing stop (single boolean check)
      * - Flat conditional structure for better branch prediction
      * - All arithmetic uses primitives (no boxing)
      * - Logging only on state transitions (not every tick)
+     * - Individual leg check only for SHORT direction (branch predicted)
      */
     private void checkAndTriggerCumulativeExitFast() {
         // HFT: Use pre-cached array to avoid iterator allocation
@@ -288,6 +296,7 @@ public class PositionMonitor {
                     executionId, cumulative, cumulativeTargetPoints, cumulativeStopPoints, legPrices);
         }
 
+        // ==================== PRIORITY 1: CUMULATIVE TARGET (FULL EXIT) ====================
         // Check target hit (profit) - highest priority, most likely exit in profitable strategies
         if (cumulative >= cumulativeTargetPoints) {
             log.warn("Cumulative target hit for execution {}: cumulative={} points, target={} - Closing ALL legs",
@@ -296,7 +305,49 @@ public class PositionMonitor {
             return;
         }
 
-        // ==================== TRAILING STOP LOSS LOGIC (HFT OPTIMIZED) ====================
+        // ==================== PRIORITY 2: INDIVIDUAL LEG STOP LOSS (SHORT ONLY) ====================
+        // HFT: Single branch check - only evaluate for SHORT strategies
+        // Individual leg exit: if any leg moves +5 points against position → exit that leg only
+        if (direction == PositionDirection.SHORT && individualLegExitCallback != null && count > 0) {
+            for (int i = 0; i < count; i++) {
+                final LegMonitor leg = legs[i];
+
+                // Calculate individual leg P&L for SHORT position
+                // For SHORT: if price increases, P&L becomes negative
+                // Example: entry=100, current=105 → rawDiff=+5 → P&L=-5 (loss)
+                final double rawDiff = leg.currentPrice - leg.entryPrice;
+                final double legPnl = rawDiff * directionMultiplier; // directionMultiplier = -1 for SHORT
+
+                // Exit condition: leg moved +5 points against us (legPnl <= -5.0)
+                if (legPnl <= -3.0) {
+                    log.warn("Individual leg stop loss hit for execution {}: symbol={}, entry={}, current={}, P&L={} points - Exiting this leg only",
+                            executionId, leg.symbol, formatDouble(leg.entryPrice),
+                            formatDouble(leg.currentPrice), formatDouble(legPnl));
+
+                    // Build exit reason for this specific leg
+                    String legExitReason = buildExitReasonIndividualLegStop(leg.symbol, legPnl);
+
+                    // Trigger exit callback for this leg only (using orderId as first parameter)
+                    individualLegExitCallback.accept(leg.orderId, legExitReason);
+
+                    // Remove this leg from monitoring
+                    legsBySymbol.remove(leg.symbol);
+                    legsByInstrumentToken.remove(leg.instrumentToken);
+
+                    // Rebuild cached arrays after leg removal
+                    rebuildCachedLegsArray();
+
+                    log.info("Leg {} removed from monitoring. Remaining legs: {}",
+                            leg.symbol, legsBySymbol.keySet());
+
+                    // Continue monitoring remaining legs - don't return here
+                    // This allows cumulative logic to apply to remaining legs
+                    break; // Exit loop after removing one leg (process one at a time for safety)
+                }
+            }
+        }
+
+        // ==================== PRIORITY 3: TRAILING STOP LOSS (FULL EXIT) ====================
         // HFT: Single boolean check at start - if disabled, skip entire trailing block
         // This is the FAST PATH when trailing is disabled (default)
         if (trailingStopEnabled) {
@@ -331,6 +382,7 @@ public class PositionMonitor {
             }
         }
 
+        // ==================== PRIORITY 4: FIXED CUMULATIVE STOP LOSS (FULL EXIT) ====================
         // Check fixed stoploss hit (loss) - fallback when trailing not active or not hit
         if (cumulative <= -cumulativeStopPoints) {
             log.warn("Cumulative stoploss hit for execution {}: cumulative={} points, stopLoss={} - Closing ALL legs",
@@ -427,6 +479,21 @@ public class PositionMonitor {
         appendDouble(sb, hwm);
         sb.append(EXIT_TRAILING_LEVEL);
         appendDouble(sb, trailLevel);
+        sb.append(EXIT_SUFFIX_POINTS);
+        return sb.toString();
+    }
+
+    /**
+     * HFT: Build individual leg stop loss exit reason without String.format.
+     * Used when a single leg hits its -5 point stop loss threshold.
+     */
+    private static String buildExitReasonIndividualLegStop(String symbol, double legPnl) {
+        StringBuilder sb = EXIT_REASON_BUILDER.get();
+        sb.setLength(0);
+        sb.append(EXIT_PREFIX_INDIVIDUAL_LEG_STOP);
+        sb.append(symbol);
+        sb.append(EXIT_SUFFIX_PNL);
+        appendDouble(sb, legPnl);
         sb.append(EXIT_SUFFIX_POINTS);
         return sb.toString();
     }
