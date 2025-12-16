@@ -254,25 +254,28 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
         try {
             // HFT: Parallel fetch of order histories for both legs
-            CompletableFuture<List<Order>> callHistoryFuture = CompletableFuture.supplyAsync(() -> {
-                try {
-                    return unifiedTradingService.getOrderHistory(callOrderId);
-                } catch (Exception e) {
-                    log.error("Failed to fetch call order history: {}", e.getMessage());
-                    return Collections.<Order>emptyList();
-                } catch (KiteException e) {
-                    throw new RuntimeException(e);
-                }
-            }, EXIT_ORDER_EXECUTOR);
+            // CRITICAL: Wrap tasks with user context for executor thread access
+            CompletableFuture<List<Order>> callHistoryFuture = CompletableFuture.supplyAsync(
+                com.tradingbot.util.CurrentUserContext.wrapSupplier(() -> {
+                    try {
+                        return unifiedTradingService.getOrderHistory(callOrderId);
+                    } catch (Exception e) {
+                        log.error("Failed to fetch call order history: {}", e.getMessage());
+                        return Collections.<Order>emptyList();
+                    } catch (KiteException e) {
+                        throw new RuntimeException(e);
+                    }
+                }), EXIT_ORDER_EXECUTOR);
 
-            CompletableFuture<List<Order>> putHistoryFuture = CompletableFuture.supplyAsync(() -> {
-                try {
-                    return unifiedTradingService.getOrderHistory(putOrderId);
-                } catch (Exception | KiteException e) {
-                    log.error("Failed to fetch put order history: {}", e.getMessage());
-                    return Collections.<Order>emptyList();
-                }
-            }, EXIT_ORDER_EXECUTOR);
+            CompletableFuture<List<Order>> putHistoryFuture = CompletableFuture.supplyAsync(
+                com.tradingbot.util.CurrentUserContext.wrapSupplier(() -> {
+                    try {
+                        return unifiedTradingService.getOrderHistory(putOrderId);
+                    } catch (Exception | KiteException e) {
+                        log.error("Failed to fetch put order history: {}", e.getMessage());
+                        return Collections.<Order>emptyList();
+                    }
+                }), EXIT_ORDER_EXECUTOR);
 
             // HFT: Wait for both histories in parallel
             List<Order> callOrderHistory = callHistoryFuture.join();
@@ -290,23 +293,25 @@ public class ATMStraddleStrategy extends BaseStrategy {
             }
 
             // HFT: Parallel fetch of order prices
-            CompletableFuture<Double> callPriceFuture = CompletableFuture.supplyAsync(() -> {
-                try {
-                    return getOrderPrice(callOrderId);
-                } catch (Exception | KiteException e) {
-                    log.error("Failed to fetch call order price: {}", e.getMessage());
-                    return 0.0;
-                }
-            }, EXIT_ORDER_EXECUTOR);
+            CompletableFuture<Double> callPriceFuture = CompletableFuture.supplyAsync(
+                com.tradingbot.util.CurrentUserContext.wrapSupplier(() -> {
+                    try {
+                        return getOrderPrice(callOrderId);
+                    } catch (Exception | KiteException e) {
+                        log.error("Failed to fetch call order price: {}", e.getMessage());
+                        return 0.0;
+                    }
+                }), EXIT_ORDER_EXECUTOR);
 
-            CompletableFuture<Double> putPriceFuture = CompletableFuture.supplyAsync(() -> {
-                try {
-                    return getOrderPrice(putOrderId);
-                } catch (Exception | KiteException e) {
-                    log.error("Failed to fetch put order price: {}", e.getMessage());
-                    return 0.0;
-                }
-            }, EXIT_ORDER_EXECUTOR);
+            CompletableFuture<Double> putPriceFuture = CompletableFuture.supplyAsync(
+                com.tradingbot.util.CurrentUserContext.wrapSupplier(() -> {
+                    try {
+                        return getOrderPrice(putOrderId);
+                    } catch (Exception | KiteException e) {
+                        log.error("Failed to fetch put order price: {}", e.getMessage());
+                        return 0.0;
+                    }
+                }), EXIT_ORDER_EXECUTOR);
 
             double callEntryPrice = callPriceFuture.join();
             double putEntryPrice = putPriceFuture.join();

@@ -69,11 +69,15 @@ public class UserSessionManager {
         }
 
         /**
-         * Check if session is potentially stale (created > 8 hours ago).
+         * Check if session is potentially stale (created > 16 hours ago).
          * Kite sessions typically expire at end of day/next morning.
+         *
+         * UPDATED: Increased from 8 hours to 16 hours to prevent premature cleanup
+         * during long-running intraday strategies (session created at 8 AM should
+         * survive until at least midnight).
          */
         boolean isPotentiallyStale() {
-            return Instant.now().isAfter(createdAt.plusSeconds(8 * 60 * 60));
+            return Instant.now().isAfter(createdAt.plusSeconds(16 * 60 * 60));
         }
     }
 
@@ -367,7 +371,10 @@ public class UserSessionManager {
 
     /**
      * Scheduled cleanup of stale sessions.
-     * Runs every hour to remove sessions older than 10 hours (Kite sessions expire ~6-8 hours).
+     * Runs every hour to remove sessions older than 18 hours (Kite sessions expire ~6-8 hours but we keep them longer for safety).
+     *
+     * SAFETY: Only runs outside market hours to avoid disrupting active trading.
+     * UPDATED: Increased threshold from 10 to 18 hours to prevent premature cleanup.
      */
     @Scheduled(fixedRate = 3600000) // Every hour
     public void cleanupStaleSessions() {
@@ -375,26 +382,40 @@ public class UserSessionManager {
 
         // Only cleanup outside market hours (before 9 AM or after 4 PM IST)
         if (now.isAfter(LocalTime.of(9, 0)) && now.isBefore(LocalTime.of(16, 0))) {
-            log.debug("Skipping session cleanup during market hours");
+            log.debug("Skipping session cleanup during market hours ({})", now);
             return;
         }
 
-        Instant staleThreshold = Instant.now().minusSeconds(10 * 60 * 60); // 10 hours
+        // INCREASED from 10 hours to 18 hours for safety during long trading sessions
+        Instant staleThreshold = Instant.now().minusSeconds(18 * 60 * 60); // 18 hours
 
         sessionLock.writeLock().lock();
         try {
             int beforeCount = sessions.size();
+
+            if (beforeCount == 0) {
+                log.debug("No sessions to clean up");
+                return;
+            }
+
+            log.info("Starting session cleanup check: {} active sessions, threshold: 18 hours", beforeCount);
+
             sessions.entrySet().removeIf(entry -> {
                 if (entry.getValue().createdAt.isBefore(staleThreshold)) {
-                    log.info("Removing stale session for userId={} (created: {})",
-                            entry.getKey(), entry.getValue().createdAt);
+                    log.warn("Removing stale session for userId={} (created: {}, age: {} hours)",
+                            entry.getKey(),
+                            entry.getValue().createdAt,
+                            java.time.Duration.between(entry.getValue().createdAt, Instant.now()).toHours());
                     return true;
                 }
                 return false;
             });
+
             int removedCount = beforeCount - sessions.size();
             if (removedCount > 0) {
-                log.info("Cleaned up {} stale sessions", removedCount);
+                log.warn("Cleaned up {} stale sessions. Remaining: {}", removedCount, sessions.size());
+            } else {
+                log.debug("No stale sessions found during cleanup check");
             }
         } finally {
             sessionLock.writeLock().unlock();

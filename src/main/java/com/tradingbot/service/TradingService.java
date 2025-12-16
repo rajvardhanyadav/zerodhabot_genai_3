@@ -159,12 +159,26 @@ public class TradingService {
         final int orderCount = orderItems.size();
 
         // HFT: Use CompletableFuture for parallel order placement
+        // CRITICAL: Capture user context before async execution (executor threads don't inherit context)
+        final String capturedUserId = com.tradingbot.util.CurrentUserContext.getUserId();
         List<java.util.concurrent.CompletableFuture<BasketOrderResponse.BasketOrderResult>> futures =
             new ArrayList<>(orderCount);
 
         for (BasketOrderRequest.BasketOrderItem item : orderItems) {
-            futures.add(java.util.concurrent.CompletableFuture.supplyAsync(() ->
-                placeSingleBasketOrderItem(item), ORDER_EXECUTOR));
+            // Wrap task with user context to ensure executor threads have access to session
+            java.util.concurrent.Callable<BasketOrderResponse.BasketOrderResult> wrappedTask =
+                com.tradingbot.util.CurrentUserContext.wrapWithContext(() -> placeSingleBasketOrderItem(item));
+            futures.add(java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try {
+                    return wrappedTask.call();
+                } catch (Exception e) {
+                    log.error("Error in basket order item execution: {}", e.getMessage(), e);
+                    return BasketOrderResponse.BasketOrderResult.builder()
+                            .status(STATUS_FAILED)
+                            .message("Execution error: " + e.getMessage())
+                            .build();
+                }
+            }, ORDER_EXECUTOR));
         }
 
         // Wait for all orders to complete (blocking but all orders run in parallel)

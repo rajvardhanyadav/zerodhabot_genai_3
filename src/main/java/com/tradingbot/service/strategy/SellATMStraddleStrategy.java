@@ -375,7 +375,13 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                         tradingMode, legType, tradingSymbol, result.getOrderId());
 
                 // Execute rollback asynchronously for speed, but track completion
+                // Capture user context for executor thread
+                final String capturedUserId = CurrentUserContext.getUserId();
                 CompletableFuture<Boolean> rollbackFuture = CompletableFuture.supplyAsync(() -> {
+                    // Restore user context in executor thread
+                    if (capturedUserId != null) {
+                        CurrentUserContext.setUserId(capturedUserId);
+                    }
                     try {
                         // BUY back to close the SELL position
                         OrderRequest exitOrder = createOrderRequest(
@@ -385,7 +391,14 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                 StrategyConstants.ORDER_TYPE_MARKET
                         );
 
-                        OrderResponse exitResponse = unifiedTradingService.placeOrder(exitOrder);
+                        OrderResponse exitResponse;
+                        try {
+                            exitResponse = unifiedTradingService.placeOrder(exitOrder);
+                        } catch (KiteException | IOException e) {
+                            log.error("[{}] ROLLBACK ERROR: Failed to exit {} leg {} (API error): {}",
+                                    tradingMode, legType, tradingSymbol, e.getMessage(), e);
+                            return Boolean.FALSE;
+                        }
 
                         if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(exitResponse.getStatus())) {
                             log.info("[{}] ROLLBACK SUCCESS: {} leg exited - ExitOrderId: {}",
@@ -396,10 +409,12 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                     tradingMode, legType, exitResponse.getMessage());
                             return Boolean.FALSE;
                         }
-                    } catch (Exception | KiteException e) {
+                    } catch (Exception e) {
                         log.error("[{}] ROLLBACK ERROR: Failed to exit {} leg {}: {}",
                                 tradingMode, legType, tradingSymbol, e.getMessage(), e);
                         return Boolean.FALSE;
+                    } finally {
+                        CurrentUserContext.clear();
                     }
                 }, EXIT_ORDER_EXECUTOR);
 
@@ -612,18 +627,17 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
         // HFT: Spawn async task for monitoring setup to avoid blocking the main thread
         final String ownerUserId = CurrentUserContext.getUserId();
-        CompletableFuture.runAsync(() -> {
-            // Restore user context in executor thread
-            if (ownerUserId != null && !ownerUserId.isBlank()) {
-                CurrentUserContext.setUserId(ownerUserId);
-            }
-            try {
+        if (ownerUserId == null || ownerUserId.isBlank()) {
+            log.error("No user context available for monitoring setup, executionId: {}", executionId);
+            return;
+        }
+
+        CompletableFuture.runAsync(
+            CurrentUserContext.wrapWithContext(() -> {
                 setupMonitoringInternal(executionId, callInstrument, putInstrument,
                         callOrderId, putOrderId, quantity, stopLossPoints, targetPoints, completionCallback);
-            } finally {
-                CurrentUserContext.clear();
-            }
-        }, EXIT_ORDER_EXECUTOR).exceptionally(ex -> {
+            }), EXIT_ORDER_EXECUTOR
+        ).exceptionally(ex -> {
             log.error("Error setting up monitoring for execution {}: {}", executionId, ex.getMessage(), ex);
             return null;
         });
@@ -639,25 +653,27 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                          StrategyCompletionCallback completionCallback) {
         try {
             // HFT: Parallel fetch of order histories for both legs
-            CompletableFuture<List<Order>> callHistoryFuture = CompletableFuture.supplyAsync(() -> {
-                try {
-                    return unifiedTradingService.getOrderHistory(callOrderId);
-                } catch (Exception e) {
-                    log.error("Failed to fetch call order history: {}", e.getMessage());
-                    return Collections.<Order>emptyList();
-                } catch (KiteException e) {
-                    throw new RuntimeException(e);
-                }
-            }, EXIT_ORDER_EXECUTOR);
+            CompletableFuture<List<Order>> callHistoryFuture = CompletableFuture.supplyAsync(
+                CurrentUserContext.wrapSupplier(() -> {
+                    try {
+                        return unifiedTradingService.getOrderHistory(callOrderId);
+                    } catch (Exception e) {
+                        log.error("Failed to fetch call order history: {}", e.getMessage());
+                        return Collections.<Order>emptyList();
+                    } catch (KiteException e) {
+                        throw new RuntimeException(e);
+                    }
+                }), EXIT_ORDER_EXECUTOR);
 
-            CompletableFuture<List<Order>> putHistoryFuture = CompletableFuture.supplyAsync(() -> {
-                try {
-                    return unifiedTradingService.getOrderHistory(putOrderId);
-                } catch (Exception | KiteException e) {
-                    log.error("Failed to fetch put order history: {}", e.getMessage());
-                    return Collections.<Order>emptyList();
-                }
-            }, EXIT_ORDER_EXECUTOR);
+            CompletableFuture<List<Order>> putHistoryFuture = CompletableFuture.supplyAsync(
+                CurrentUserContext.wrapSupplier(() -> {
+                    try {
+                        return unifiedTradingService.getOrderHistory(putOrderId);
+                    } catch (Exception | KiteException e) {
+                        log.error("Failed to fetch put order history: {}", e.getMessage());
+                        return Collections.<Order>emptyList();
+                    }
+                }), EXIT_ORDER_EXECUTOR);
 
             // HFT: Wait for both histories in parallel
             List<Order> callOrderHistory = callHistoryFuture.join();
@@ -675,23 +691,25 @@ public class SellATMStraddleStrategy extends BaseStrategy {
             }
 
             // HFT: Parallel fetch of order prices
-            CompletableFuture<Double> callPriceFuture = CompletableFuture.supplyAsync(() -> {
-                try {
-                    return getOrderPrice(callOrderId);
-                } catch (Exception | KiteException e) {
-                    log.error("Failed to fetch call order price: {}", e.getMessage());
-                    return 0.0;
-                }
-            }, EXIT_ORDER_EXECUTOR);
+            CompletableFuture<Double> callPriceFuture = CompletableFuture.supplyAsync(
+                CurrentUserContext.wrapSupplier(() -> {
+                    try {
+                        return getOrderPrice(callOrderId);
+                    } catch (Exception | KiteException e) {
+                        log.error("Failed to fetch call order price: {}", e.getMessage());
+                        return 0.0;
+                    }
+                }), EXIT_ORDER_EXECUTOR);
 
-            CompletableFuture<Double> putPriceFuture = CompletableFuture.supplyAsync(() -> {
-                try {
-                    return getOrderPrice(putOrderId);
-                } catch (Exception | KiteException e) {
-                    log.error("Failed to fetch put order price: {}", e.getMessage());
-                    return 0.0;
-                }
-            }, EXIT_ORDER_EXECUTOR);
+            CompletableFuture<Double> putPriceFuture = CompletableFuture.supplyAsync(
+                CurrentUserContext.wrapSupplier(() -> {
+                    try {
+                        return getOrderPrice(putOrderId);
+                    } catch (Exception | KiteException e) {
+                        log.error("Failed to fetch put order price: {}", e.getMessage());
+                        return 0.0;
+                    }
+                }), EXIT_ORDER_EXECUTOR);
 
             final double callEntryPrice = callPriceFuture.join();
             final double putEntryPrice = putPriceFuture.join();
@@ -962,15 +980,10 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         List<CompletableFuture<Map<String, String>>> exitFutures = new ArrayList<>(orderLegs.size());
 
         for (StrategyExecution.OrderLeg leg : orderLegs) {
-            exitFutures.add(CompletableFuture.supplyAsync(() -> {
-                // Restore user context in executor thread
-                CurrentUserContext.setUserId(userId);
-                try {
-                    return processLegExit(leg, tradingMode);
-                } finally {
-                    CurrentUserContext.clear();
-                }
-            }, EXIT_ORDER_EXECUTOR));
+            exitFutures.add(CompletableFuture.supplyAsync(
+                CurrentUserContext.wrapSupplier(() -> processLegExit(leg, tradingMode)),
+                EXIT_ORDER_EXECUTOR
+            ));
         }
 
         // Wait for all exit orders to complete and collect results

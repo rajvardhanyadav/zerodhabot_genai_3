@@ -248,5 +248,39 @@ public final class CurrentUserContext {
             }
         };
     }
-}
 
+    /**
+     * Create a Supplier wrapper that captures and propagates the current user context.
+     * Use this for CompletableFuture.supplyAsync() with custom executors.
+     *
+     * <pre>
+     * CompletableFuture.supplyAsync(
+     *     CurrentUserContext.wrapSupplier(() -> someOperation()),
+     *     customExecutor
+     * );
+     * </pre>
+     *
+     * @param supplier Supplier to wrap with context propagation
+     * @return Wrapped supplier that will set user context before execution
+     */
+    public static <T> java.util.function.Supplier<T> wrapSupplier(java.util.function.Supplier<T> supplier) {
+        String capturedUserId = USER_ID.get();
+        if (capturedUserId == null) {
+            log.warn("wrapSupplier called with no user context set - task will run without context");
+            return supplier;
+        }
+        return () -> {
+            String previousUserId = USER_ID.get();
+            try {
+                setUserId(capturedUserId);
+                return supplier.get();
+            } finally {
+                if (previousUserId != null) {
+                    setUserId(previousUserId);
+                } else {
+                    clear();
+                }
+            }
+        };
+    }
+}
