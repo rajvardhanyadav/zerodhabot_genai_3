@@ -145,20 +145,19 @@ public abstract class BaseStrategy implements TradingStrategy {
                 return cachedStrike.get();
             }
 
-            // Cache miss - trigger async refresh and use simple ATM for this request
-            log.debug("Delta cache miss for {}/{}. Using simple ATM: {}", instrumentType, expiry, approximateATM);
+            // Cache miss - calculate and cache ATM strike synchronously
+            log.debug("Delta cache miss for {}/{}. Computing delta-based ATM strike...", instrumentType, expiry);
 
-            // Fire async cache refresh (non-blocking)
-            deltaCacheService.calculateAndCacheATMStrike(instrumentType, expiry, spotPrice)
-                    .orTimeout(CACHE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                    .exceptionally(ex -> {
-                        log.trace("Async delta calculation timed out or failed: {}", ex.getMessage());
-                        return approximateATM;
-                    });
-
-            // Return simple ATM immediately (HFT priority: speed over precision)
-            // The next order will benefit from the cached value
-            return approximateATM;
+            try {
+                double calculatedStrike = deltaCacheService.calculateAndCacheATMStrike(instrumentType, expiry, spotPrice)
+                        .orTimeout(CACHE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                        .join();
+                log.debug("Calculated ATM strike by delta: {} (approximate ATM: {})", calculatedStrike, approximateATM);
+                return calculatedStrike;
+            } catch (Exception ex) {
+                log.warn("Delta calculation failed, falling back to synchronous calculation: {}", ex.getMessage());
+                return getATMStrikeByDeltaSynchronous(spotPrice, instrumentType, expiry, approximateATM, strikeInterval);
+            }
         }
 
         // Fallback to synchronous calculation if cache service not available
