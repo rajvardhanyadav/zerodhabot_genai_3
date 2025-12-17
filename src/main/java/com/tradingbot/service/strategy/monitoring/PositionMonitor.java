@@ -428,7 +428,7 @@ public class PositionMonitor {
                     String legExitReason = buildExitReasonIndividualLegStop(leg.symbol, legPnl);
 
                     // Trigger exit callback for this leg only (using orderId as first parameter)
-                    individualLegExitCallback.accept(leg.orderId, legExitReason);
+                    individualLegExitCallback.accept(leg.symbol, legExitReason);
 
                     // Remove this leg from monitoring
                     legsBySymbol.remove(leg.symbol);
