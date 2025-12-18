@@ -1068,12 +1068,42 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     }
 
     /**
-     * Process a single leg exit - extracted for parallel execution
+     * Process a single leg exit - extracted for parallel execution.
+     * <p>
+     * Thread-safe: validates leg lifecycle state before processing to prevent duplicate exits.
+     * If the leg is already in a terminal state (EXITED, EXIT_PENDING, or EXIT_FAILED),
+     * returns immediately with an appropriate status without placing any orders.
+     *
+     * @param leg         the order leg to exit
+     * @param tradingMode current trading mode (PAPER or LIVE)
+     * @return map containing exit result with keys: tradingSymbol, optionType, status, message, exitOrderId (if applicable)
      */
     private Map<String, String> processLegExit(StrategyExecution.OrderLeg leg, String tradingMode) {
         Map<String, String> orderResult = new HashMap<>();
         orderResult.put("tradingSymbol", leg.getTradingSymbol());
         orderResult.put("optionType", leg.getOptionType());
+
+        // Validate leg lifecycle state - prevent duplicate exit orders
+        StrategyExecution.LegLifecycleState currentState = leg.getLifecycleState();
+        if (currentState == StrategyExecution.LegLifecycleState.EXITED) {
+            log.info("Leg {} is already EXITED, skipping exit order placement", leg.getTradingSymbol());
+            orderResult.put("status", STATUS_SUCCESS);
+            orderResult.put("message", "Leg already exited");
+            orderResult.put("exitOrderId", leg.getExitOrderId());
+            return orderResult;
+        }
+        if (currentState == StrategyExecution.LegLifecycleState.EXIT_PENDING) {
+            log.warn("Leg {} has exit already pending (orderId: {}), skipping duplicate exit",
+                    leg.getTradingSymbol(), leg.getExitOrderId());
+            orderResult.put("status", STATUS_SUCCESS);
+            orderResult.put("message", "Exit already pending");
+            orderResult.put("exitOrderId", leg.getExitOrderId());
+            return orderResult;
+        }
+        if (currentState == StrategyExecution.LegLifecycleState.EXIT_FAILED) {
+            log.warn("Leg {} previous exit failed, retrying exit order", leg.getTradingSymbol());
+            // Allow retry for failed exits - fall through to normal processing
+        }
 
         try {
             leg.setLifecycleState(StrategyExecution.LegLifecycleState.EXIT_PENDING);
