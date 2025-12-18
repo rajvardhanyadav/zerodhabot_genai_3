@@ -911,36 +911,76 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
     private void exitIndividualLeg(String executionId, String legSymbol, int quantity, String reason,
                                    PositionMonitor monitor, StrategyCompletionCallback completionCallback) {
-        try {
-            String tradingMode = getTradingMode();
-            String legType = legSymbol.contains(StrategyConstants.OPTION_TYPE_CALL) ? "Call" : "Put";
+        String tradingMode = getTradingMode();
+        String legType = legSymbol.contains(StrategyConstants.OPTION_TYPE_CALL) ? "Call" : "Put";
 
-            log.info("[{}] Exiting individual {} leg for execution {}: Symbol={}, Reason={}",
-                    tradingMode, legType, executionId, legSymbol, reason);
+        log.info("[{}] Exiting individual {} leg for execution {}: Symbol={}, Reason={}",
+                tradingMode, legType, executionId, legSymbol, reason);
 
-            // BUY back the leg to exit short
-            OrderRequest exitOrder = createOrderRequest(legSymbol, StrategyConstants.TRANSACTION_BUY,
-                    quantity, StrategyConstants.ORDER_TYPE_MARKET);
-            OrderResponse exitResponse = unifiedTradingService.placeOrder(exitOrder);
+        // Retrieve the StrategyExecution and find the matching OrderLeg
+        StrategyExecution execution = strategyService.getStrategy(executionId);
+        if (execution == null) {
+            log.error("Cannot exit individual leg: execution not found for {}", executionId);
+            return;
+        }
 
-            if (StrategyConstants.ORDER_STATUS_SUCCESS.equals(exitResponse.getStatus())) {
-                log.info(StrategyConstants.LOG_LEG_EXITED, tradingMode, legType, exitResponse.getOrderId());
-            } else {
-                log.error("Failed to exit {} leg: {}", legType, exitResponse.getMessage());
-            }
+        List<StrategyExecution.OrderLeg> orderLegs = execution.getOrderLegs();
+        if (orderLegs == null || orderLegs.isEmpty()) {
+            log.error("Cannot exit individual leg: no order legs found for execution {}", executionId);
+            return;
+        }
 
-            if (monitor.getLegs().isEmpty()) {
-                log.info("All legs have been closed individually for execution {}, stopping monitoring", executionId);
+        // Find the matching OrderLeg by trading symbol
+        StrategyExecution.OrderLeg matchingLeg = orderLegs.stream()
+                .filter(leg -> legSymbol.equals(leg.getTradingSymbol()))
+                .findFirst()
+                .orElse(null);
+
+        if (matchingLeg == null) {
+            log.error("Cannot exit individual leg: leg with symbol {} not found in execution {}", legSymbol, executionId);
+            return;
+        }
+
+        // Skip if leg is already exited or exit is pending
+        if (matchingLeg.getLifecycleState() == StrategyExecution.LegLifecycleState.EXITED ||
+            matchingLeg.getLifecycleState() == StrategyExecution.LegLifecycleState.EXIT_PENDING) {
+            log.warn("Leg {} already {} for execution {}, skipping exit",
+                    legSymbol, matchingLeg.getLifecycleState(), executionId);
+            return;
+        }
+
+        // Delegate to processLegExit for the actual exit order placement
+        Map<String, String> result = processLegExit(matchingLeg, tradingMode);
+
+        if (STATUS_SUCCESS.equals(result.get("status"))) {
+            log.info(StrategyConstants.LOG_LEG_EXITED, tradingMode, legType, result.get("exitOrderId"));
+        } else {
+            log.error("Failed to exit {} leg: {}", legType, result.get("message"));
+        }
+
+        // Check if all legs have been closed and handle post-exit logic
+        boolean allLegsExited = orderLegs.stream()
+                .allMatch(leg -> leg.getLifecycleState() == StrategyExecution.LegLifecycleState.EXITED);
+
+        if (allLegsExited || monitor.getLegs().isEmpty()) {
+            log.info("All legs have been closed individually for execution {}, stopping monitoring", executionId);
+            try {
                 webSocketService.stopMonitoring(executionId);
-
-                if (completionCallback != null) {
-                    completionCallback.onStrategyCompleted(executionId, StrategyCompletionReason.STOPLOSS_HIT);
-                }
-            } else {
-                log.info("Remaining legs still being monitored for execution {}: {}", executionId, monitor.getLegs().size());
+            } catch (Exception e) {
+                log.error("Error stopping monitoring for execution {}: {}", executionId, e.getMessage());
             }
-        } catch (Exception | KiteException e) {
-            log.error("Error exiting individual leg {} for execution {}: {}", legSymbol, executionId, e.getMessage(), e);
+
+            if (completionCallback != null) {
+                StrategyCompletionReason mappedReason = reason != null && reason.toUpperCase().contains("STOP")
+                        ? StrategyCompletionReason.STOPLOSS_HIT
+                        : StrategyCompletionReason.TARGET_HIT;
+                completionCallback.onStrategyCompleted(executionId, mappedReason);
+            }
+        } else {
+            long remainingLegs = orderLegs.stream()
+                    .filter(leg -> leg.getLifecycleState() != StrategyExecution.LegLifecycleState.EXITED)
+                    .count();
+            log.info("Remaining legs still being monitored for execution {}: {}", executionId, remainingLegs);
         }
     }
 
