@@ -532,6 +532,11 @@ public class WebSocketService implements DisposableBean {
      * - Lazy HashSet allocation only when needed
      * - Single pass through ticks to collect all monitors
      * - Batch update to monitors with full tick array
+     *
+     * CLOUD RUN COMPATIBILITY:
+     * - WebSocket callbacks run on KiteTicker's internal thread, NOT request threads
+     * - User context must be explicitly set from UserWSContext.userId
+     * - Context is cleared after processing to prevent leaks
      */
     private void processTicks(UserWSContext c, ArrayList<Tick> ticks) {
         // HFT: Ultra-fast early exit checks
@@ -547,40 +552,56 @@ public class WebSocketService implements DisposableBean {
             return;
         }
 
-        // HFT: For single-execution case (most common), avoid Set allocation entirely
-        PositionMonitor singleMonitor = null;
-        Set<PositionMonitor> monitorsToUpdate = null;
+        // CLOUD RUN: Restore user context in WebSocket callback thread
+        // This is critical because KiteTicker's thread doesn't inherit ThreadLocal from request threads
+        String previousUserId = CurrentUserContext.getUserId();
+        try {
+            if (c.userId != null && !c.userId.isBlank()) {
+                CurrentUserContext.setUserId(c.userId);
+            }
 
-        for (int i = 0; i < tickCount; i++) {
-            final long token = ticks.get(i).getInstrumentToken();
-            final Set<String> executions = c.instrumentToExecutions.get(token);
-            if (executions != null && !executions.isEmpty()) {
-                for (String executionId : executions) {
-                    final PositionMonitor monitor = monitors.get(executionId);
-                    if (monitor != null && monitor.isActive()) {
-                        // HFT: Optimize for single-monitor case (most common)
-                        if (singleMonitor == null && monitorsToUpdate == null) {
-                            singleMonitor = monitor;
-                        } else if (singleMonitor != null && singleMonitor != monitor) {
-                            // Transition to Set when we have multiple monitors
-                            monitorsToUpdate = new HashSet<>(4);
-                            monitorsToUpdate.add(singleMonitor);
-                            monitorsToUpdate.add(monitor);
-                            singleMonitor = null;
-                        } else if (monitorsToUpdate != null) {
-                            monitorsToUpdate.add(monitor);
+            // HFT: For single-execution case (most common), avoid Set allocation entirely
+            PositionMonitor singleMonitor = null;
+            Set<PositionMonitor> monitorsToUpdate = null;
+
+            for (int i = 0; i < tickCount; i++) {
+                final long token = ticks.get(i).getInstrumentToken();
+                final Set<String> executions = c.instrumentToExecutions.get(token);
+                if (executions != null && !executions.isEmpty()) {
+                    for (String executionId : executions) {
+                        final PositionMonitor monitor = monitors.get(executionId);
+                        if (monitor != null && monitor.isActive()) {
+                            // HFT: Optimize for single-monitor case (most common)
+                            if (singleMonitor == null && monitorsToUpdate == null) {
+                                singleMonitor = monitor;
+                            } else if (singleMonitor != null && singleMonitor != monitor) {
+                                // Transition to Set when we have multiple monitors
+                                monitorsToUpdate = new HashSet<>(4);
+                                monitorsToUpdate.add(singleMonitor);
+                                monitorsToUpdate.add(monitor);
+                                singleMonitor = null;
+                            } else if (monitorsToUpdate != null) {
+                                monitorsToUpdate.add(monitor);
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // HFT: Update monitors - optimized for single-monitor case
-        if (singleMonitor != null) {
-            singleMonitor.updatePriceWithDifferenceCheck(ticks);
-        } else if (monitorsToUpdate != null) {
-            for (PositionMonitor monitor : monitorsToUpdate) {
-                monitor.updatePriceWithDifferenceCheck(ticks);
+            // HFT: Update monitors - optimized for single-monitor case
+            if (singleMonitor != null) {
+                singleMonitor.updatePriceWithDifferenceCheck(ticks);
+            } else if (monitorsToUpdate != null) {
+                for (PositionMonitor monitor : monitorsToUpdate) {
+                    monitor.updatePriceWithDifferenceCheck(ticks);
+                }
+            }
+        } finally {
+            // CLOUD RUN: Restore previous context or clear to prevent leaks on thread reuse
+            if (previousUserId != null && !previousUserId.isBlank()) {
+                CurrentUserContext.setUserId(previousUserId);
+            } else {
+                CurrentUserContext.clear();
             }
         }
     }

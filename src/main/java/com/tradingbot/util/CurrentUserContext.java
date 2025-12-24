@@ -33,11 +33,20 @@ public final class CurrentUserContext {
      */
     private static final ThreadLocal<String> CONTEXT_SOURCE = new ThreadLocal<>();
 
+    /**
+     * Tracks the timestamp when context was set - helps identify stale contexts.
+     */
+    private static final ThreadLocal<Long> CONTEXT_TIMESTAMP = new ThreadLocal<>();
+
     private CurrentUserContext() {}
 
     /**
      * Set user ID in the current thread context.
      * The context will be automatically inherited by child threads.
+     *
+     * CLOUD RUN NOTE: In Cloud Run, executor threads are reused and don't inherit
+     * InheritableThreadLocal from request threads. Use TaskDecorator or explicit
+     * context passing for async operations.
      *
      * @param userId User ID to set (will be trimmed if not null)
      */
@@ -46,7 +55,8 @@ public final class CurrentUserContext {
             String trimmed = userId.trim();
             USER_ID.set(trimmed);
             CONTEXT_SOURCE.set(Thread.currentThread().getName());
-            log.trace("User context set: userId={}, thread={}", trimmed, Thread.currentThread().getName());
+            CONTEXT_TIMESTAMP.set(System.currentTimeMillis());
+            log.debug("User context SET: userId={}, thread={}", trimmed, Thread.currentThread().getName());
         } else {
             log.warn("Attempted to set null/blank userId in thread={}", Thread.currentThread().getName());
         }
@@ -59,7 +69,7 @@ public final class CurrentUserContext {
      */
     public static String getUserId() {
         String id = USER_ID.get();
-        if (id == null) {
+        if (id == null && log.isTraceEnabled()) {
             log.trace("getUserId() returned null in thread={}", Thread.currentThread().getName());
         }
         return id;
@@ -74,9 +84,29 @@ public final class CurrentUserContext {
     public static String getUserIdWithDebug() {
         String id = USER_ID.get();
         String source = CONTEXT_SOURCE.get();
-        log.debug("getUserIdWithDebug: userId={}, currentThread={}, contextSource={}",
-                id, Thread.currentThread().getName(), source);
+        Long timestamp = CONTEXT_TIMESTAMP.get();
+        long ageMs = timestamp != null ? System.currentTimeMillis() - timestamp : -1;
+        log.debug("getUserIdWithDebug: userId={}, currentThread={}, contextSource={}, ageMs={}",
+                id, Thread.currentThread().getName(), source, ageMs);
         return id;
+    }
+
+    /**
+     * Get diagnostic information about the current context state.
+     * Useful for troubleshooting Cloud Run context propagation issues.
+     *
+     * @return Diagnostic string with userId, thread, source, and age information
+     */
+    public static String getContextDiagnostics() {
+        String id = USER_ID.get();
+        String source = CONTEXT_SOURCE.get();
+        Long timestamp = CONTEXT_TIMESTAMP.get();
+        long ageMs = timestamp != null ? System.currentTimeMillis() - timestamp : -1;
+        return String.format("userId=%s, thread=%s, source=%s, ageMs=%d",
+                id != null ? id : "null",
+                Thread.currentThread().getName(),
+                source != null ? source : "null",
+                ageMs);
     }
 
     /**
@@ -107,13 +137,17 @@ public final class CurrentUserContext {
     /**
      * Clear user context from current thread.
      * IMPORTANT: Always call this in a finally block after request processing.
+     *
+     * CLOUD RUN NOTE: Clearing context is critical in Cloud Run where threads are
+     * reused across requests. Failure to clear can cause context leakage.
      */
     public static void clear() {
         String previousId = USER_ID.get();
         USER_ID.remove();
         CONTEXT_SOURCE.remove();
+        CONTEXT_TIMESTAMP.remove();
         if (previousId != null) {
-            log.trace("User context cleared: previousUserId={}, thread={}",
+            log.debug("User context CLEARED: previousUserId={}, thread={}",
                     previousId, Thread.currentThread().getName());
         }
     }

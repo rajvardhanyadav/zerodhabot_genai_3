@@ -372,18 +372,33 @@ public class UnifiedTradingService {
         return value != null ? value : 0;
     }
 
+    /**
+     * Get the current user ID from thread context.
+     *
+     * CLOUD RUN COMPATIBILITY:
+     * - In Cloud Run, WebSocket callbacks and executor threads may not have context
+     * - Falls back to PAPER_DEFAULT_USER in paper trading mode
+     * - Throws IllegalStateException in live mode to prevent mis-attributed orders
+     *
+     * @return User ID from context or fallback
+     * @throws IllegalStateException if context is missing in live mode
+     */
     private String getUserId() {
         String id = CurrentUserContext.getUserId();
         if (id == null || id.isBlank()) {
+            // CLOUD RUN: Log diagnostic info to help trace context loss
+            String diagnostics = CurrentUserContext.getContextDiagnostics();
+
             // Fallback for background threads like WebSocket tick handlers where ThreadLocal may be empty.
             // In paper trading mode, we can safely default to a fixed paper user id to avoid failures.
             if (isPaperTradingEnabled()) {
                 String fallbackUserId = "PAPER_DEFAULT_USER";
-                log.warn("User context missing on current thread; falling back to {} in paper mode", fallbackUserId);
+                log.warn("User context missing in paper mode, using fallback. Diagnostics: {}", diagnostics);
                 return fallbackUserId;
             }
             // For live mode, keep the strict behavior to avoid mis-attributing orders.
-            throw new IllegalStateException("User context is missing. Provide X-User-Id header.");
+            log.error("User context missing in LIVE mode! Diagnostics: {}", diagnostics);
+            throw new IllegalStateException("User context is missing. Provide X-User-Id header. Diagnostics: " + diagnostics);
         }
         return id;
     }

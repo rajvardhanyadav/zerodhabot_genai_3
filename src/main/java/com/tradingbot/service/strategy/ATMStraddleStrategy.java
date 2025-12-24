@@ -395,15 +395,19 @@ public class ATMStraddleStrategy extends BaseStrategy {
         monitor.addLeg(putOrderId, putInstrument.tradingsymbol, putInstrument.instrument_token,
                 putEntryPrice, quantity, StrategyConstants.OPTION_TYPE_PUT);
 
-        // Capture the user who started this strategy so background callbacks use the same context
+        // CLOUD RUN: Capture and store the owner userId in the monitor for context propagation
+        // This ensures callbacks can restore the correct user context even in executor/WebSocket threads
         String ownerUserId = com.tradingbot.util.CurrentUserContext.getUserId();
+        monitor.setOwnerUserId(ownerUserId);
 
         // Full exit callback when all-legs threshold is hit
         monitor.setExitCallback(reason -> {
             String previousUser = com.tradingbot.util.CurrentUserContext.getUserId();
             try {
-                if (ownerUserId != null && !ownerUserId.isBlank()) {
-                    com.tradingbot.util.CurrentUserContext.setUserId(ownerUserId);
+                // CLOUD RUN: Restore user context from monitor's stored ownerUserId
+                String monitorOwner = monitor.getOwnerUserId();
+                if (monitorOwner != null && !monitorOwner.isBlank()) {
+                    com.tradingbot.util.CurrentUserContext.setUserId(monitorOwner);
                 }
                 log.warn("Exit triggered for execution {}: {}", executionId, reason);
                 exitAllLegs(executionId, callInstrument.tradingsymbol,
@@ -421,8 +425,10 @@ public class ATMStraddleStrategy extends BaseStrategy {
         monitor.setIndividualLegExitCallback((legSymbol, reason) -> {
             String previousUser = com.tradingbot.util.CurrentUserContext.getUserId();
             try {
-                if (ownerUserId != null && !ownerUserId.isBlank()) {
-                    com.tradingbot.util.CurrentUserContext.setUserId(ownerUserId);
+                // CLOUD RUN: Restore user context from monitor's stored ownerUserId
+                String monitorOwner = monitor.getOwnerUserId();
+                if (monitorOwner != null && !monitorOwner.isBlank()) {
+                    com.tradingbot.util.CurrentUserContext.setUserId(monitorOwner);
                 }
                 log.warn("Individual leg exit triggered for execution {}: leg={}, reason={}",
                         executionId, legSymbol, reason);

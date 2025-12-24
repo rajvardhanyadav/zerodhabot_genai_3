@@ -167,11 +167,38 @@ public class PositionMonitor {
     @Getter
     private final PositionDirection direction;
 
+    /**
+     * CLOUD RUN COMPATIBILITY: Owner user ID for context propagation.
+     * <p>
+     * In Cloud Run, WebSocket callbacks and executor threads don't inherit ThreadLocal context.
+     * This field stores the userId of the user who created the strategy, allowing exit callbacks
+     * to restore the correct user context before placing exit orders.
+     * <p>
+     * Set via constructor or {@link #setOwnerUserId(String)}.
+     */
+    @Getter
+    private volatile String ownerUserId;
+
     @Setter
     private Consumer<String> exitCallback;
 
     @Setter
     private BiConsumer<String, String> individualLegExitCallback;
+
+    /**
+     * Sets the owner user ID for context propagation in Cloud Run.
+     * <p>
+     * This should be called immediately after constructing the monitor,
+     * before any callbacks are triggered.
+     *
+     * @param ownerUserId the user ID who owns this strategy execution
+     */
+    public void setOwnerUserId(String ownerUserId) {
+        if (ownerUserId != null && !ownerUserId.isBlank()) {
+            this.ownerUserId = ownerUserId;
+            log.debug("PositionMonitor {} owner set to userId={}", executionId, ownerUserId);
+        }
+    }
 
     @Getter
     private volatile boolean active = true;
