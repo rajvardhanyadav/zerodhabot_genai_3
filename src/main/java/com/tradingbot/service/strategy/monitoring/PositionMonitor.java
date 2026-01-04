@@ -435,7 +435,7 @@ public class PositionMonitor {
         // ==================== PRIORITY 2: INDIVIDUAL LEG STOP LOSS (SHORT ONLY) ====================
         // HFT: Single branch check - only evaluate for SHORT strategies
         // Individual leg exit: if any leg moves +5 points against position → exit that leg only
-        if (direction == PositionDirection.SHORT && individualLegExitCallback != null && count > 0) {
+        /*if (direction == PositionDirection.SHORT && individualLegExitCallback != null && count > 0) {
             for (int i = 0; i < count; i++) {
                 final LegMonitor leg = legs[i];
 
@@ -521,7 +521,7 @@ public class PositionMonitor {
                             executionId, formatDouble(highWaterMark), formatDouble(currentTrailingStopLevel));
                 }
             }
-        }
+        }*/
 
         // ==================== PRIORITY 4: FIXED CUMULATIVE STOP LOSS (FULL EXIT) ====================
         // Check fixed stoploss hit (loss) - fallback when trailing not active or not hit
