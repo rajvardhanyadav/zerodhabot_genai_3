@@ -1,6 +1,7 @@
 package com.tradingbot.service.strategy;
 
 import com.tradingbot.config.StrategyConfig;
+import com.tradingbot.config.VolatilityConfig;
 import com.tradingbot.dto.BasketOrderRequest;
 import com.tradingbot.dto.BasketOrderResponse;
 import com.tradingbot.dto.OrderRequest;
@@ -59,6 +60,8 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     private final WebSocketService webSocketService;
     private final StrategyConfig strategyConfig;
     private final StrategyService strategyService;
+    private final VolatilityFilterService volatilityFilterService;
+    private final VolatilityConfig volatilityConfig;
 
     // ==================== HFT OPTIMIZATION: Thread Pool Configuration ====================
     // Dedicated executor for parallel exit order placement - critical for HFT
@@ -131,11 +134,15 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                    WebSocketService webSocketService,
                                    StrategyConfig strategyConfig,
                                    @Lazy StrategyService strategyService,
-                                   DeltaCacheService deltaCacheService) {
+                                   DeltaCacheService deltaCacheService,
+                                   VolatilityFilterService volatilityFilterService,
+                                   VolatilityConfig volatilityConfig) {
         super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService);
         this.webSocketService = webSocketService;
         this.strategyConfig = strategyConfig;
         this.strategyService = strategyService;
+        this.volatilityFilterService = volatilityFilterService;
+        this.volatilityConfig = volatilityConfig;
     }
 
     @Override
@@ -152,6 +159,37 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
         log.info(StrategyConstants.LOG_EXECUTING_STRATEGY,
                 tradingMode, instrumentType, stopLossPoints, targetPoints);
+
+        // ==================== VOLATILITY FILTER CHECK ====================
+        // Check VIX conditions before proceeding with straddle placement.
+        // If VIX is flat or falling, skip this candle to avoid unfavorable conditions.
+        if (volatilityConfig.isEnabled()) {
+            // Determine if this is a backtest run (paper trading is NOT backtest)
+            // For now, we treat all executions as live/paper (not historical replay)
+            // TODO: Add explicit backtest flag to StrategyRequest if historical replay is needed
+            boolean isBacktest = false;
+
+            VolatilityFilterService.VolatilityFilterResult vixResult =
+                    volatilityFilterService.shouldAllowTrade(isBacktest);
+
+            if (!vixResult.allowed()) {
+                log.warn("[{}] Volatility filter BLOCKED straddle placement for execution {}: {}",
+                        tradingMode, executionId, vixResult.reason());
+                log.info("[{}] VIX Details - Current: {}, PrevClose: {}, 5minAgo: {}, PctChange: {}%",
+                        tradingMode,
+                        vixResult.currentVix(),
+                        vixResult.previousClose(),
+                        vixResult.fiveMinuteAgoVix(),
+                        vixResult.percentageChange());
+
+                // Return SKIPPED response - no positions opened, no state transitions
+                return buildSkippedResponse(executionId, tradingMode, vixResult);
+            }
+
+            log.info("[{}] Volatility filter PASSED for execution {}: {}",
+                    tradingMode, executionId, vixResult.reason());
+        }
+        // ==================== END VOLATILITY FILTER ====================
 
         // HFT: Use parallel fetch for spot price and instruments
         final double spotPrice = getCurrentSpotPrice(instrumentType);
@@ -616,6 +654,47 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         response.setProfitLossPercentage(0.0);
 
         log.info(StrategyConstants.LOG_STRATEGY_EXECUTED, tradingMode, totalPremium);
+        return response;
+    }
+
+    /**
+     * Build a SKIPPED response when the volatility filter blocks straddle placement.
+     * No positions are opened, no state transitions occur.
+     *
+     * @param executionId The execution ID
+     * @param tradingMode Trading mode (PAPER/LIVE)
+     * @param vixResult The volatility filter result with reasoning
+     * @return StrategyExecutionResponse with SKIPPED status
+     */
+    private StrategyExecutionResponse buildSkippedResponse(String executionId, String tradingMode,
+                                                           VolatilityFilterService.VolatilityFilterResult vixResult) {
+        StrategyExecutionResponse response = new StrategyExecutionResponse();
+        response.setExecutionId(executionId);
+        response.setStatus(StrategyStatus.SKIPPED.name());
+
+        // Build detailed message with VIX values
+        StringBuilder message = new StringBuilder();
+        message.append("[").append(tradingMode).append("] Straddle placement SKIPPED - VIX conditions unfavorable. ");
+        message.append(vixResult.reason());
+
+        if (vixResult.currentVix() != null) {
+            message.append(" | VIX=").append(vixResult.currentVix());
+        }
+        if (vixResult.previousClose() != null) {
+            message.append(", PrevClose=").append(vixResult.previousClose());
+        }
+        if (vixResult.percentageChange() != null) {
+            message.append(", 5minChange=").append(vixResult.percentageChange()).append("%");
+        }
+
+        response.setMessage(message.toString());
+        response.setOrders(Collections.emptyList());
+        response.setTotalPremium(0.0);
+        response.setCurrentValue(0.0);
+        response.setProfitLoss(0.0);
+        response.setProfitLossPercentage(0.0);
+
+        log.info("[{}] Strategy execution SKIPPED for {}: {}", tradingMode, executionId, vixResult.reason());
         return response;
     }
 

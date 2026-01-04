@@ -28,6 +28,12 @@ public enum StrategyStatus {
     /**
      * Strategy execution failed due to an error
      */
-    FAILED
+    FAILED,
+
+    /**
+     * Strategy execution was skipped due to filter conditions (e.g., VIX volatility filter).
+     * No positions were opened, no state transitions occurred.
+     */
+    SKIPPED
 }
 

@@ -145,6 +145,13 @@ public class StrategyService {
                 execution.setStatus(StrategyStatus.COMPLETED);
                 execution.setMessage(StrategyConstants.MSG_STRATEGY_COMPLETED);
                 log.info("Strategy {} COMPLETED successfully (user={})", executionId, userId);
+            } else if (StrategyStatus.SKIPPED.name().equalsIgnoreCase(response.getStatus())) {
+                // Strategy was skipped due to filter conditions (e.g., VIX volatility filter)
+                // No positions were opened, no state transitions needed
+                execution.setStatus(StrategyStatus.SKIPPED);
+                execution.setMessage(response.getMessage());
+                log.info("Strategy {} SKIPPED due to filter conditions (user={}): {}",
+                        executionId, userId, response.getMessage());
             } else {
                 execution.setStatus(StrategyStatus.FAILED);
                 execution.setMessage(response.getMessage());

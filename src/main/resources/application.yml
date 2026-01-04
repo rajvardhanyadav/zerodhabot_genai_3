@@ -99,6 +99,32 @@ strategy:
 
   # Activation threshold: trailing stop activates when cumulative P&L >= this value
   # Example: 1.0 means trailing starts after 1 point profit
+
+# Volatility Filter Configuration (India VIX based)
+volatility:
+  # Enable/disable the VIX volatility filter for straddle placement
+  enabled: true
+
+  # Symbol for India VIX in Kite format
+  vix-symbol: "NSE:INDIA VIX"
+
+  # Instrument token for India VIX (for historical data API)
+  vix-instrument-token: "264969"
+
+  # Absolute VIX threshold - allow trade if VIX > this value
+  absolute-threshold: 12.5
+
+  # 5-minute percentage change threshold - allow trade if VIX change > this %
+  percentage-change-threshold: 0.3
+
+  # Enable volatility filter during backtesting (false = preserve existing backtest behavior)
+  backtest-enabled: false
+
+  # Fail-safe: allow trade if VIX data is unavailable
+  allow-on-data-unavailable: true
+
+  # Cache TTL for VIX data in milliseconds (default: 1 minute)
+  cache-ttl-ms: 60000
   trailing-activation-points: 2.5
 
   # Trail distance: how far behind the high-water mark the stop trails
