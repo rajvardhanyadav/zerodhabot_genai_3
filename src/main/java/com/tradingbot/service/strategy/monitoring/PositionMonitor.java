@@ -12,6 +12,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
+import org.eclipse.collections.impl.map.mutable.primitive.LongObjectHashMap;
+import org.eclipse.collections.impl.map.mutable.primitive.SynchronizedLongObjectMap;
+
 /**
  * High-performance position monitor for tracking and managing multi-leg options strategies.
  * <p>
@@ -137,6 +140,14 @@ public class PositionMonitor {
     private static final ThreadLocal<StringBuilder> EXIT_REASON_BUILDER =
         ThreadLocal.withInitial(() -> new StringBuilder(64));
 
+    // HFT: Separate ThreadLocal StringBuilder for debug logging to avoid conflict with exit reason builder
+    private static final ThreadLocal<StringBuilder> DEBUG_LOG_BUILDER =
+        ThreadLocal.withInitial(() -> new StringBuilder(128));
+
+    // HFT: Dedicated ThreadLocal for formatDouble() to avoid conflict when called in log statements
+    private static final ThreadLocal<StringBuilder> FORMAT_DOUBLE_BUILDER =
+        ThreadLocal.withInitial(() -> new StringBuilder(16));
+
 
     /**
      * Position direction determines how price movements affect P&amp;L calculation.
@@ -159,7 +170,9 @@ public class PositionMonitor {
     @Getter
     private final String executionId;
     private final Map<String, LegMonitor> legsBySymbol = new ConcurrentHashMap<>();
-    private final Map<Long, LegMonitor> legsByInstrumentToken = new ConcurrentHashMap<>();
+    // HFT: Use primitive long-keyed map to avoid Long autoboxing on every tick lookup
+    private final SynchronizedLongObjectMap<LegMonitor> legsByInstrumentToken =
+        new SynchronizedLongObjectMap<>(new LongObjectHashMap<>(4));
     @Getter
     private final double stopLossPoints;
     @Getter
@@ -341,13 +354,12 @@ public class PositionMonitor {
      * @param ticks list of tick updates from WebSocket (may be null or empty)
      */
     public void updatePriceWithDifferenceCheck(ArrayList<Tick> ticks) {
-        // HFT: Ultra-fast early exit check
-        if (!active) {
+        // HFT: Single volatile read first, then null check
+        if (!active || ticks == null) {
             return;
         }
-        if (ticks == null) {
-            return;
-        }
+
+        // HFT: Get size once and use for both empty check and loop bound
         final int tickCount = ticks.size();
         if (tickCount == 0) {
             return;
@@ -355,6 +367,7 @@ public class PositionMonitor {
 
         // HFT: Fast path - update leg prices from ticks with minimal overhead
         // Using indexed loop to avoid iterator allocation
+        // SynchronizedLongObjectMap.get(long) avoids Long autoboxing
         for (int i = 0; i < tickCount; i++) {
             final Tick tick = ticks.get(i);
             final LegMonitor leg = legsByInstrumentToken.get(tick.getInstrumentToken());
@@ -398,36 +411,46 @@ public class PositionMonitor {
     private void checkAndTriggerCumulativeExitFast() {
         // HFT: Use pre-cached array to avoid iterator allocation
         final LegMonitor[] legs = cachedLegsArray;
+        // HFT: Combined null/empty check - cachedLegsCount is always 0 when legs is null
         final int count = cachedLegsCount;
-
-        if (legs == null || count == 0) {
+        if (count == 0) {
             return;
         }
 
+        // HFT: Cache volatile reads once at start - avoid repeated volatile access
+        final double targetPts = cumulativeTargetPoints;
+        final double stopPts = cumulativeStopPoints;
+        final double negativeStopPts = -stopPts;  // Pre-compute negation once
+
         // HFT: Inline cumulative calculation with indexed loop
+        // Cache direction multiplier in local for faster access in loop
+        final double dirMult = directionMultiplier;
         double cumulative = 0.0;
         for (int i = 0; i < count; i++) {
-            cumulative += (legs[i].currentPrice - legs[i].entryPrice) * directionMultiplier;
+            // HFT: Direct array access is faster than method call
+            final double entryPx = legs[i].entryPrice;
+            final double currentPx = legs[i].currentPrice;
+            cumulative += (currentPx - entryPx) * dirMult;
         }
 
-        // HFT: Lazy debug logging - isDebugEnabled() is a simple boolean check
-        // No string formatting happens if debug logging is disabled
+        // HFT: Lazy debug logging - only build string when debug is enabled
+        // Using separate ThreadLocal to avoid conflict with exit reason builder
         if (log.isDebugEnabled()) {
-            // Build leg prices only when debug is enabled - no allocation on hot path
-            StringBuilder legPrices = new StringBuilder();
+            final StringBuilder legPrices = DEBUG_LOG_BUILDER.get();
+            legPrices.setLength(0);
             for (int i = 0; i < count; i++) {
                 if (i > 0) legPrices.append(", ");
-                legPrices.append(legs[i].symbol).append("=").append(legs[i].currentPrice);
+                legPrices.append(legs[i].symbol).append('=').append(legs[i].currentPrice);
             }
             log.debug("Cumulative P&L for {}: {} points (target: {}, stop: {}) | Legs: [{}]",
-                    executionId, cumulative, cumulativeTargetPoints, cumulativeStopPoints, legPrices);
+                    executionId, cumulative, targetPts, stopPts, legPrices);
         }
 
         // ==================== PRIORITY 1: CUMULATIVE TARGET (FULL EXIT) ====================
         // Check target hit (profit) - highest priority, most likely exit in profitable strategies
-        if (cumulative >= cumulativeTargetPoints) {
+        if (cumulative >= targetPts) {
             log.warn("Cumulative target hit for execution {}: cumulative={} points, target={} - Closing ALL legs",
-                    executionId, formatDouble(cumulative), formatDouble(cumulativeTargetPoints));
+                    executionId, formatDouble(cumulative), formatDouble(targetPts));
             triggerExitAllLegs(buildExitReasonTarget(cumulative));
             return;
         }
@@ -525,9 +548,10 @@ public class PositionMonitor {
 
         // ==================== PRIORITY 4: FIXED CUMULATIVE STOP LOSS (FULL EXIT) ====================
         // Check fixed stoploss hit (loss) - fallback when trailing not active or not hit
-        if (cumulative <= -cumulativeStopPoints) {
+        // HFT: Use pre-computed negative value to avoid negation on every tick
+        if (cumulative <= negativeStopPts) {
             log.warn("Cumulative stoploss hit for execution {}: cumulative={} points, stopLoss={} - Closing ALL legs",
-                    executionId, formatDouble(cumulative), formatDouble(cumulativeStopPoints));
+                    executionId, formatDouble(cumulative), formatDouble(stopPts));
             triggerExitAllLegs(buildExitReasonStoploss(cumulative));
         }
     }
@@ -582,9 +606,9 @@ public class PositionMonitor {
      * @return string representation with 2 decimal places (e.g., "3.14", "-2.50")
      */
     private static String formatDouble(double value) {
-        // Simple 2 decimal place formatting without String.format
+        // HFT: Uses dedicated ThreadLocal to avoid conflict with exit reason builders
         long scaled = Math.round(value * 100);
-        StringBuilder sb = EXIT_REASON_BUILDER.get();
+        StringBuilder sb = FORMAT_DOUBLE_BUILDER.get();
         sb.setLength(0);
         if (scaled < 0) {
             sb.append('-');
