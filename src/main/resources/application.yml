@@ -139,6 +139,21 @@ volatility:
   auto-restart-enabled: true
   auto-restart-paper-enabled: true
 
+  # ==================== PREMIUM-BASED EXIT CONFIGURATION ====================
+  # Dynamic exit based on percentage change from combined entry premium.
+  # When enabled, replaces fixed-point MTM exits with premium decay/expansion logic.
+
+  # Enable premium-based exit mode (default: false = use fixed-point MTM)
+  premium-based-exit-enabled: false
+
+  # Target decay percentage: exit (profit) when combined LTP <= entry * (1 - targetDecayPct)
+  # Example: 0.05 = 5% decay = exit when premium drops 5% from entry
+  target-decay-pct: 0.05
+
+  # Stop loss expansion percentage: exit (loss) when combined LTP >= entry * (1 + stopLossExpansionPct)
+  # Example: 0.10 = 10% expansion = exit when premium rises 10% from entry
+  stop-loss-expansion-pct: 0.10
+
 
 # Historical Replay Configuration
 historical:

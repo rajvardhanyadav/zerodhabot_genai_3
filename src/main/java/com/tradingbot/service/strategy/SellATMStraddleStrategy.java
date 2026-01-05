@@ -860,6 +860,9 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         // Include trailing stop loss and forced exit time configuration from StrategyConfig
         LocalTime forcedExitTime = parseForcedExitTime(strategyConfig.getAutoSquareOffTime());
 
+        // Calculate combined entry premium for premium-based exit mode
+        double combinedEntryPremium = callEntryPrice + putEntryPrice;
+
         PositionMonitor monitor = new PositionMonitor(
                 executionId,
                 stopLossPoints,
@@ -869,7 +872,12 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 strategyConfig.getTrailingActivationPoints(),
                 strategyConfig.getTrailingDistancePoints(),
                 strategyConfig.isAutoSquareOffEnabled(),
-                forcedExitTime
+                forcedExitTime,
+                // Premium-based exit configuration
+                strategyConfig.isPremiumBasedExitEnabled(),
+                combinedEntryPremium,
+                strategyConfig.getTargetDecayPct(),
+                strategyConfig.getStopLossExpansionPct()
         );
 
         monitor.addLeg(callOrderId, callInstrument.tradingsymbol, callInstrument.instrument_token,
@@ -1279,6 +1287,8 @@ public class SellATMStraddleStrategy extends BaseStrategy {
      * <p>
      * Parses the reason string to determine the appropriate completion reason:
      * - TIME_BASED_FORCED_EXIT → TIME_BASED_EXIT
+     * - PREMIUM_DECAY_TARGET_HIT → TARGET_HIT (profit)
+     * - PREMIUM_EXPANSION_SL_HIT → STOPLOSS_HIT (loss)
      * - Contains "STOP" → STOPLOSS_HIT
      * - Default → TARGET_HIT
      *
@@ -1293,6 +1303,14 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         if (upperReason.contains("TIME_BASED_FORCED_EXIT")) {
             return StrategyCompletionReason.TIME_BASED_EXIT;
         }
+        // Premium-based exit mappings
+        if (upperReason.contains("PREMIUM_DECAY_TARGET_HIT")) {
+            return StrategyCompletionReason.TARGET_HIT;  // Premium decay = profit for SHORT
+        }
+        if (upperReason.contains("PREMIUM_EXPANSION_SL_HIT")) {
+            return StrategyCompletionReason.STOPLOSS_HIT;  // Premium expansion = loss for SHORT
+        }
+        // Fixed-point MTM mappings
         if (upperReason.contains("STOP")) {
             return StrategyCompletionReason.STOPLOSS_HIT;
         }

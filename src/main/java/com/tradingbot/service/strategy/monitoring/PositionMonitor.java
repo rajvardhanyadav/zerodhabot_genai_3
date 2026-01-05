@@ -155,6 +155,58 @@ public class PositionMonitor {
     // HFT: Pre-built exit reason for time-based forced exit
     private static final String EXIT_PREFIX_FORCED_TIME = "TIME_BASED_FORCED_EXIT @ ";
 
+    // ==================== PREMIUM-BASED EXIT CONFIGURATION ====================
+
+    /**
+     * Enable dynamic premium-based exit mode.
+     * When true, uses percentage-based decay/expansion for exits.
+     * When false (default), uses traditional fixed-point MTM thresholds.
+     */
+    @Getter
+    private final boolean premiumBasedExitEnabled;
+
+    /**
+     * Combined entry premium (CE + PE) captured at straddle placement.
+     * Used as reference for calculating decay/expansion percentages.
+     * Only relevant when premiumBasedExitEnabled is true.
+     */
+    @Getter
+    private volatile double entryPremium;
+
+    /**
+     * Target decay percentage for premium exit (profit).
+     * Exit when: combinedLTP <= entryPremium * (1 - targetDecayPct)
+     * Example: 0.05 = exit when premium drops 5%
+     */
+    private final double targetDecayPct;
+
+    /**
+     * Stop loss expansion percentage for premium exit (loss).
+     * Exit when: combinedLTP >= entryPremium * (1 + stopLossExpansionPct)
+     * Example: 0.10 = exit when premium rises 10%
+     */
+    private final double stopLossExpansionPct;
+
+    /**
+     * Pre-computed target premium level (for HFT optimization).
+     * Calculated as: entryPremium * (1 - targetDecayPct)
+     */
+    private volatile double targetPremiumLevel;
+
+    /**
+     * Pre-computed stop loss premium level (for HFT optimization).
+     * Calculated as: entryPremium * (1 + stopLossExpansionPct)
+     */
+    private volatile double stopLossPremiumLevel;
+
+    // HFT: Pre-built exit reason prefixes for premium-based exits
+    private static final String EXIT_PREFIX_PREMIUM_DECAY = "PREMIUM_DECAY_TARGET_HIT (Combined LTP: ";
+    private static final String EXIT_PREFIX_PREMIUM_EXPANSION = "PREMIUM_EXPANSION_SL_HIT (Combined LTP: ";
+    private static final String EXIT_SUFFIX_ENTRY = ", Entry: ";
+    private static final String EXIT_SUFFIX_TARGET_LEVEL = ", TargetLevel: ";
+    private static final String EXIT_SUFFIX_SL_LEVEL = ", SL Level: ";
+    private static final String EXIT_SUFFIX_CLOSE = ")";
+
     // HFT: Pre-built exit reason prefixes to avoid String.format on hot path
     // Using StringBuilder with pre-computed components is faster than String.format
     private static final String EXIT_PREFIX_TARGET = "CUMULATIVE_TARGET_HIT (Signal: ";
@@ -283,15 +335,16 @@ public class PositionMonitor {
                            double stopLossPoints,
                            double targetPoints,
                            PositionDirection direction) {
-        // Delegate to full constructor with trailing stop and forced exit disabled for backward compatibility
-        this(executionId, stopLossPoints, targetPoints, direction, false, 0.0, 0.0, false, null);
+        // Delegate to full constructor with all optional features disabled for backward compatibility
+        this(executionId, stopLossPoints, targetPoints, direction, false, 0.0, 0.0, false, null,
+             false, 0.0, 0.0, 0.0);
     }
 
     /**
      * Creates a position monitor with full configuration including trailing stop loss.
      * <p>
-     * This constructor is for backward compatibility. Defaults to forced exit disabled.
-     * Use the complete constructor if forced exit is needed.
+     * This constructor is for backward compatibility. Defaults to forced exit and premium-based exit disabled.
+     * Use the complete constructor if these features are needed.
      *
      * @param executionId unique execution identifier
      * @param stopLossPoints fixed stop loss in points (used when trailing is disabled or before activation)
@@ -309,14 +362,15 @@ public class PositionMonitor {
                            double trailingActivationPoints,
                            double trailingDistancePoints) {
         this(executionId, stopLossPoints, targetPoints, direction, trailingStopEnabled,
-             trailingActivationPoints, trailingDistancePoints, false, null);
+             trailingActivationPoints, trailingDistancePoints, false, null,
+             false, 0.0, 0.0, 0.0);
     }
 
     /**
      * Creates a position monitor with complete configuration including trailing stop loss and forced exit.
      * <p>
-     * Defaults: If invalid values provided, uses stopLossPoints=2.0, targetPoints=2.0,
-     * trailingActivationPoints=1.0, trailingDistancePoints=0.5.
+     * This constructor is for backward compatibility. Defaults to premium-based exit disabled.
+     * Use the complete constructor with premium parameters for premium-based exits.
      *
      * @param executionId unique execution identifier
      * @param stopLossPoints fixed stop loss in points (used when trailing is disabled or before activation)
@@ -337,6 +391,55 @@ public class PositionMonitor {
                            double trailingDistancePoints,
                            boolean forcedExitEnabled,
                            LocalTime forcedExitTime) {
+        this(executionId, stopLossPoints, targetPoints, direction, trailingStopEnabled,
+             trailingActivationPoints, trailingDistancePoints, forcedExitEnabled, forcedExitTime,
+             false, 0.0, 0.0, 0.0);
+    }
+
+    /**
+     * Creates a position monitor with FULL configuration including all exit mechanisms.
+     * <p>
+     * This is the master constructor that supports:
+     * <ul>
+     *   <li>Fixed-point MTM exits (default mode)</li>
+     *   <li>Premium-based percentage exits (when premiumBasedExitEnabled=true)</li>
+     *   <li>Trailing stop loss</li>
+     *   <li>Time-based forced exit</li>
+     * </ul>
+     * <p>
+     * When premiumBasedExitEnabled=true:
+     * <ul>
+     *   <li>Target: exit when combinedLTP <= entryPremium * (1 - targetDecayPct)</li>
+     *   <li>Stop Loss: exit when combinedLTP >= entryPremium * (1 + stopLossExpansionPct)</li>
+     * </ul>
+     *
+     * @param executionId unique execution identifier
+     * @param stopLossPoints fixed stop loss in points (fallback when premium exit disabled)
+     * @param targetPoints target profit in points (fallback when premium exit disabled)
+     * @param direction position direction (LONG for buy strategies, SHORT for sell strategies)
+     * @param trailingStopEnabled enable trailing stop loss feature
+     * @param trailingActivationPoints P&amp;L threshold to activate trailing
+     * @param trailingDistancePoints distance trailing stop follows behind high-water mark
+     * @param forcedExitEnabled enable time-based forced exit feature
+     * @param forcedExitTime cutoff time for forced exit in IST (null defaults to 15:10)
+     * @param premiumBasedExitEnabled enable premium-based percentage exits
+     * @param entryPremium combined entry premium (CE + PE) for reference
+     * @param targetDecayPct target decay percentage (e.g., 0.05 = 5%)
+     * @param stopLossExpansionPct stop loss expansion percentage (e.g., 0.10 = 10%)
+     */
+    public PositionMonitor(String executionId,
+                           double stopLossPoints,
+                           double targetPoints,
+                           PositionDirection direction,
+                           boolean trailingStopEnabled,
+                           double trailingActivationPoints,
+                           double trailingDistancePoints,
+                           boolean forcedExitEnabled,
+                           LocalTime forcedExitTime,
+                           boolean premiumBasedExitEnabled,
+                           double entryPremium,
+                           double targetDecayPct,
+                           double stopLossExpansionPct) {
         this.executionId = executionId;
         this.stopLossPoints = stopLossPoints;
         this.targetPoints = targetPoints;
@@ -356,6 +459,21 @@ public class PositionMonitor {
         this.forcedExitEnabled = forcedExitEnabled;
         this.forcedExitTime = forcedExitTime != null ? forcedExitTime : LocalTime.of(15, 10);
 
+        // Premium-based exit configuration
+        this.premiumBasedExitEnabled = premiumBasedExitEnabled;
+        this.entryPremium = entryPremium;
+        this.targetDecayPct = targetDecayPct > 0 ? targetDecayPct : 0.05;      // Default 5%
+        this.stopLossExpansionPct = stopLossExpansionPct > 0 ? stopLossExpansionPct : 0.10;  // Default 10%
+
+        // Pre-compute premium threshold levels for HFT optimization
+        if (premiumBasedExitEnabled && entryPremium > 0) {
+            this.targetPremiumLevel = entryPremium * (1.0 - this.targetDecayPct);
+            this.stopLossPremiumLevel = entryPremium * (1.0 + this.stopLossExpansionPct);
+        } else {
+            this.targetPremiumLevel = 0.0;
+            this.stopLossPremiumLevel = Double.MAX_VALUE;
+        }
+
         if (trailingStopEnabled) {
             log.info("Trailing stop enabled for execution {}: activation={} points, distance={} points",
                     executionId, this.trailingActivationPoints, this.trailingDistancePoints);
@@ -364,6 +482,13 @@ public class PositionMonitor {
         if (forcedExitEnabled) {
             log.info("Forced exit enabled for execution {}: cutoff time={} IST",
                     executionId, this.forcedExitTime);
+        }
+
+        if (premiumBasedExitEnabled) {
+            log.info("Premium-based exit enabled for execution {}: entryPremium={}, targetDecay={}%, stopLossExpansion={}%, targetLevel={}, slLevel={}",
+                    executionId, formatDouble(entryPremium), formatDouble(this.targetDecayPct * 100),
+                    formatDouble(this.stopLossExpansionPct * 100), formatDouble(this.targetPremiumLevel),
+                    formatDouble(this.stopLossPremiumLevel));
         }
     }
 
@@ -391,6 +516,37 @@ public class PositionMonitor {
         rebuildCachedLegsArray();
 
         log.info("Added leg to monitor: {} at entry price: {}", symbol, entryPrice);
+    }
+
+    /**
+     * Sets the combined entry premium for premium-based exit calculations.
+     * <p>
+     * This method should be called after all legs are added to capture the total premium.
+     * Pre-computes target and stop loss levels for HFT optimization.
+     * <p>
+     * Thread-safe: Can be called after monitor creation when actual fill prices are known.
+     *
+     * @param combinedEntryPremium sum of all leg entry prices (CE price + PE price)
+     */
+    public void setEntryPremium(double combinedEntryPremium) {
+        if (!premiumBasedExitEnabled) {
+            log.warn("setEntryPremium called but premium-based exit is not enabled for execution {}", executionId);
+            return;
+        }
+        if (combinedEntryPremium <= 0) {
+            log.error("Invalid entry premium {} for execution {}. Premium must be positive.", combinedEntryPremium, executionId);
+            return;
+        }
+
+        this.entryPremium = combinedEntryPremium;
+        // Re-compute threshold levels with actual premium
+        this.targetPremiumLevel = combinedEntryPremium * (1.0 - targetDecayPct);
+        this.stopLossPremiumLevel = combinedEntryPremium * (1.0 + stopLossExpansionPct);
+
+        log.info("Entry premium set for execution {}: premium={}, targetLevel={} ({}% decay), slLevel={} ({}% expansion)",
+                executionId, formatDouble(combinedEntryPremium), formatDouble(targetPremiumLevel),
+                formatDouble(targetDecayPct * 100), formatDouble(stopLossPremiumLevel),
+                formatDouble(stopLossExpansionPct * 100));
     }
 
     /**
@@ -527,6 +683,53 @@ public class PositionMonitor {
                 return;
             }
         }
+
+        // ==================== PRIORITY 0.5: PREMIUM-BASED EXIT (WHEN ENABLED) ====================
+        // Dynamic premium-based exits based on combined LTP relative to entry premium.
+        // This takes precedence over fixed-point MTM checks when enabled.
+        if (premiumBasedExitEnabled) {
+            // Calculate combined current premium (sum of all leg current prices)
+            double combinedLTP = 0.0;
+            for (int i = 0; i < count; i++) {
+                combinedLTP += legs[i].currentPrice;
+            }
+
+            // HFT: Cache pre-computed threshold levels for fast comparison
+            final double targetLevel = targetPremiumLevel;
+            final double slLevel = stopLossPremiumLevel;
+
+            // HFT: Lazy debug logging for premium mode
+            if (log.isDebugEnabled()) {
+                log.debug("Premium check for {}: combinedLTP={}, entryPremium={}, targetLevel={}, slLevel={}",
+                        executionId, formatDouble(combinedLTP), formatDouble(entryPremium),
+                        formatDouble(targetLevel), formatDouble(slLevel));
+            }
+
+            // PREMIUM TARGET: Combined LTP has decayed below target level (profit for SHORT)
+            // For SHORT straddle: We sold premium, so lower LTP = profit
+            if (combinedLTP <= targetLevel) {
+                log.warn("PREMIUM_DECAY_TARGET_HIT for execution {}: combinedLTP={}, targetLevel={}, entryPremium={} - Closing ALL legs",
+                        executionId, formatDouble(combinedLTP), formatDouble(targetLevel), formatDouble(entryPremium));
+                triggerExitAllLegs(buildExitReasonPremiumDecayTarget(combinedLTP, entryPremium, targetLevel));
+                return;
+            }
+
+            // PREMIUM STOP LOSS: Combined LTP has expanded above stop loss level (loss for SHORT)
+            // For SHORT straddle: We sold premium, so higher LTP = loss
+            if (combinedLTP >= slLevel) {
+                log.warn("PREMIUM_EXPANSION_SL_HIT for execution {}: combinedLTP={}, slLevel={}, entryPremium={} - Closing ALL legs",
+                        executionId, formatDouble(combinedLTP), formatDouble(slLevel), formatDouble(entryPremium));
+                triggerExitAllLegs(buildExitReasonPremiumExpansionSL(combinedLTP, entryPremium, slLevel));
+                return;
+            }
+
+            // If premium-based exit is enabled, skip fixed-point MTM checks
+            // This ensures clean separation between the two modes
+            return;
+        }
+
+        // ==================== FIXED-POINT MTM EXITS (DEFAULT MODE) ====================
+        // Below checks only execute when premiumBasedExitEnabled = false
 
         // ==================== PRIORITY 1: CUMULATIVE TARGET (FULL EXIT) ====================
         // Check target hit (profit) - highest priority, most likely exit in profitable strategies
@@ -794,6 +997,52 @@ public class PositionMonitor {
         sb.append(':');
         if (minute < 10) sb.append('0');
         sb.append(minute);
+        return sb.toString();
+    }
+
+    /**
+     * Build exit reason for premium decay target hit.
+     * <p>
+     * Format: "PREMIUM_DECAY_TARGET_HIT (Combined LTP: X.XX, Entry: Y.YY, TargetLevel: Z.ZZ)"
+     *
+     * @param combinedLTP current combined premium (CE + PE LTP)
+     * @param entry original entry premium
+     * @param targetLevel target premium threshold
+     * @return formatted exit reason string
+     */
+    private String buildExitReasonPremiumDecayTarget(double combinedLTP, double entry, double targetLevel) {
+        StringBuilder sb = EXIT_REASON_BUILDER.get();
+        sb.setLength(0);
+        sb.append(EXIT_PREFIX_PREMIUM_DECAY);
+        appendDouble(sb, combinedLTP);
+        sb.append(EXIT_SUFFIX_ENTRY);
+        appendDouble(sb, entry);
+        sb.append(EXIT_SUFFIX_TARGET_LEVEL);
+        appendDouble(sb, targetLevel);
+        sb.append(EXIT_SUFFIX_CLOSE);
+        return sb.toString();
+    }
+
+    /**
+     * Build exit reason for premium expansion stop loss hit.
+     * <p>
+     * Format: "PREMIUM_EXPANSION_SL_HIT (Combined LTP: X.XX, Entry: Y.YY, SL Level: Z.ZZ)"
+     *
+     * @param combinedLTP current combined premium (CE + PE LTP)
+     * @param entry original entry premium
+     * @param slLevel stop loss premium threshold
+     * @return formatted exit reason string
+     */
+    private String buildExitReasonPremiumExpansionSL(double combinedLTP, double entry, double slLevel) {
+        StringBuilder sb = EXIT_REASON_BUILDER.get();
+        sb.setLength(0);
+        sb.append(EXIT_PREFIX_PREMIUM_EXPANSION);
+        appendDouble(sb, combinedLTP);
+        sb.append(EXIT_SUFFIX_ENTRY);
+        appendDouble(sb, entry);
+        sb.append(EXIT_SUFFIX_SL_LEVEL);
+        appendDouble(sb, slLevel);
+        sb.append(EXIT_SUFFIX_CLOSE);
         return sb.toString();
     }
 

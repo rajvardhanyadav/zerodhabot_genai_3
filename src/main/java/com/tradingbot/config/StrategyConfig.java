@@ -71,6 +71,31 @@ public class StrategyConfig {
      */
     private int maxAutoRestarts = 0;
 
+    // ==================== PREMIUM-BASED EXIT CONFIGURATION ====================
+
+    /**
+     * Enable dynamic premium-based exit instead of fixed-point MTM exits.
+     * When enabled, exits are based on percentage decay/expansion of combined premium.
+     * When disabled (default), uses traditional fixed-point stopLossPoints/targetPoints.
+     */
+    private boolean premiumBasedExitEnabled = true;
+
+    /**
+     * Target decay percentage for premium-based exit.
+     * Exit (profit) when combined LTP <= entryPremium * (1 - targetDecayPct).
+     * Example: 0.05 = 5% decay = exit when premium drops 5% from entry.
+     * Default: 0.05 (5%)
+     */
+    private double targetDecayPct = 0.05;
+
+    /**
+     * Stop loss expansion percentage for premium-based exit.
+     * Exit (loss) when combined LTP >= entryPremium * (1 + stopLossExpansionPct).
+     * Example: 0.10 = 10% expansion = exit when premium rises 10% from entry.
+     * Default: 0.10 (10%)
+     */
+    private double stopLossExpansionPct = 0.10;
+
     @Bean
     public TaskScheduler strategyTaskScheduler() {
         ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
