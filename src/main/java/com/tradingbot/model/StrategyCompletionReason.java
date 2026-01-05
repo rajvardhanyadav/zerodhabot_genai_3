@@ -22,6 +22,12 @@ public enum StrategyCompletionReason {
     MANUAL_STOP,
 
     /**
+     * Strategy closed due to time-based forced exit (auto square-off at market close).
+     * This is a normal completion, not an error - positions are squared off to avoid overnight risk.
+     */
+    TIME_BASED_EXIT,
+
+    /**
      * Strategy ended due to an error or unexpected condition.
      */
     ERROR,

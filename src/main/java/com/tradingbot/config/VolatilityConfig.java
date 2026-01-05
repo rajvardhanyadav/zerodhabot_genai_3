@@ -26,7 +26,7 @@ public class VolatilityConfig {
      * When disabled, straddle placement proceeds unconditionally.
      * Default: true (filter enabled)
      */
-    private boolean enabled = true;
+    private boolean enabled = false;
 
     /**
      * Symbol for India VIX in Kite format.

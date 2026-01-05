@@ -5,6 +5,9 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -125,6 +128,33 @@ public class PositionMonitor {
      */
     private volatile boolean trailingStopActivated = false;
 
+    // ==================== TIME-BASED FORCED EXIT CONFIGURATION ====================
+    // IST timezone for market hours comparison
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
+
+    /**
+     * Forced exit cutoff time (IST). Positions will be force-exited at or after this time.
+     * Default: 15:10 (3:10 PM IST) to ensure exit before market close.
+     */
+    @Getter
+    private final LocalTime forcedExitTime;
+
+    /**
+     * Enable/disable time-based forced exit feature.
+     * When false, positions are only exited via target/stop-loss conditions.
+     */
+    @Getter
+    private final boolean forcedExitEnabled;
+
+    /**
+     * Flag indicating if forced exit has already been triggered.
+     * Ensures idempotency - prevents duplicate exit attempts.
+     */
+    private volatile boolean forcedExitTriggered = false;
+
+    // HFT: Pre-built exit reason for time-based forced exit
+    private static final String EXIT_PREFIX_FORCED_TIME = "TIME_BASED_FORCED_EXIT @ ";
+
     // HFT: Pre-built exit reason prefixes to avoid String.format on hot path
     // Using StringBuilder with pre-computed components is faster than String.format
     private static final String EXIT_PREFIX_TARGET = "CUMULATIVE_TARGET_HIT (Signal: ";
@@ -229,7 +259,7 @@ public class PositionMonitor {
      * Creates a position monitor with default LONG direction.
      * <p>
      * This constructor is for backward compatibility. Defaults to LONG direction
-     * and disables trailing stop loss.
+     * and disables trailing stop loss and forced exit.
      *
      * @param executionId unique execution identifier
      * @param stopLossPoints stop loss threshold in points (e.g., 2.0 = exit when loss reaches 2 points)
@@ -242,7 +272,7 @@ public class PositionMonitor {
     /**
      * Creates a position monitor with specified direction.
      * <p>
-     * Disables trailing stop loss by default. Use the full constructor if trailing stop is needed.
+     * Disables trailing stop loss and forced exit by default. Use the full constructor if these features are needed.
      *
      * @param executionId unique execution identifier
      * @param stopLossPoints stop loss threshold in points
@@ -253,15 +283,15 @@ public class PositionMonitor {
                            double stopLossPoints,
                            double targetPoints,
                            PositionDirection direction) {
-        // Delegate to full constructor with trailing stop disabled for backward compatibility
-        this(executionId, stopLossPoints, targetPoints, direction, false, 0.0, 0.0);
+        // Delegate to full constructor with trailing stop and forced exit disabled for backward compatibility
+        this(executionId, stopLossPoints, targetPoints, direction, false, 0.0, 0.0, false, null);
     }
 
     /**
      * Creates a position monitor with full configuration including trailing stop loss.
      * <p>
-     * Defaults: If invalid values provided, uses stopLossPoints=2.0, targetPoints=2.0,
-     * trailingActivationPoints=1.0, trailingDistancePoints=0.5.
+     * This constructor is for backward compatibility. Defaults to forced exit disabled.
+     * Use the complete constructor if forced exit is needed.
      *
      * @param executionId unique execution identifier
      * @param stopLossPoints fixed stop loss in points (used when trailing is disabled or before activation)
@@ -278,6 +308,35 @@ public class PositionMonitor {
                            boolean trailingStopEnabled,
                            double trailingActivationPoints,
                            double trailingDistancePoints) {
+        this(executionId, stopLossPoints, targetPoints, direction, trailingStopEnabled,
+             trailingActivationPoints, trailingDistancePoints, false, null);
+    }
+
+    /**
+     * Creates a position monitor with complete configuration including trailing stop loss and forced exit.
+     * <p>
+     * Defaults: If invalid values provided, uses stopLossPoints=2.0, targetPoints=2.0,
+     * trailingActivationPoints=1.0, trailingDistancePoints=0.5.
+     *
+     * @param executionId unique execution identifier
+     * @param stopLossPoints fixed stop loss in points (used when trailing is disabled or before activation)
+     * @param targetPoints target profit in points (dynamically adjusted on individual leg exits)
+     * @param direction position direction (LONG for buy strategies, SHORT for sell strategies)
+     * @param trailingStopEnabled enable trailing stop loss feature
+     * @param trailingActivationPoints P&amp;L threshold to activate trailing (e.g., 1.0 = activate after 1 point profit)
+     * @param trailingDistancePoints distance trailing stop follows behind high-water mark (e.g., 0.5 points)
+     * @param forcedExitEnabled enable time-based forced exit feature
+     * @param forcedExitTime cutoff time for forced exit in IST (null defaults to 15:10)
+     */
+    public PositionMonitor(String executionId,
+                           double stopLossPoints,
+                           double targetPoints,
+                           PositionDirection direction,
+                           boolean trailingStopEnabled,
+                           double trailingActivationPoints,
+                           double trailingDistancePoints,
+                           boolean forcedExitEnabled,
+                           LocalTime forcedExitTime) {
         this.executionId = executionId;
         this.stopLossPoints = stopLossPoints;
         this.targetPoints = targetPoints;
@@ -293,9 +352,18 @@ public class PositionMonitor {
         this.trailingActivationPoints = trailingActivationPoints > 0 ? trailingActivationPoints : 1.0;
         this.trailingDistancePoints = trailingDistancePoints > 0 ? trailingDistancePoints : 0.5;
 
+        // Forced exit time configuration
+        this.forcedExitEnabled = forcedExitEnabled;
+        this.forcedExitTime = forcedExitTime != null ? forcedExitTime : LocalTime.of(15, 10);
+
         if (trailingStopEnabled) {
             log.info("Trailing stop enabled for execution {}: activation={} points, distance={} points",
                     executionId, this.trailingActivationPoints, this.trailingDistancePoints);
+        }
+
+        if (forcedExitEnabled) {
+            log.info("Forced exit enabled for execution {}: cutoff time={} IST",
+                    executionId, this.forcedExitTime);
         }
     }
 
@@ -444,6 +512,20 @@ public class PositionMonitor {
             }
             log.debug("Cumulative P&L for {}: {} points (target: {}, stop: {}) | Legs: [{}]",
                     executionId, cumulative, targetPts, stopPts, legPrices);
+        }
+
+        // ==================== PRIORITY 0: TIME-BASED FORCED EXIT (HIGHEST PRIORITY) ====================
+        // Check if we've passed the forced exit cutoff time (IST).
+        // This bypasses all P&L checks and forces immediate exit.
+        // Idempotent: forcedExitTriggered flag prevents duplicate triggers.
+        if (forcedExitEnabled && !forcedExitTriggered) {
+            if (isAfterForcedExitTime()) {
+                forcedExitTriggered = true;  // Prevent duplicate triggers
+                log.warn("TIME-BASED FORCED EXIT for execution {}: current time >= {} IST, P&L={} points - Closing ALL legs",
+                        executionId, forcedExitTime, formatDouble(cumulative));
+                triggerExitAllLegs(buildExitReasonForcedTime());
+                return;
+            }
         }
 
         // ==================== PRIORITY 1: CUMULATIVE TARGET (FULL EXIT) ====================
@@ -691,6 +773,74 @@ public class PositionMonitor {
         appendDouble(sb, legPnl);
         sb.append(EXIT_SUFFIX_POINTS);
         return sb.toString();
+    }
+
+    /**
+     * Build exit reason for time-based forced exit.
+     * <p>
+     * Format: "TIME_BASED_FORCED_EXIT @ 15:10"
+     *
+     * @return formatted exit reason string with cutoff time
+     */
+    private String buildExitReasonForcedTime() {
+        StringBuilder sb = EXIT_REASON_BUILDER.get();
+        sb.setLength(0);
+        sb.append(EXIT_PREFIX_FORCED_TIME);
+        // Format time as HH:mm
+        int hour = forcedExitTime.getHour();
+        int minute = forcedExitTime.getMinute();
+        if (hour < 10) sb.append('0');
+        sb.append(hour);
+        sb.append(':');
+        if (minute < 10) sb.append('0');
+        sb.append(minute);
+        return sb.toString();
+    }
+
+    /**
+     * Check if current time (IST) is at or after the forced exit cutoff time.
+     * <p>
+     * Thread-safe and uses IST timezone for exchange time comparison.
+     *
+     * @return true if current time >= forced exit time, false otherwise
+     */
+    private boolean isAfterForcedExitTime() {
+        LocalTime now = ZonedDateTime.now(IST).toLocalTime();
+        return !now.isBefore(forcedExitTime);
+    }
+
+    /**
+     * Check if forced exit time has been reached for external callers (e.g., backtest).
+     * <p>
+     * This method allows backtesting systems to check forced exit condition using
+     * a simulated time instead of the current system time.
+     *
+     * @param simulatedTime the simulated current time to check against
+     * @return true if simulatedTime >= forced exit time and forced exit is enabled
+     */
+    public boolean shouldForcedExit(LocalTime simulatedTime) {
+        if (!forcedExitEnabled || forcedExitTriggered) {
+            return false;
+        }
+        return !simulatedTime.isBefore(forcedExitTime);
+    }
+
+    /**
+     * Manually trigger forced exit (for backtest or external triggers).
+     * <p>
+     * This method is idempotent - calling multiple times has no additional effect.
+     *
+     * @return true if exit was triggered, false if already triggered or inactive
+     */
+    public boolean triggerForcedExit() {
+        if (!active || forcedExitTriggered) {
+            return false;
+        }
+        forcedExitTriggered = true;
+        log.warn("MANUAL FORCED EXIT triggered for execution {}: cutoff time={} IST - Closing ALL legs",
+                executionId, forcedExitTime);
+        triggerExitAllLegs(buildExitReasonForcedTime());
+        return true;
     }
 
     /**

@@ -27,6 +27,8 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -163,7 +165,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         // ==================== VOLATILITY FILTER CHECK ====================
         // Check VIX conditions before proceeding with straddle placement.
         // If VIX is flat or falling, skip this candle to avoid unfavorable conditions.
-        if (volatilityConfig.isEnabled()) {
+        /*if (volatilityConfig.isEnabled()) {
             // Determine if this is a backtest run (paper trading is NOT backtest)
             // For now, we treat all executions as live/paper (not historical replay)
             // TODO: Add explicit backtest flag to StrategyRequest if historical replay is needed
@@ -188,7 +190,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
             log.info("[{}] Volatility filter PASSED for execution {}: {}",
                     tradingMode, executionId, vixResult.reason());
-        }
+        }*/
         // ==================== END VOLATILITY FILTER ====================
 
         // HFT: Use parallel fetch for spot price and instruments
@@ -855,7 +857,9 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                                   StrategyCompletionCallback completionCallback) {
 
         // SELL ATM straddle: short volatility exposure -> use SHORT direction
-        // Include trailing stop loss configuration from StrategyConfig
+        // Include trailing stop loss and forced exit time configuration from StrategyConfig
+        LocalTime forcedExitTime = parseForcedExitTime(strategyConfig.getAutoSquareOffTime());
+
         PositionMonitor monitor = new PositionMonitor(
                 executionId,
                 stopLossPoints,
@@ -863,7 +867,9 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 PositionMonitor.PositionDirection.SHORT,
                 strategyConfig.isTrailingStopEnabled(),
                 strategyConfig.getTrailingActivationPoints(),
-                strategyConfig.getTrailingDistancePoints()
+                strategyConfig.getTrailingDistancePoints(),
+                strategyConfig.isAutoSquareOffEnabled(),
+                forcedExitTime
         );
 
         monitor.addLeg(callOrderId, callInstrument.tradingsymbol, callInstrument.instrument_token,
@@ -1143,9 +1149,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         }
 
         if (completionCallback != null) {
-            StrategyCompletionReason mappedReason = reason != null && reason.toUpperCase().contains("STOP")
-                    ? StrategyCompletionReason.STOPLOSS_HIT
-                    : StrategyCompletionReason.TARGET_HIT;
+            StrategyCompletionReason mappedReason = mapExitReasonToCompletionReason(reason);
             completionCallback.onStrategyCompleted(executionId, mappedReason);
         }
 
@@ -1245,5 +1249,53 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         }
 
         return orderResult;
+    }
+
+    /**
+     * Parse the forced exit time from configuration string.
+     * <p>
+     * Expected format: "HH:mm" (e.g., "15:10" for 3:10 PM IST)
+     * Falls back to default 15:10 if parsing fails.
+     *
+     * @param timeString time string in HH:mm format
+     * @return LocalTime representing the forced exit cutoff
+     */
+    private LocalTime parseForcedExitTime(String timeString) {
+        if (timeString == null || timeString.isBlank()) {
+            log.warn("Forced exit time not configured, using default 15:10 IST");
+            return LocalTime.of(15, 10);
+        }
+        try {
+            return LocalTime.parse(timeString, DateTimeFormatter.ofPattern("HH:mm"));
+        } catch (Exception e) {
+            log.warn("Failed to parse forced exit time '{}', using default 15:10 IST: {}",
+                    timeString, e.getMessage());
+            return LocalTime.of(15, 10);
+        }
+    }
+
+    /**
+     * Map exit reason string to StrategyCompletionReason enum.
+     * <p>
+     * Parses the reason string to determine the appropriate completion reason:
+     * - TIME_BASED_FORCED_EXIT → TIME_BASED_EXIT
+     * - Contains "STOP" → STOPLOSS_HIT
+     * - Default → TARGET_HIT
+     *
+     * @param reason exit reason string from PositionMonitor
+     * @return appropriate StrategyCompletionReason
+     */
+    private StrategyCompletionReason mapExitReasonToCompletionReason(String reason) {
+        if (reason == null) {
+            return StrategyCompletionReason.TARGET_HIT;
+        }
+        String upperReason = reason.toUpperCase();
+        if (upperReason.contains("TIME_BASED_FORCED_EXIT")) {
+            return StrategyCompletionReason.TIME_BASED_EXIT;
+        }
+        if (upperReason.contains("STOP")) {
+            return StrategyCompletionReason.STOPLOSS_HIT;
+        }
+        return StrategyCompletionReason.TARGET_HIT;
     }
 }

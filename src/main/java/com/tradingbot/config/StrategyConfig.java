@@ -42,17 +42,23 @@ public class StrategyConfig {
 
     // Auto square-off configuration
     private boolean autoSquareOffEnabled = false;
-    private String autoSquareOffTime = "15:15"; // HH:mm format
+    private String autoSquareOffTime = "15:10"; // HH:mm format - forced exit time (IST)
+
+    /**
+     * Enable forced exit during backtesting.
+     * When false, time-based exit is only active in live/paper trading.
+     */
+    private boolean autoSquareOffBacktestEnabled = true;
 
     // Auto-restart configuration
     /** Enable/disable auto restart globally when target/SL is hit. */
-    private boolean autoRestartEnabled = false;
+    private boolean autoRestartEnabled = true;
 
     /**
      * Enable auto-restart when trading in LIVE mode.
      * Recommended to keep this false until behavior is validated in paper.
      */
-    private boolean autoRestartLiveEnabled = false;
+    private boolean autoRestartLiveEnabled = true;
 
     /**
      * Enable auto-restart when trading in PAPER mode.

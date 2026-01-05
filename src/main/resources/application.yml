@@ -131,9 +131,11 @@ volatility:
   # Example: 0.5 means stop is always 0.5 points below peak profit
   trailing-distance-points: 2.5
 
-  # Auto square off settings
-  auto-square-off-enabled: false
-  auto-square-off-time: "15:15"
+  # Auto square off settings (time-based forced exit)
+  # Forces exit of all active positions at the configured time regardless of P&L
+  auto-square-off-enabled: true
+  auto-square-off-time: "15:10"  # HH:mm format (IST) - default 3:10 PM
+  auto-square-off-backtest-enabled: true  # Enable forced exit during backtesting
   auto-restart-enabled: true
   auto-restart-paper-enabled: true
 
