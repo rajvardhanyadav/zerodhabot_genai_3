@@ -41,7 +41,7 @@ public class StrategyConfig {
     private double trailingDistancePoints = 0.5;
 
     // Auto square-off configuration
-    private boolean autoSquareOffEnabled = false;
+    private boolean autoSquareOffEnabled = true;
     private String autoSquareOffTime = "15:10"; // HH:mm format - forced exit time (IST)
 
     /**
