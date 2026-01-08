@@ -232,6 +232,9 @@ public class StrategyRestartScheduler {
         request.setTargetPoints(execution.getTargetPoints());
         request.setStopLossPoints(execution.getStopLossPoints());
         request.setLots(execution.getLots());
+        // Preserve premium-based exit parameters from original execution
+        request.setTargetDecayPct(execution.getTargetDecayPct());
+        request.setStopLossExpansionPct(execution.getStopLossExpansionPct());
         // Other fields (like quantity, SL/target) will rely on defaults or client-provided values or config defaults
         return request;
     }

@@ -157,10 +157,17 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         final String expiry = request.getExpiry();
         final double stopLossPoints = getStopLossPoints(request);
         final double targetPoints = getTargetPoints(request);
+        final double targetDecayPct = getTargetDecayPct(request);
+        final double stopLossExpansionPct = getStopLossExpansionPct(request);
         final String tradingMode = getTradingMode();
 
         log.info(StrategyConstants.LOG_EXECUTING_STRATEGY,
                 tradingMode, instrumentType, stopLossPoints, targetPoints);
+
+        if (strategyConfig.isPremiumBasedExitEnabled()) {
+            log.info("[{}] Premium-based exit parameters: targetDecayPct={}%, stopLossExpansionPct={}%",
+                    tradingMode, targetDecayPct , stopLossExpansionPct);
+        }
 
         // ==================== VOLATILITY FILTER CHECK ====================
         // Check VIX conditions before proceeding with straddle placement.
@@ -254,7 +261,9 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
         setupMonitoring(executionId, atmCall, atmPut,
                 callOrderId, putOrderId,
-                quantity, stopLossPoints, targetPoints, completionCallback);
+                quantity, stopLossPoints, targetPoints,
+                targetDecayPct, stopLossExpansionPct,
+                completionCallback);
 
         return buildSuccessResponse(executionId, orderDetails, totalPremium, stopLossPoints, targetPoints, tradingMode);
     }
@@ -549,6 +558,32 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 : strategyConfig.getDefaultTargetPoints();
     }
 
+    /**
+     * Resolve target decay percentage from request with config fallback.
+     * Used for premium-based exit when enabled.
+     *
+     * @param request the strategy request
+     * @return target decay percentage (e.g., 0.05 for 5%)
+     */
+    private double getTargetDecayPct(StrategyRequest request) {
+        return request.getTargetDecayPct() != null
+                ? request.getTargetDecayPct()
+                : strategyConfig.getTargetDecayPct();
+    }
+
+    /**
+     * Resolve stop loss expansion percentage from request with config fallback.
+     * Used for premium-based exit when enabled.
+     *
+     * @param request the strategy request
+     * @return stop loss expansion percentage (e.g., 0.10 for 10%)
+     */
+    private double getStopLossExpansionPct(StrategyRequest request) {
+        return request.getStopLossExpansionPct() != null
+                ? request.getStopLossExpansionPct()
+                : strategyConfig.getStopLossExpansionPct();
+    }
+
     private String getTradingMode() {
         return unifiedTradingService.isPaperTradingEnabled()
                 ? StrategyConstants.TRADING_MODE_PAPER
@@ -704,6 +739,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                  String callOrderId, String putOrderId,
                                  int quantity,
                                  double stopLossPoints, double targetPoints,
+                                 double targetDecayPct, double stopLossExpansionPct,
                                  StrategyCompletionCallback completionCallback) {
 
         // HFT: Spawn async task for monitoring setup to avoid blocking the main thread
@@ -716,7 +752,8 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         CompletableFuture.runAsync(
             CurrentUserContext.wrapWithContext(() -> {
                 setupMonitoringInternal(executionId, callInstrument, putInstrument,
-                        callOrderId, putOrderId, quantity, stopLossPoints, targetPoints, completionCallback);
+                        callOrderId, putOrderId, quantity, stopLossPoints, targetPoints,
+                        targetDecayPct, stopLossExpansionPct, completionCallback);
             }), EXIT_ORDER_EXECUTOR
         ).exceptionally(ex -> {
             log.error("Error setting up monitoring for execution {}: {}", executionId, ex.getMessage(), ex);
@@ -731,6 +768,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                          String callOrderId, String putOrderId,
                                          int quantity,
                                          double stopLossPoints, double targetPoints,
+                                         double targetDecayPct, double stopLossExpansionPct,
                                          StrategyCompletionCallback completionCallback) {
         try {
             // HFT: Parallel fetch of order histories for both legs
@@ -803,6 +841,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                     latestCallOrder.status, callEntryPrice, latestPutOrder.status, putEntryPrice);
 
             PositionMonitor monitor = createPositionMonitor(executionId, stopLossPoints, targetPoints,
+                    targetDecayPct, stopLossExpansionPct,
                     callOrderId, putOrderId, callInstrument, putInstrument,
                     callEntryPrice, putEntryPrice, quantity, completionCallback);
 
@@ -850,6 +889,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     }
 
     private PositionMonitor createPositionMonitor(String executionId, double stopLossPoints, double targetPoints,
+                                                  double targetDecayPct, double stopLossExpansionPct,
                                                   String callOrderId, String putOrderId,
                                                   Instrument callInstrument, Instrument putInstrument,
                                                   double callEntryPrice, double putEntryPrice,
@@ -873,11 +913,11 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 strategyConfig.getTrailingDistancePoints(),
                 strategyConfig.isAutoSquareOffEnabled(),
                 forcedExitTime,
-                // Premium-based exit configuration
+                // Premium-based exit configuration - use resolved values from request/config
                 strategyConfig.isPremiumBasedExitEnabled(),
                 combinedEntryPremium,
-                strategyConfig.getTargetDecayPct(),
-                strategyConfig.getStopLossExpansionPct()
+                targetDecayPct,
+                stopLossExpansionPct
         );
 
         monitor.addLeg(callOrderId, callInstrument.tradingsymbol, callInstrument.instrument_token,

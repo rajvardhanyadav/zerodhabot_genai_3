@@ -83,18 +83,28 @@ public class StrategyConfig {
     /**
      * Target decay percentage for premium-based exit.
      * Exit (profit) when combined LTP <= entryPremium * (1 - targetDecayPct).
-     * Example: 0.05 = 5% decay = exit when premium drops 5% from entry.
-     * Default: 0.05 (5%)
+     * <p>
+     * Accepts both formats:
+     * <ul>
+     *   <li>Whole percentages (1-100): e.g., 5 for 5%</li>
+     *   <li>Decimal fractions (0.01-1.0): e.g., 0.05 for 5%</li>
+     * </ul>
+     * Default: 3.5% (0.035 or 3.5)
      */
-    private double targetDecayPct = 0.035;
+    private double targetDecayPct = 3.5;
 
     /**
      * Stop loss expansion percentage for premium-based exit.
      * Exit (loss) when combined LTP >= entryPremium * (1 + stopLossExpansionPct).
-     * Example: 0.10 = 10% expansion = exit when premium rises 10% from entry.
-     * Default: 0.10 (10%)
+     * <p>
+     * Accepts both formats:
+     * <ul>
+     *   <li>Whole percentages (1-100): e.g., 10 for 10%</li>
+     *   <li>Decimal fractions (0.01-1.0): e.g., 0.10 for 10%</li>
+     * </ul>
+     * Default: 7% (0.07 or 7)
      */
-    private double stopLossExpansionPct = 0.07;
+    private double stopLossExpansionPct = 7;
 
     @Bean
     public TaskScheduler strategyTaskScheduler() {

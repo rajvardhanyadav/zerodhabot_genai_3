@@ -147,12 +147,18 @@ volatility:
   premium-based-exit-enabled: false
 
   # Target decay percentage: exit (profit) when combined LTP <= entry * (1 - targetDecayPct)
-  # Example: 0.05 = 5% decay = exit when premium drops 5% from entry
-  target-decay-pct: 0.05
+  # Accepts both formats:
+  #   - Whole percentages (1-100): e.g., 5 for 5%
+  #   - Decimal fractions (0.01-1.0): e.g., 0.05 for 5%
+  # Example: 5 or 0.05 = 5% decay = exit when premium drops 5% from entry
+  target-decay-pct: 5
 
   # Stop loss expansion percentage: exit (loss) when combined LTP >= entry * (1 + stopLossExpansionPct)
-  # Example: 0.10 = 10% expansion = exit when premium rises 10% from entry
-  stop-loss-expansion-pct: 0.10
+  # Accepts both formats:
+  #   - Whole percentages (1-100): e.g., 10 for 10%
+  #   - Decimal fractions (0.01-1.0): e.g., 0.10 for 10%
+  # Example: 10 or 0.10 = 10% expansion = exit when premium rises 10% from entry
+  stop-loss-expansion-pct: 10
 
 
 # Historical Replay Configuration

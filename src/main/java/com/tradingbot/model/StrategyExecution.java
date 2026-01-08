@@ -64,6 +64,20 @@ public class StrategyExecution {
     private Double stopLossPoints; // Stop loss in points (optional, uses default from config if not provided)
 
     private Double targetPoints; // Target in points (optional, uses default from config if not provided)
+
+    // ==================== PREMIUM-BASED EXIT PARAMETERS ====================
+    /**
+     * Target decay percentage for premium-based exit.
+     * Stored from request to preserve during auto-restarts.
+     */
+    private Double targetDecayPct;
+
+    /**
+     * Stop loss expansion percentage for premium-based exit.
+     * Stored from request to preserve during auto-restarts.
+     */
+    private Double stopLossExpansionPct;
+
     private Integer lots;
 
     // Order tracking - initialized to empty list to avoid null checks

@@ -30,5 +30,34 @@ public class StrategyRequest {
     private Double stopLossPoints; // Stop loss in points (optional, uses default from config if not provided)
 
     private Double targetPoints; // Target in points (optional, uses default from config if not provided)
-}
 
+    // ==================== PREMIUM-BASED EXIT PARAMETERS ====================
+    // These fields enable dynamic premium-based exits when provided.
+    // If not provided (null), falls back to values from strategy configuration defaults.
+
+    /**
+     * Target decay percentage for premium-based exit.
+     * Exit (profit) when combined LTP <= entryPremium * (1 - targetDecayPct).
+     * <p>
+     * Accepts both formats:
+     * <ul>
+     *   <li>Whole percentages (1-100): e.g., 5 for 5%</li>
+     *   <li>Decimal fractions (0.01-1.0): e.g., 0.05 for 5%</li>
+     * </ul>
+     * If null, uses value from StrategyConfig.targetDecayPct.
+     */
+    private Double targetDecayPct;
+
+    /**
+     * Stop loss expansion percentage for premium-based exit.
+     * Exit (loss) when combined LTP >= entryPremium * (1 + stopLossExpansionPct).
+     * <p>
+     * Accepts both formats:
+     * <ul>
+     *   <li>Whole percentages (1-100): e.g., 10 for 10%</li>
+     *   <li>Decimal fractions (0.01-1.0): e.g., 0.10 for 10%</li>
+     * </ul>
+     * If null, uses value from StrategyConfig.stopLossExpansionPct.
+     */
+    private Double stopLossExpansionPct;
+}

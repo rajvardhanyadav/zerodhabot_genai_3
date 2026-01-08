@@ -462,10 +462,19 @@ public class PositionMonitor {
         // Premium-based exit configuration
         this.premiumBasedExitEnabled = premiumBasedExitEnabled;
         this.entryPremium = entryPremium;
-        this.targetDecayPct = targetDecayPct > 0 ? targetDecayPct : 0.05;      // Default 5%
-        this.stopLossExpansionPct = stopLossExpansionPct > 0 ? stopLossExpansionPct : 0.10;  // Default 10%
+
+        // Convert percentage values (1-100) to decimal fractions (0.01-1.0)
+        // If value > 1, treat as percentage and divide by 100; otherwise use as-is
+        // Default: 5% for target decay, 10% for stop loss expansion
+        double normalizedTargetDecay = normalizePercentage(targetDecayPct, 5.0);
+        double normalizedStopLossExpansion = normalizePercentage(stopLossExpansionPct, 10.0);
+
+        this.targetDecayPct = normalizedTargetDecay;
+        this.stopLossExpansionPct = normalizedStopLossExpansion;
 
         // Pre-compute premium threshold levels for HFT optimization
+        // Target: exit when premium decays BY targetDecayPct (e.g., 5% decay = 95% of entry)
+        // StopLoss: exit when premium expands BY stopLossExpansionPct (e.g., 10% expansion = 110% of entry)
         if (premiumBasedExitEnabled && entryPremium > 0) {
             this.targetPremiumLevel = entryPremium * (1.0 - this.targetDecayPct);
             this.stopLossPremiumLevel = entryPremium * (1.0 + this.stopLossExpansionPct);
@@ -882,6 +891,33 @@ public class PositionMonitor {
     }
 
     // ==================== HFT OPTIMIZATION: Fast String Building Methods ====================
+
+    /**
+     * Normalize percentage value to decimal fraction.
+     * <p>
+     * Handles both formats:
+     * <ul>
+     *   <li>Values > 1 are treated as percentages (e.g., 5 → 0.05, 10 → 0.10)</li>
+     *   <li>Values <= 1 are treated as already normalized (e.g., 0.05 stays 0.05)</li>
+     *   <li>Values <= 0 use the default value</li>
+     * </ul>
+     *
+     * @param value the percentage value (1-100) or decimal fraction (0.01-1.0)
+     * @param defaultPct the default percentage value (1-100) if value <= 0
+     * @return normalized decimal fraction (0.01-1.0)
+     */
+    private static double normalizePercentage(double value, double defaultPct) {
+        if (value <= 0) {
+            // Use default and normalize it
+            return defaultPct / 100.0;
+        }
+        if (value > 1.0) {
+            // Value is in percentage form (e.g., 5 for 5%), convert to decimal
+            return value / 100.0;
+        }
+        // Value is already a decimal fraction (e.g., 0.05 for 5%)
+        return value;
+    }
 
     /**
      * HFT: Fast double formatting without String.format overhead.

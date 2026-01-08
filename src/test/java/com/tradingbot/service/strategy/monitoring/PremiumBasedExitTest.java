@@ -335,5 +335,125 @@ class PremiumBasedExitTest {
             assertNull(exitReason.get());
         }
     }
-}
 
+    @Nested
+    @DisplayName("Percentage Normalization Tests")
+    class PercentageNormalizationTests {
+
+        @Test
+        @DisplayName("Should work with percentage values 1-100 (e.g., 5 for 5%)")
+        void shouldWorkWithWholePercentageValues() {
+            // Using 5 and 10 instead of 0.05 and 0.10
+            PositionMonitor m = new PositionMonitor(
+                    EXECUTION_ID,
+                    2.0, 2.0,
+                    PositionMonitor.PositionDirection.SHORT,
+                    false, 0, 0,
+                    false, null,
+                    true,  // premiumBasedExitEnabled
+                    180.0, // entry premium
+                    5,     // 5% target decay (NOT 0.05)
+                    10     // 10% stop loss expansion (NOT 0.10)
+            );
+
+            m.addLeg("call-1", "NIFTY24350CE", 12345L, 100.0, 50, "CE");
+            m.addLeg("put-1", "NIFTY24350PE", 12346L, 80.0, 50, "PE");
+            m.setExitCallback(reason -> exitReason.set(reason));
+
+            // Target level should be 180 * 0.95 = 171
+            // Combined LTP = 85 + 85 = 170 (below 171 target)
+            ArrayList<Tick> ticks = createTicks(85.0, 85.0);
+            m.updatePriceWithDifferenceCheck(ticks);
+
+            assertNotNull(exitReason.get(), "Exit should trigger with whole percentage values");
+            assertTrue(exitReason.get().contains("PREMIUM_DECAY_TARGET_HIT"));
+        }
+
+        @Test
+        @DisplayName("Should work with decimal fraction values 0.01-1.0 (e.g., 0.05 for 5%)")
+        void shouldWorkWithDecimalFractionValues() {
+            // Using 0.05 and 0.10 (decimal fractions)
+            PositionMonitor m = new PositionMonitor(
+                    EXECUTION_ID,
+                    2.0, 2.0,
+                    PositionMonitor.PositionDirection.SHORT,
+                    false, 0, 0,
+                    false, null,
+                    true,  // premiumBasedExitEnabled
+                    180.0, // entry premium
+                    0.05,  // 5% target decay (decimal format)
+                    0.10   // 10% stop loss expansion (decimal format)
+            );
+
+            m.addLeg("call-1", "NIFTY24350CE", 12345L, 100.0, 50, "CE");
+            m.addLeg("put-1", "NIFTY24350PE", 12346L, 80.0, 50, "PE");
+            m.setExitCallback(reason -> exitReason.set(reason));
+
+            // Target level should be 180 * 0.95 = 171
+            // Combined LTP = 85 + 85 = 170 (below 171 target)
+            ArrayList<Tick> ticks = createTicks(85.0, 85.0);
+            m.updatePriceWithDifferenceCheck(ticks);
+
+            assertNotNull(exitReason.get(), "Exit should trigger with decimal fraction values");
+            assertTrue(exitReason.get().contains("PREMIUM_DECAY_TARGET_HIT"));
+        }
+
+        @Test
+        @DisplayName("Should handle stop loss expansion with percentage values 1-100")
+        void shouldHandleStopLossWithWholePercentageValues() {
+            // Using 5 and 10 instead of 0.05 and 0.10
+            PositionMonitor m = new PositionMonitor(
+                    EXECUTION_ID,
+                    2.0, 2.0,
+                    PositionMonitor.PositionDirection.SHORT,
+                    false, 0, 0,
+                    false, null,
+                    true,  // premiumBasedExitEnabled
+                    180.0, // entry premium
+                    5,     // 5% target decay
+                    10     // 10% stop loss expansion
+            );
+
+            m.addLeg("call-1", "NIFTY24350CE", 12345L, 100.0, 50, "CE");
+            m.addLeg("put-1", "NIFTY24350PE", 12346L, 80.0, 50, "PE");
+            m.setExitCallback(reason -> exitReason.set(reason));
+
+            // SL level should be 180 * 1.10 = 198
+            // Combined LTP = 110 + 90 = 200 (above 198 SL)
+            ArrayList<Tick> ticks = createTicks(110.0, 90.0);
+            m.updatePriceWithDifferenceCheck(ticks);
+
+            assertNotNull(exitReason.get(), "Exit should trigger with whole percentage values for SL");
+            assertTrue(exitReason.get().contains("PREMIUM_EXPANSION_SL_HIT"));
+        }
+
+        @Test
+        @DisplayName("Should use default values when zero is passed")
+        void shouldUseDefaultsWhenZeroPassed() {
+            // Passing 0 should use defaults (5% decay, 10% expansion)
+            PositionMonitor m = new PositionMonitor(
+                    EXECUTION_ID,
+                    2.0, 2.0,
+                    PositionMonitor.PositionDirection.SHORT,
+                    false, 0, 0,
+                    false, null,
+                    true,  // premiumBasedExitEnabled
+                    180.0, // entry premium
+                    0,     // should default to 5%
+                    0      // should default to 10%
+            );
+
+            m.addLeg("call-1", "NIFTY24350CE", 12345L, 100.0, 50, "CE");
+            m.addLeg("put-1", "NIFTY24350PE", 12346L, 80.0, 50, "PE");
+            m.setExitCallback(reason -> exitReason.set(reason));
+
+            // Target level should be 180 * 0.95 = 171 (using default 5%)
+            // Combined LTP = 85 + 85 = 170 (below 171 target)
+            ArrayList<Tick> ticks = createTicks(85.0, 85.0);
+            m.updatePriceWithDifferenceCheck(ticks);
+
+            assertNotNull(exitReason.get(), "Exit should trigger with default values");
+            assertTrue(exitReason.get().contains("PREMIUM_DECAY_TARGET_HIT"));
+        }
+    }
+}
