@@ -78,7 +78,7 @@ public class StrategyConfig {
      * When enabled, exits are based on percentage decay/expansion of combined premium.
      * When disabled (default), uses traditional fixed-point stopLossPoints/targetPoints.
      */
-    private boolean premiumBasedExitEnabled = true;
+    private boolean premiumBasedExitEnabled = false;
 
     /**
      * Target decay percentage for premium-based exit.
