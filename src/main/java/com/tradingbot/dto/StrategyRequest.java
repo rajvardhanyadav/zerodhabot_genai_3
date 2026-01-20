@@ -60,4 +60,18 @@ public class StrategyRequest {
      * If null, uses value from StrategyConfig.stopLossExpansionPct.
      */
     private Double stopLossExpansionPct;
+
+    // ==================== SL/TARGET MODE CONFIGURATION ====================
+
+    /**
+     * Stop-loss and target calculation mode (from frontend).
+     * <p>
+     * Accepted values:
+     * <ul>
+     *   <li><b>"points"</b>: Fixed point-based exits. Uses stopLossPoints/targetPoints.</li>
+     *   <li><b>"percentage"</b>: Percentage-based on combined entry premium. Uses targetDecayPct/stopLossExpansionPct.</li>
+     * </ul>
+     * If null or empty, defaults to "points" mode (or "percentage" if premiumBasedExitEnabled is true in config).
+     */
+    private String slTargetMode;
 }

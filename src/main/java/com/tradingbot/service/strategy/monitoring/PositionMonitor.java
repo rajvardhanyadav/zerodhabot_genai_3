@@ -1,5 +1,6 @@
 package com.tradingbot.service.strategy.monitoring;
 
+import com.tradingbot.model.SlTargetMode;
 import com.zerodhatech.models.Tick;
 import lombok.Getter;
 import lombok.Setter;
@@ -199,6 +200,20 @@ public class PositionMonitor {
      */
     private volatile double stopLossPremiumLevel;
 
+    // ==================== SL/TARGET MODE CONFIGURATION ====================
+
+    /**
+     * Stop-loss and target calculation mode.
+     * <ul>
+     *   <li>POINTS: Fixed point-based exits (stopLossPoints/targetPoints)</li>
+     *   <li>PREMIUM: Percentage-based on combined entry premium (targetDecayPct/stopLossExpansionPct)</li>
+     *   <li>MTM: Mark-to-market P&L based exits</li>
+     * </ul>
+     * When null, defaults to POINTS (or PREMIUM if premiumBasedExitEnabled is true).
+     */
+    @Getter
+    private final SlTargetMode slTargetMode;
+
     // HFT: Pre-built exit reason prefixes for premium-based exits
     private static final String EXIT_PREFIX_PREMIUM_DECAY = "PREMIUM_DECAY_TARGET_HIT (Combined LTP: ";
     private static final String EXIT_PREFIX_PREMIUM_EXPANSION = "PREMIUM_EXPANSION_SL_HIT (Combined LTP: ";
@@ -337,7 +352,7 @@ public class PositionMonitor {
                            PositionDirection direction) {
         // Delegate to full constructor with all optional features disabled for backward compatibility
         this(executionId, stopLossPoints, targetPoints, direction, false, 0.0, 0.0, false, null,
-             false, 0.0, 0.0, 0.0);
+             false, 0.0, 0.0, 0.0, null);
     }
 
     /**
@@ -363,7 +378,7 @@ public class PositionMonitor {
                            double trailingDistancePoints) {
         this(executionId, stopLossPoints, targetPoints, direction, trailingStopEnabled,
              trailingActivationPoints, trailingDistancePoints, false, null,
-             false, 0.0, 0.0, 0.0);
+             false, 0.0, 0.0, 0.0, null);
     }
 
     /**
@@ -393,7 +408,7 @@ public class PositionMonitor {
                            LocalTime forcedExitTime) {
         this(executionId, stopLossPoints, targetPoints, direction, trailingStopEnabled,
              trailingActivationPoints, trailingDistancePoints, forcedExitEnabled, forcedExitTime,
-             false, 0.0, 0.0, 0.0);
+             false, 0.0, 0.0, 0.0, null);
     }
 
     /**
@@ -426,6 +441,7 @@ public class PositionMonitor {
      * @param entryPremium combined entry premium (CE + PE) for reference
      * @param targetDecayPct target decay percentage (e.g., 0.05 = 5%)
      * @param stopLossExpansionPct stop loss expansion percentage (e.g., 0.10 = 10%)
+     * @param slTargetMode SL/Target calculation mode (POINTS, PREMIUM, MTM)
      */
     public PositionMonitor(String executionId,
                            double stopLossPoints,
@@ -439,7 +455,8 @@ public class PositionMonitor {
                            boolean premiumBasedExitEnabled,
                            double entryPremium,
                            double targetDecayPct,
-                           double stopLossExpansionPct) {
+                           double stopLossExpansionPct,
+                           SlTargetMode slTargetMode) {
         this.executionId = executionId;
         this.stopLossPoints = stopLossPoints;
         this.targetPoints = targetPoints;
@@ -458,6 +475,9 @@ public class PositionMonitor {
         // Forced exit time configuration
         this.forcedExitEnabled = forcedExitEnabled;
         this.forcedExitTime = forcedExitTime != null ? forcedExitTime : LocalTime.of(15, 10);
+
+        // SL/Target mode configuration
+        this.slTargetMode = slTargetMode != null ? slTargetMode : SlTargetMode.POINTS;
 
         // Premium-based exit configuration
         this.premiumBasedExitEnabled = premiumBasedExitEnabled;
@@ -499,6 +519,9 @@ public class PositionMonitor {
                     formatDouble(this.stopLossExpansionPct * 100), formatDouble(this.targetPremiumLevel),
                     formatDouble(this.stopLossPremiumLevel));
         }
+
+        log.info("Position monitor initialized for execution {}: slTargetMode={}, direction={}, target={} pts, SL={} pts",
+                executionId, this.slTargetMode, this.direction, formatDouble(targetPoints), formatDouble(stopLossPoints));
     }
 
     /**

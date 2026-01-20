@@ -47,7 +47,8 @@ class PremiumBasedExitTest {
                 true,  // premiumBasedExitEnabled
                 COMBINED_ENTRY,
                 TARGET_DECAY_PCT,
-                SL_EXPANSION_PCT
+                SL_EXPANSION_PCT,
+                null  // slTargetMode (defaults to POINTS)
         );
 
         m.addLeg("call-order-1", "NIFTY24350CE", 12345L, CALL_ENTRY, 50, "CE");
@@ -66,7 +67,8 @@ class PremiumBasedExitTest {
                 false, 0, 0,  // trailing stop disabled
                 false, null,  // forced exit disabled
                 false,  // premiumBasedExitEnabled = false
-                0, 0, 0  // premium params ignored
+                0, 0, 0,  // premium params ignored
+                null  // slTargetMode (defaults to POINTS)
         );
 
         m.addLeg("call-order-1", "NIFTY24350CE", 12345L, CALL_ENTRY, 50, "CE");
@@ -251,7 +253,8 @@ class PremiumBasedExitTest {
                     PositionMonitor.PositionDirection.SHORT,
                     false, 0, 0,
                     false, null,
-                    true, 0, 0.05, 0.10  // premium enabled but entry=0
+                    true, 0, 0.05, 0.10,  // premium enabled but entry=0
+                    null  // slTargetMode
             );
 
             monitor.addLeg("call-1", "NIFTY24350CE", 12345L, 100.0, 50, "CE");
@@ -353,7 +356,8 @@ class PremiumBasedExitTest {
                     true,  // premiumBasedExitEnabled
                     180.0, // entry premium
                     5,     // 5% target decay (NOT 0.05)
-                    10     // 10% stop loss expansion (NOT 0.10)
+                    10,    // 10% stop loss expansion (NOT 0.10)
+                    null   // slTargetMode
             );
 
             m.addLeg("call-1", "NIFTY24350CE", 12345L, 100.0, 50, "CE");
@@ -382,7 +386,8 @@ class PremiumBasedExitTest {
                     true,  // premiumBasedExitEnabled
                     180.0, // entry premium
                     0.05,  // 5% target decay (decimal format)
-                    0.10   // 10% stop loss expansion (decimal format)
+                    0.10,  // 10% stop loss expansion (decimal format)
+                    null   // slTargetMode
             );
 
             m.addLeg("call-1", "NIFTY24350CE", 12345L, 100.0, 50, "CE");
@@ -411,7 +416,8 @@ class PremiumBasedExitTest {
                     true,  // premiumBasedExitEnabled
                     180.0, // entry premium
                     5,     // 5% target decay
-                    10     // 10% stop loss expansion
+                    10,    // 10% stop loss expansion
+                    null   // slTargetMode
             );
 
             m.addLeg("call-1", "NIFTY24350CE", 12345L, 100.0, 50, "CE");
@@ -440,7 +446,8 @@ class PremiumBasedExitTest {
                     true,  // premiumBasedExitEnabled
                     180.0, // entry premium
                     0,     // should default to 5%
-                    0      // should default to 10%
+                    0,     // should default to 10%
+                    null   // slTargetMode
             );
 
             m.addLeg("call-1", "NIFTY24350CE", 12345L, 100.0, 50, "CE");

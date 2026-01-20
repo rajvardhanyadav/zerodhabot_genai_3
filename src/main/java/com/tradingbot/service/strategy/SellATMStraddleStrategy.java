@@ -8,6 +8,7 @@ import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
+import com.tradingbot.model.SlTargetMode;
 import com.tradingbot.model.StrategyCompletionReason;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyStatus;
@@ -159,12 +160,15 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         final double targetPoints = getTargetPoints(request);
         final double targetDecayPct = getTargetDecayPct(request);
         final double stopLossExpansionPct = getStopLossExpansionPct(request);
+        final SlTargetMode slTargetMode = getSlTargetMode(request);
         final String tradingMode = getTradingMode();
 
         log.info(StrategyConstants.LOG_EXECUTING_STRATEGY,
                 tradingMode, instrumentType, stopLossPoints, targetPoints);
 
-        if (strategyConfig.isPremiumBasedExitEnabled()) {
+        log.info("[{}] SL/Target mode: {}", tradingMode, slTargetMode);
+
+        if (slTargetMode == SlTargetMode.PREMIUM || strategyConfig.isPremiumBasedExitEnabled()) {
             log.info("[{}] Premium-based exit parameters: targetDecayPct={}%, stopLossExpansionPct={}%",
                     tradingMode, targetDecayPct , stopLossExpansionPct);
         }
@@ -263,7 +267,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 callOrderId, putOrderId,
                 quantity, stopLossPoints, targetPoints,
                 targetDecayPct, stopLossExpansionPct,
-                completionCallback);
+                slTargetMode, completionCallback);
 
         return buildSuccessResponse(executionId, orderDetails, totalPremium, stopLossPoints, targetPoints, tradingMode);
     }
@@ -584,6 +588,40 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 : strategyConfig.getStopLossExpansionPct();
     }
 
+    /**
+     * Resolve SL/Target calculation mode from request.
+     * Converts frontend string values to internal enum representation.
+     * <p>
+     * Frontend values:
+     * <ul>
+     *   <li>"points" → POINTS: Fixed point-based exits using stopLossPoints/targetPoints</li>
+     *   <li>"percentage" → PREMIUM: Percentage-based on combined entry premium using targetDecayPct/stopLossExpansionPct</li>
+     * </ul>
+     *
+     * @param request the strategy request
+     * @return SlTargetMode enum, defaults to POINTS if not specified (or PREMIUM if config has premiumBasedExitEnabled)
+     */
+    private SlTargetMode getSlTargetMode(StrategyRequest request) {
+        String modeFromRequest = request.getSlTargetMode();
+
+        if (modeFromRequest != null && !modeFromRequest.isBlank()) {
+            String normalizedMode = modeFromRequest.trim().toLowerCase();
+
+            return switch (normalizedMode) {
+                case "percentage", "premium" -> SlTargetMode.PREMIUM;
+                case "points", "fixed" -> SlTargetMode.POINTS;
+                case "mtm" -> SlTargetMode.MTM;
+                default -> {
+                    log.warn("Unknown slTargetMode '{}', defaulting to POINTS", modeFromRequest);
+                    yield SlTargetMode.POINTS;
+                }
+            };
+        }
+
+        // Default based on config: if premiumBasedExitEnabled is true in config, default to PREMIUM; else POINTS
+        return strategyConfig.isPremiumBasedExitEnabled() ? SlTargetMode.PREMIUM : SlTargetMode.POINTS;
+    }
+
     private String getTradingMode() {
         return unifiedTradingService.isPaperTradingEnabled()
                 ? StrategyConstants.TRADING_MODE_PAPER
@@ -740,6 +778,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                  int quantity,
                                  double stopLossPoints, double targetPoints,
                                  double targetDecayPct, double stopLossExpansionPct,
+                                 SlTargetMode slTargetMode,
                                  StrategyCompletionCallback completionCallback) {
 
         // HFT: Spawn async task for monitoring setup to avoid blocking the main thread
@@ -753,7 +792,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
             CurrentUserContext.wrapWithContext(() -> {
                 setupMonitoringInternal(executionId, callInstrument, putInstrument,
                         callOrderId, putOrderId, quantity, stopLossPoints, targetPoints,
-                        targetDecayPct, stopLossExpansionPct, completionCallback);
+                        targetDecayPct, stopLossExpansionPct, slTargetMode, completionCallback);
             }), EXIT_ORDER_EXECUTOR
         ).exceptionally(ex -> {
             log.error("Error setting up monitoring for execution {}: {}", executionId, ex.getMessage(), ex);
@@ -769,6 +808,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                          int quantity,
                                          double stopLossPoints, double targetPoints,
                                          double targetDecayPct, double stopLossExpansionPct,
+                                         SlTargetMode slTargetMode,
                                          StrategyCompletionCallback completionCallback) {
         try {
             // HFT: Parallel fetch of order histories for both legs
@@ -841,7 +881,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                     latestCallOrder.status, callEntryPrice, latestPutOrder.status, putEntryPrice);
 
             PositionMonitor monitor = createPositionMonitor(executionId, stopLossPoints, targetPoints,
-                    targetDecayPct, stopLossExpansionPct,
+                    targetDecayPct, stopLossExpansionPct, slTargetMode,
                     callOrderId, putOrderId, callInstrument, putInstrument,
                     callEntryPrice, putEntryPrice, quantity, completionCallback);
 
@@ -890,6 +930,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
     private PositionMonitor createPositionMonitor(String executionId, double stopLossPoints, double targetPoints,
                                                   double targetDecayPct, double stopLossExpansionPct,
+                                                  SlTargetMode slTargetMode,
                                                   String callOrderId, String putOrderId,
                                                   Instrument callInstrument, Instrument putInstrument,
                                                   double callEntryPrice, double putEntryPrice,
@@ -903,6 +944,11 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         // Calculate combined entry premium for premium-based exit mode
         double combinedEntryPremium = callEntryPrice + putEntryPrice;
 
+        // Determine if premium-based exit should be enabled based on slTargetMode
+        // If slTargetMode is PREMIUM, override config setting; otherwise use config default
+        boolean premiumBasedExitEnabled = (slTargetMode == SlTargetMode.PREMIUM)
+                || (slTargetMode == null && strategyConfig.isPremiumBasedExitEnabled());
+
         PositionMonitor monitor = new PositionMonitor(
                 executionId,
                 stopLossPoints,
@@ -914,10 +960,11 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 strategyConfig.isAutoSquareOffEnabled(),
                 forcedExitTime,
                 // Premium-based exit configuration - use resolved values from request/config
-                strategyConfig.isPremiumBasedExitEnabled(),
+                premiumBasedExitEnabled,
                 combinedEntryPremium,
                 targetDecayPct,
-                stopLossExpansionPct
+                stopLossExpansionPct,
+                slTargetMode
         );
 
         monitor.addLeg(callOrderId, callInstrument.tradingsymbol, callInstrument.instrument_token,
