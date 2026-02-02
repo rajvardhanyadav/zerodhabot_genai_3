@@ -231,6 +231,7 @@ public class StrategyRestartScheduler {
         request.setExpiry(execution.getExpiry());
         request.setTargetPoints(execution.getTargetPoints());
         request.setStopLossPoints(execution.getStopLossPoints());
+        request.setSlTargetMode(execution.getSlTargetMode());
         request.setLots(execution.getLots());
         // Preserve premium-based exit parameters from original execution
         request.setTargetDecayPct(execution.getTargetDecayPct());

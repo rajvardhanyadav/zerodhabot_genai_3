@@ -698,8 +698,13 @@ public class PositionMonitor {
                 if (i > 0) legPrices.append(", ");
                 legPrices.append(legs[i].symbol).append('=').append(legs[i].currentPrice);
             }
-            log.debug("Cumulative P&L for {}: {} points (target: {}, stop: {}) | Legs: [{}]",
-                    executionId, cumulative, targetPts, stopPts, legPrices);
+            if(premiumBasedExitEnabled) {
+                log.debug("Cumulative P&L for {}: {} points (targetDecayPct: {}, stopLossExpansionPct: {}) | Legs: [{}]",
+                        executionId, cumulative, this.targetDecayPct, this.stopLossExpansionPct, legPrices);
+            } else {
+                log.debug("Cumulative P&L for {}: {} points (target: {}, stop: {}) | Legs: [{}]",
+                        executionId, cumulative, targetPts, stopPts, legPrices);
+            }
         }
 
         // ==================== PRIORITY 0: TIME-BASED FORCED EXIT (HIGHEST PRIORITY) ====================

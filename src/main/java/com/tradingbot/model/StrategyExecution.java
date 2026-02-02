@@ -77,6 +77,7 @@ public class StrategyExecution {
      * Stored from request to preserve during auto-restarts.
      */
     private Double stopLossExpansionPct;
+    private String slTargetMode;
 
     private Integer lots;
 

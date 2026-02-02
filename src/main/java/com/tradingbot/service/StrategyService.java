@@ -88,6 +88,7 @@ public class StrategyService {
         // Store premium-based exit parameters for use during execution and restarts
         execution.setTargetDecayPct(request.getTargetDecayPct());
         execution.setStopLossExpansionPct(request.getStopLossExpansionPct());
+        execution.setSlTargetMode(request.getSlTargetMode());
         execution.setTradingMode(unifiedTradingService.isPaperTradingEnabled()
                 ? StrategyConstants.TRADING_MODE_PAPER
                 : StrategyConstants.TRADING_MODE_LIVE);
