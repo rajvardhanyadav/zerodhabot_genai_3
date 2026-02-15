@@ -335,6 +335,41 @@ public class WebSocketService implements DisposableBean {
         log.info("[user={}] Stopped monitoring {}", c.userId, executionId);
     }
 
+    /**
+     * Add a new instrument to an existing monitoring session.
+     * <p>
+     * Used when a leg is replaced during premium-based individual leg exit.
+     * Subscribes to the new instrument token and associates it with the execution.
+     * <p>
+     * Thread-safe: Can be called from any thread.
+     *
+     * @param executionId the execution ID to associate the instrument with
+     * @param instrumentToken the new instrument token to subscribe to
+     */
+    public void addInstrumentToMonitoring(String executionId, long instrumentToken) {
+        UserWSContext c = ctx();
+
+        // Verify the execution is still being monitored
+        if (!c.activeMonitors.containsKey(executionId)) {
+            log.warn("[user={}] Cannot add instrument to monitoring - execution {} is not active",
+                    c.userId, executionId);
+            return;
+        }
+
+        // Add the instrument-execution mapping
+        c.instrumentToExecutions.computeIfAbsent(instrumentToken, k -> new CopyOnWriteArraySet<>()).add(executionId);
+
+        // Subscribe to the new instrument
+        if (c.isConnected.get()) {
+            subscribe(c, List.of(instrumentToken));
+            log.info("[user={}] Added instrument {} to monitoring for execution {}",
+                    c.userId, instrumentToken, executionId);
+        } else {
+            log.warn("[user={}] WebSocket not connected, will subscribe to instrument {} on reconnect",
+                    c.userId, instrumentToken);
+        }
+    }
+
     // Historical replay helpers (per-user)
     public Optional<PositionMonitor> getMonitor(String executionId) {
         UserWSContext c = ctx();

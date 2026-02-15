@@ -192,12 +192,14 @@ public class PositionMonitor {
      * Pre-computed target premium level (for HFT optimization).
      * Calculated as: entryPremium * (1 - targetDecayPct)
      */
+    @Getter
     private volatile double targetPremiumLevel;
 
     /**
      * Pre-computed stop loss premium level (for HFT optimization).
      * Calculated as: entryPremium * (1 + stopLossExpansionPct)
      */
+    @Getter
     private volatile double stopLossPremiumLevel;
 
     // ==================== SL/TARGET MODE CONFIGURATION ====================
@@ -217,9 +219,12 @@ public class PositionMonitor {
     // HFT: Pre-built exit reason prefixes for premium-based exits
     private static final String EXIT_PREFIX_PREMIUM_DECAY = "PREMIUM_DECAY_TARGET_HIT (Combined LTP: ";
     private static final String EXIT_PREFIX_PREMIUM_EXPANSION = "PREMIUM_EXPANSION_SL_HIT (Combined LTP: ";
+    private static final String EXIT_PREFIX_PREMIUM_LEG_ADJUSTMENT = "PREMIUM_LEG_ADJUSTMENT (Profitable leg: ";
     private static final String EXIT_SUFFIX_ENTRY = ", Entry: ";
     private static final String EXIT_SUFFIX_TARGET_LEVEL = ", TargetLevel: ";
     private static final String EXIT_SUFFIX_SL_LEVEL = ", SL Level: ";
+    private static final String EXIT_SUFFIX_HALF_THRESHOLD = ", HalfThreshold: ";
+    private static final String EXIT_SUFFIX_COMBINED_LTP = ", CombinedLTP: ";
     private static final String EXIT_SUFFIX_CLOSE = ")";
 
     // HFT: Pre-built exit reason prefixes to avoid String.format on hot path
@@ -294,6 +299,40 @@ public class PositionMonitor {
 
     @Setter
     private BiConsumer<String, String> individualLegExitCallback;
+
+    /**
+     * Callback for leg replacement in premium-based exit mode.
+     * <p>
+     * When a profitable leg is exited due to premium-based individual leg exit,
+     * this callback is invoked to add a new leg with similar premium to the loss-making leg.
+     * <p>
+     * Parameters:
+     * <ul>
+     *   <li>String: Symbol of the exited leg</li>
+     *   <li>String: Type of leg to add (CE or PE - opposite of the exited leg)</li>
+     *   <li>Double: Target premium for the new leg (similar to loss-making leg's current price)</li>
+     * </ul>
+     * Returns the new leg details (orderId, symbol, instrumentToken, entryPrice) via callback completion.
+     */
+    @Setter
+    private LegReplacementCallback legReplacementCallback;
+
+    /**
+     * Functional interface for leg replacement callback.
+     * Used in premium-based individual leg exit to add a replacement leg.
+     */
+    @FunctionalInterface
+    public interface LegReplacementCallback {
+        /**
+         * Called when a new leg needs to be added to replace an exited profitable leg.
+         *
+         * @param exitedLegSymbol symbol of the leg that was exited
+         * @param legTypeToAdd type of new leg to add (CE or PE)
+         * @param targetPremium target premium for the new leg (similar to loss-making leg)
+         * @param lossMakingLegSymbol symbol of the loss-making leg (for reference)
+         */
+        void onLegReplacement(String exitedLegSymbol, String legTypeToAdd, double targetPremium, String lossMakingLegSymbol);
+    }
 
     /**
      * Sets the owner user ID for context propagation in Cloud Run.
@@ -582,6 +621,91 @@ public class PositionMonitor {
     }
 
     /**
+     * Updates the entry premium and recalculates thresholds after a leg replacement.
+     * <p>
+     * This method should be called after adding a replacement leg following an individual
+     * leg exit in premium-based exit mode. It recalculates the combined entry premium
+     * based on all current legs and adjusts target/stop-loss levels accordingly.
+     * <p>
+     * The new thresholds are calculated using the same percentages but with the new
+     * combined premium as the reference point.
+     * <p>
+     * Thread-safe: Can be called after leg replacement when new leg fill is confirmed.
+     */
+    public void updateEntryPremiumAfterLegReplacement() {
+        if (!premiumBasedExitEnabled) {
+            log.warn("updateEntryPremiumAfterLegReplacement called but premium-based exit is not enabled for execution {}", executionId);
+            return;
+        }
+
+        // Calculate new combined entry premium from all current legs' entry prices
+        final LegMonitor[] legs = cachedLegsArray;
+        final int count = cachedLegsCount;
+        if (count == 0) {
+            log.warn("No legs found for execution {} when updating entry premium after replacement", executionId);
+            return;
+        }
+
+        double newCombinedPremium = 0.0;
+        for (int i = 0; i < count; i++) {
+            newCombinedPremium += legs[i].entryPrice;
+        }
+
+        if (newCombinedPremium <= 0) {
+            log.error("Invalid combined premium {} for execution {} after leg replacement", newCombinedPremium, executionId);
+            return;
+        }
+
+        final double oldEntryPremium = this.entryPremium;
+        final double oldTargetLevel = this.targetPremiumLevel;
+        final double oldSlLevel = this.stopLossPremiumLevel;
+
+        this.entryPremium = newCombinedPremium;
+        // Re-compute threshold levels with new combined premium
+        this.targetPremiumLevel = newCombinedPremium * (1.0 - targetDecayPct);
+        this.stopLossPremiumLevel = newCombinedPremium * (1.0 + stopLossExpansionPct);
+
+        log.info("Entry premium updated after leg replacement for execution {}: " +
+                        "oldPremium={} -> newPremium={}, " +
+                        "oldTargetLevel={} -> newTargetLevel={} ({}% decay), " +
+                        "oldSlLevel={} -> newSlLevel={} ({}% expansion)",
+                executionId,
+                formatDouble(oldEntryPremium), formatDouble(newCombinedPremium),
+                formatDouble(oldTargetLevel), formatDouble(targetPremiumLevel), formatDouble(targetDecayPct * 100),
+                formatDouble(oldSlLevel), formatDouble(stopLossPremiumLevel), formatDouble(stopLossExpansionPct * 100));
+    }
+
+    /**
+     * Adds a replacement leg and updates the premium thresholds.
+     * <p>
+     * This is a convenience method that combines addLeg() and updateEntryPremiumAfterLegReplacement()
+     * for use after an individual leg exit in premium-based exit mode.
+     * <p>
+     * After calling this method, the monitor will continue tracking with the new combined
+     * premium and adjusted target/stop-loss levels.
+     *
+     * @param orderId unique order identifier for exit operations
+     * @param symbol trading symbol (e.g., "NIFTY24350CE")
+     * @param instrumentToken Zerodha instrument token for WebSocket price updates
+     * @param entryPrice entry price for this leg
+     * @param quantity number of contracts
+     * @param type leg type (typically "CE" for Call or "PE" for Put)
+     */
+    public void addReplacementLeg(String orderId, String symbol, long instrumentToken,
+                                   double entryPrice, int quantity, String type) {
+        // Add the new leg
+        addLeg(orderId, symbol, instrumentToken, entryPrice, quantity, type);
+
+        // Update entry premium and thresholds
+        updateEntryPremiumAfterLegReplacement();
+
+        log.info("Replacement leg added and thresholds adjusted for execution {}: " +
+                        "new leg={} at {}, newEntryPremium={}, newTargetLevel={}, newSlLevel={}",
+                executionId, symbol, formatDouble(entryPrice),
+                formatDouble(entryPremium), formatDouble(targetPremiumLevel), formatDouble(stopLossPremiumLevel));
+    }
+
+    /**
      * Rebuilds the cached legs array when legs are added or removed.
      * <p>
      * This is called infrequently (only on leg changes), so allocation overhead is acceptable.
@@ -758,6 +882,94 @@ public class PositionMonitor {
                         executionId, formatDouble(combinedLTP), formatDouble(slLevel), formatDouble(entryPremium));
                 triggerExitAllLegs(buildExitReasonPremiumExpansionSL(combinedLTP, entryPremium, slLevel));
                 return;
+            }
+
+            // ==================== PREMIUM-BASED INDIVIDUAL LEG ADJUSTMENT ====================
+            // When combinedLTP reaches half the distance between entryPremium and slLevel:
+            // 1. Exit the profitable leg (the one with lower current price for SHORT)
+            // 2. Add new leg with similar premium to the loss-making leg
+            // 3. Adjust target and stop-loss levels for the new combined premium
+            // 4. Continue strategy with adjusted legs
+            //
+            // Half threshold formula: entryPremium + (slLevel - entryPremium) / 2
+            // This represents the midpoint between entry and stop-loss expansion
+            if (count >= 2 && individualLegExitCallback != null) {
+                final double halfThreshold = entryPremium + (slLevel - entryPremium) / 2.0;
+
+                if (combinedLTP >= halfThreshold) {
+                    // Find profitable and loss-making legs
+                    // For SHORT: profitable leg has lower current price (premium decayed)
+                    //            loss-making leg has higher current price (premium expanded)
+                    LegMonitor profitableLeg = null;
+                    LegMonitor lossMakingLeg = null;
+                    double profitableLegPnl = Double.NEGATIVE_INFINITY;
+                    double lossMakingLegPnl = Double.POSITIVE_INFINITY;
+
+                    for (int i = 0; i < count; i++) {
+                        final LegMonitor leg = legs[i];
+                        // For SHORT: P&L = (entry - current) * directionMultiplier
+                        // Since directionMultiplier = -1 for SHORT:
+                        // P&L = (current - entry) * (-1) = entry - current
+                        final double legPnl = (leg.currentPrice - leg.entryPrice) * directionMultiplier;
+
+                        if (legPnl > profitableLegPnl) {
+                            profitableLegPnl = legPnl;
+                            profitableLeg = leg;
+                        }
+                        if (legPnl < lossMakingLegPnl) {
+                            lossMakingLegPnl = legPnl;
+                            lossMakingLeg = leg;
+                        }
+                    }
+
+                    // Only proceed if we found distinct profitable and loss-making legs
+                    if (profitableLeg != null && lossMakingLeg != null && profitableLeg != lossMakingLeg) {
+                        log.warn("PREMIUM_LEG_ADJUSTMENT for execution {}: combinedLTP={} reached halfThreshold={} " +
+                                        "(slLevel={}, entryPremium={}) - Exiting profitable leg {} and adding replacement",
+                                executionId, formatDouble(combinedLTP), formatDouble(halfThreshold),
+                                formatDouble(slLevel), formatDouble(entryPremium), profitableLeg.symbol);
+
+                        // Build exit reason for the profitable leg
+                        String legExitReason = buildExitReasonPremiumLegAdjustment(
+                                profitableLeg.symbol, combinedLTP, halfThreshold, entryPremium);
+
+                        // Calculate target premium for the new leg (similar to loss-making leg's current price)
+                        final double targetPremiumForNewLeg = lossMakingLeg.currentPrice;
+                        final String exitedLegType = profitableLeg.type;
+                        final String newLegType = exitedLegType; // Same type (CE or PE) as the exited leg
+
+                        // Trigger exit callback for the profitable leg
+                        individualLegExitCallback.accept(profitableLeg.symbol, legExitReason);
+
+                        // Remove the profitable leg from monitoring
+                        legsBySymbol.remove(profitableLeg.symbol);
+                        legsByInstrumentToken.remove(profitableLeg.instrumentToken);
+
+                        log.info("Profitable leg {} removed from monitoring for execution {}. Loss-making leg {} current price: {}",
+                                profitableLeg.symbol, executionId, lossMakingLeg.symbol, formatDouble(lossMakingLeg.currentPrice));
+
+                        // Trigger leg replacement callback if available
+                        if (legReplacementCallback != null) {
+                            log.info("Requesting new {} leg with target premium {} (similar to loss-making leg {})",
+                                    newLegType, formatDouble(targetPremiumForNewLeg), lossMakingLeg.symbol);
+                            legReplacementCallback.onLegReplacement(
+                                    profitableLeg.symbol, newLegType, targetPremiumForNewLeg, lossMakingLeg.symbol);
+                        }
+
+                        // Rebuild cached arrays after leg removal (new leg will be added via addLeg() call)
+                        rebuildCachedLegsArray();
+
+                        // Recalculate combined premium with remaining leg(s)
+                        // New entry premium = loss-making leg's current price + target premium for new leg
+                        // This will be adjusted when the new leg is added via updateEntryPremiumAfterLegReplacement()
+                        log.info("Leg adjustment complete for execution {}. Awaiting new leg addition to adjust thresholds.",
+                                executionId);
+
+                        // Continue monitoring with remaining legs
+                        // The thresholds will be adjusted when the new leg is added
+                        return;
+                    }
+                }
             }
 
             // If premium-based exit is enabled, skip fixed-point MTM checks
@@ -1106,6 +1318,36 @@ public class PositionMonitor {
         appendDouble(sb, entry);
         sb.append(EXIT_SUFFIX_SL_LEVEL);
         appendDouble(sb, slLevel);
+        sb.append(EXIT_SUFFIX_CLOSE);
+        return sb.toString();
+    }
+
+    /**
+     * Build exit reason for premium-based individual leg adjustment.
+     * <p>
+     * Format: "PREMIUM_LEG_ADJUSTMENT (Profitable leg: SYMBOL, CombinedLTP: X.XX, HalfThreshold: Y.YY, Entry: Z.ZZ)"
+     * <p>
+     * This is used when combinedLTP reaches half the distance between entry and SL level,
+     * triggering an exit of the profitable leg and replacement with a new leg.
+     *
+     * @param profitableLegSymbol symbol of the profitable leg being exited
+     * @param combinedLTP current combined premium (CE + PE LTP)
+     * @param halfThreshold the half-threshold level that triggered the adjustment
+     * @param entry original entry premium
+     * @return formatted exit reason string
+     */
+    private String buildExitReasonPremiumLegAdjustment(String profitableLegSymbol, double combinedLTP,
+                                                        double halfThreshold, double entry) {
+        StringBuilder sb = EXIT_REASON_BUILDER.get();
+        sb.setLength(0);
+        sb.append(EXIT_PREFIX_PREMIUM_LEG_ADJUSTMENT);
+        sb.append(profitableLegSymbol);
+        sb.append(EXIT_SUFFIX_COMBINED_LTP);
+        appendDouble(sb, combinedLTP);
+        sb.append(EXIT_SUFFIX_HALF_THRESHOLD);
+        appendDouble(sb, halfThreshold);
+        sb.append(EXIT_SUFFIX_ENTRY);
+        appendDouble(sb, entry);
         sb.append(EXIT_SUFFIX_CLOSE);
         return sb.toString();
     }

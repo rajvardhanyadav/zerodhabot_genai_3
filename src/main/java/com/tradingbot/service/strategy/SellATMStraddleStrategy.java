@@ -1018,6 +1018,48 @@ public class SellATMStraddleStrategy extends BaseStrategy {
             }
         });
 
+        // Set leg replacement callback for premium-based individual leg exit
+        // This is triggered when a profitable leg is exited and needs to be replaced
+        // with a new leg having similar premium to the loss-making leg
+        monitor.setLegReplacementCallback((exitedLegSymbol, legTypeToAdd, targetPremium, lossMakingLegSymbol) -> {
+            String previousUser = com.tradingbot.util.CurrentUserContext.getUserId();
+            try {
+                // CLOUD RUN: Restore user context from monitor's stored ownerUserId
+                String monitorOwner = monitor.getOwnerUserId();
+                if (monitorOwner != null && !monitorOwner.isBlank()) {
+                    com.tradingbot.util.CurrentUserContext.setUserId(monitorOwner);
+                }
+                log.info("Leg replacement triggered for execution {}: exitedLeg={}, newLegType={}, " +
+                                "targetPremium={}, referenceLeg={}",
+                        executionId, exitedLegSymbol, legTypeToAdd, targetPremium, lossMakingLegSymbol);
+
+                // Execute leg replacement asynchronously to avoid blocking WebSocket thread
+                CompletableFuture.runAsync(() -> {
+                    String innerPreviousUser = com.tradingbot.util.CurrentUserContext.getUserId();
+                    try {
+                        String innerMonitorOwner = monitor.getOwnerUserId();
+                        if (innerMonitorOwner != null && !innerMonitorOwner.isBlank()) {
+                            com.tradingbot.util.CurrentUserContext.setUserId(innerMonitorOwner);
+                        }
+                        placeReplacementLegOrder(executionId, exitedLegSymbol, legTypeToAdd,
+                                targetPremium, lossMakingLegSymbol, quantity, monitor);
+                    } finally {
+                        if (innerPreviousUser != null && !innerPreviousUser.isBlank()) {
+                            com.tradingbot.util.CurrentUserContext.setUserId(innerPreviousUser);
+                        } else {
+                            com.tradingbot.util.CurrentUserContext.clear();
+                        }
+                    }
+                }, EXIT_ORDER_EXECUTOR);
+            } finally {
+                if (previousUser != null && !previousUser.isBlank()) {
+                    com.tradingbot.util.CurrentUserContext.setUserId(previousUser);
+                } else {
+                    com.tradingbot.util.CurrentUserContext.clear();
+                }
+            }
+        });
+
         return monitor;
     }
 
@@ -1402,5 +1444,242 @@ public class SellATMStraddleStrategy extends BaseStrategy {
             return StrategyCompletionReason.STOPLOSS_HIT;
         }
         return StrategyCompletionReason.TARGET_HIT;
+    }
+
+    // ==================== LEG REPLACEMENT SUPPORT ====================
+
+    /**
+     * Find an option instrument with premium closest to the target premium.
+     * <p>
+     * This method searches through the pre-built instrument index to find an option
+     * of the specified type (CE or PE) whose current LTP is closest to the target premium.
+     * Used for leg replacement when the profitable leg is exited.
+     * <p>
+     * HFT Optimizations:
+     * <ul>
+     *   <li>Uses pre-built instrument index for fast iteration</li>
+     *   <li>Fetches quotes in batch for efficiency</li>
+     *   <li>Early termination when exact match found</li>
+     * </ul>
+     *
+     * @param optionType option type to search for (CE or PE)
+     * @param targetPremium target premium to match
+     * @param maxPremiumDifference maximum acceptable premium difference (e.g., 10% of target)
+     * @return Instrument with closest premium, or null if none found within tolerance
+     */
+    private Instrument findInstrumentByTargetPremium(String optionType, double targetPremium,
+                                                      double maxPremiumDifference) {
+        log.info("Finding {} instrument with target premium {} (max diff: {})",
+                optionType, targetPremium, maxPremiumDifference);
+
+        // Collect candidate instruments of the specified type
+        List<Instrument> candidates = new ArrayList<>();
+        for (Map.Entry<InstrumentKey, Instrument> entry : instrumentIndex.entrySet()) {
+            if (entry.getKey().optionType().equals(optionType)) {
+                candidates.add(entry.getValue());
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            log.warn("No {} instruments found in index", optionType);
+            return null;
+        }
+
+        log.debug("Found {} candidate {} instruments", candidates.size(), optionType);
+
+        // Batch fetch LTPs for all candidates (more efficient than individual calls)
+        // Limit to reasonable number to avoid API overload
+        int maxCandidates = Math.min(candidates.size(), 50);
+        String[] instrumentIdentifiers = new String[maxCandidates];
+        for (int i = 0; i < maxCandidates; i++) {
+            instrumentIdentifiers[i] = "NFO:" + candidates.get(i).tradingsymbol;
+        }
+
+        Map<String, com.zerodhatech.models.LTPQuote> ltpMap;
+        try {
+            ltpMap = tradingService.getLTP(instrumentIdentifiers);
+        } catch (Exception e) {
+            log.error("Failed to fetch LTPs for candidate instruments: {}", e.getMessage(), e);
+            return null;
+        } catch (KiteException e) {
+            throw new RuntimeException(e);
+        }
+
+        if (ltpMap == null || ltpMap.isEmpty()) {
+            log.warn("No LTP data received for candidate instruments");
+            return null;
+        }
+
+        // Find instrument with closest premium to target
+        Instrument bestMatch = null;
+        double bestDifference = Double.MAX_VALUE;
+
+        for (int i = 0; i < maxCandidates; i++) {
+            Instrument candidate = candidates.get(i);
+            String identifier = "NFO:" + candidate.tradingsymbol;
+            com.zerodhatech.models.LTPQuote ltp = ltpMap.get(identifier);
+
+            if (ltp == null || ltp.lastPrice <= 0) {
+                continue;
+            }
+
+            double currentPremium = ltp.lastPrice;
+            double difference = Math.abs(currentPremium - targetPremium);
+
+            if (difference < bestDifference) {
+                bestDifference = difference;
+                bestMatch = candidate;
+
+                // Early termination if we find an exact or very close match
+                if (difference < 0.5) {
+                    log.info("Found exact match {} with premium {} (target: {})",
+                            candidate.tradingsymbol, currentPremium, targetPremium);
+                    break;
+                }
+            }
+        }
+
+        if (bestMatch != null && bestDifference <= maxPremiumDifference) {
+            log.info("Found best match {} with premium difference {} (within tolerance {})",
+                    bestMatch.tradingsymbol, bestDifference, maxPremiumDifference);
+            return bestMatch;
+        }
+
+        log.warn("No instrument found within premium tolerance {} for target {}",
+                maxPremiumDifference, targetPremium);
+        return null;
+    }
+
+    /**
+     * Place a replacement leg order and add it to the position monitor.
+     * <p>
+     * This method is called when the leg replacement callback is triggered.
+     * It finds an instrument with similar premium to the target, places a SELL order,
+     * and adds the new leg to the monitor with adjusted thresholds.
+     *
+     * @param executionId execution ID for logging and state tracking
+     * @param exitedLegSymbol symbol of the exited leg (for logging)
+     * @param legType type of leg to add (CE or PE)
+     * @param targetPremium target premium for the new leg
+     * @param lossMakingLegSymbol symbol of the loss-making leg (for reference)
+     * @param quantity order quantity
+     * @param monitor PositionMonitor to add the new leg to
+     */
+    private void placeReplacementLegOrder(String executionId, String exitedLegSymbol,
+                                           String legType, double targetPremium,
+                                           String lossMakingLegSymbol, int quantity,
+                                           PositionMonitor monitor) {
+        String tradingMode = getTradingMode();
+        log.info("[{}] Placing replacement {} leg for execution {}: exitedLeg={}, targetPremium={}, " +
+                        "referenceLeg={}",
+                tradingMode, legType, executionId, exitedLegSymbol, targetPremium, lossMakingLegSymbol);
+
+        try {
+            // Allow up to 20% premium difference for finding a replacement
+            double maxPremiumDiff = targetPremium * 0.20;
+            Instrument replacementInstrument = findInstrumentByTargetPremium(legType, targetPremium, maxPremiumDiff);
+
+            if (replacementInstrument == null) {
+                log.error("[{}] Could not find replacement {} instrument with target premium {} for execution {}",
+                        tradingMode, legType, targetPremium, executionId);
+                // Continue monitoring with remaining legs - don't stop the strategy
+                return;
+            }
+
+            log.info("[{}] Found replacement instrument: {} for execution {}",
+                    tradingMode, replacementInstrument.tradingsymbol, executionId);
+
+            // Place SELL order for the replacement leg
+            OrderRequest sellOrder = createOrderRequest(
+                    replacementInstrument.tradingsymbol,
+                    StrategyConstants.TRANSACTION_SELL,
+                    quantity,
+                    StrategyConstants.ORDER_TYPE_MARKET
+            );
+
+            OrderResponse orderResponse;
+            try {
+                orderResponse = unifiedTradingService.placeOrder(sellOrder);
+            } catch (Exception e) {
+                log.error("[{}] Failed to place replacement order for execution {}: {}",
+                        tradingMode, executionId, e.getMessage(), e);
+                return;
+            } catch (KiteException e) {
+                throw new RuntimeException(e);
+            }
+
+            if (!StrategyConstants.ORDER_STATUS_SUCCESS.equals(orderResponse.getStatus())) {
+                log.error("[{}] Replacement order failed for execution {}: {}",
+                        tradingMode, executionId, orderResponse.getMessage());
+                return;
+            }
+
+            String newOrderId = orderResponse.getOrderId();
+            log.info("[{}] Replacement order placed successfully for execution {}: orderId={}",
+                    tradingMode, executionId, newOrderId);
+
+            // Get the fill price for the new leg (fetch LTP since OrderResponse doesn't have average price)
+            double fillPrice = targetPremium; // Default to target premium
+            try {
+                String identifier = "NFO:" + replacementInstrument.tradingsymbol;
+                Map<String, com.zerodhatech.models.LTPQuote> ltpMap = tradingService.getLTP(new String[]{identifier});
+                if (ltpMap != null && ltpMap.get(identifier) != null && ltpMap.get(identifier).lastPrice > 0) {
+                    fillPrice = ltpMap.get(identifier).lastPrice;
+                }
+            } catch (Exception e) {
+                log.warn("Could not fetch LTP for fill price, using target premium: {}", e.getMessage());
+            } catch (KiteException e) {
+                throw new RuntimeException(e);
+            }
+
+            log.info("[{}] Replacement leg fill price for execution {}: {}", tradingMode, executionId, fillPrice);
+
+            // Add the replacement leg to the monitor and adjust thresholds
+            monitor.addReplacementLeg(
+                    newOrderId,
+                    replacementInstrument.tradingsymbol,
+                    replacementInstrument.instrument_token,
+                    fillPrice,
+                    quantity,
+                    legType
+            );
+
+            // Subscribe to WebSocket updates for the new instrument
+            webSocketService.addInstrumentToMonitoring(executionId, replacementInstrument.instrument_token);
+
+            // Update the strategy execution state with the new leg
+            try {
+                StrategyExecution execution = strategyService.getStrategy(executionId);
+                if (execution != null && execution.getOrderLegs() != null) {
+                    StrategyExecution.OrderLeg newLeg = StrategyExecution.OrderLeg.builder()
+                            .orderId(newOrderId)
+                            .tradingSymbol(replacementInstrument.tradingsymbol)
+                            .optionType(legType)
+                            .entryPrice(fillPrice)
+                            .quantity(quantity)
+                            .entryTransactionType(StrategyConstants.TRANSACTION_SELL)
+                            .entryTimestamp(System.currentTimeMillis())
+                            .lifecycleState(StrategyExecution.LegLifecycleState.OPEN)
+                            .build();
+
+                    execution.getOrderLegs().add(newLeg);
+                    log.info("[{}] Strategy execution state updated with replacement leg for {}",
+                            tradingMode, executionId);
+                }
+            } catch (Exception e) {
+                log.warn("[{}] Could not update strategy execution state with new leg: {}",
+                        tradingMode, e.getMessage());
+                // Non-fatal: monitoring will continue regardless
+            }
+
+            log.info("[{}] Replacement leg successfully added to monitoring for execution {}: " +
+                            "symbol={}, price={}, newEntryPremium={}, newTargetLevel={}, newSlLevel={}",
+                    tradingMode, executionId, replacementInstrument.tradingsymbol, fillPrice,
+                    monitor.getEntryPremium(), monitor.getTargetPremiumLevel(), monitor.getStopLossPremiumLevel());
+
+        } catch (Exception e) {
+            log.error("[{}] Unexpected error during leg replacement for execution {}: {}",
+                    tradingMode, executionId, e.getMessage(), e);
+        }
     }
 }
