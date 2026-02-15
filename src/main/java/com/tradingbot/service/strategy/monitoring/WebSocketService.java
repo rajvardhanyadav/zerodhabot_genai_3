@@ -53,7 +53,7 @@ public class WebSocketService implements DisposableBean {
     private static class UserWSContext {
         final String userId;
         KiteTicker ticker;
-        final Map<String, PositionMonitor> activeMonitors = new ConcurrentHashMap<>();
+        final Map<String, PositionMonitorV2> activeMonitors = new ConcurrentHashMap<>();
         final Map<Long, Set<String>> instrumentToExecutions = new ConcurrentHashMap<>();
         final AtomicBoolean isConnected = new AtomicBoolean(false);
         final AtomicBoolean isConnecting = new AtomicBoolean(false);
@@ -235,7 +235,7 @@ public class WebSocketService implements DisposableBean {
 
             // Step 1: Stop all active monitors
             int monitorCount = c.activeMonitors.size();
-            for (PositionMonitor monitor : c.activeMonitors.values()) {
+            for (PositionMonitorV2 monitor : c.activeMonitors.values()) {
                 try {
                     monitor.stop();
                 } catch (Exception e) {
@@ -290,14 +290,14 @@ public class WebSocketService implements DisposableBean {
     }
 
     /** Start monitoring for current user */
-    public void startMonitoring(String executionId, PositionMonitor monitor) {
+    public void startMonitoring(String executionId, PositionMonitorV2 monitor) {
         UserWSContext c = ctx();
         if (c.activeMonitors.putIfAbsent(executionId, monitor) != null) {
             log.warn("[user={}] Monitoring already active for {}", c.userId, executionId);
             return;
         }
         List<Long> tokensToSubscribe = new ArrayList<>();
-        for (PositionMonitor.LegMonitor leg : monitor.getLegs()) {
+        for (LegMonitor leg : monitor.getLegs()) {
             long token = leg.getInstrumentToken();
             c.instrumentToExecutions.computeIfAbsent(token, k -> new CopyOnWriteArraySet<>()).add(executionId);
             tokensToSubscribe.add(token);
@@ -311,14 +311,14 @@ public class WebSocketService implements DisposableBean {
     /** Stop monitoring for current user */
     public void stopMonitoring(String executionId) {
         UserWSContext c = ctx();
-        PositionMonitor monitor = c.activeMonitors.remove(executionId);
+        PositionMonitorV2 monitor = c.activeMonitors.remove(executionId);
         if (monitor == null) {
             log.warn("[user={}] No active monitor for {}", c.userId, executionId);
             return;
         }
         monitor.stop();
         List<Long> tokensToUnsubscribe = new ArrayList<>();
-        for (PositionMonitor.LegMonitor leg : monitor.getLegs()) {
+        for (LegMonitor leg : monitor.getLegs()) {
             long token = leg.getInstrumentToken();
             Set<String> executions = c.instrumentToExecutions.get(token);
             if (executions != null) {
@@ -371,14 +371,14 @@ public class WebSocketService implements DisposableBean {
     }
 
     // Historical replay helpers (per-user)
-    public Optional<PositionMonitor> getMonitor(String executionId) {
+    public Optional<PositionMonitorV2> getMonitor(String executionId) {
         UserWSContext c = ctx();
         return Optional.ofNullable(c.activeMonitors.get(executionId));
     }
 
     public void feedTicks(String executionId, ArrayList<Tick> ticks) {
         UserWSContext c = ctx();
-        PositionMonitor monitor = c.activeMonitors.get(executionId);
+        PositionMonitorV2 monitor = c.activeMonitors.get(executionId);
         if (monitor != null && monitor.isActive()) {
             monitor.updatePriceWithDifferenceCheck(ticks);
         }
@@ -582,7 +582,7 @@ public class WebSocketService implements DisposableBean {
         if (tickCount == 0) {
             return;
         }
-        final Map<String, PositionMonitor> monitors = c.activeMonitors;
+        final Map<String, PositionMonitorV2> monitors = c.activeMonitors;
         if (monitors.isEmpty()) {
             return;
         }
@@ -596,15 +596,15 @@ public class WebSocketService implements DisposableBean {
             }
 
             // HFT: For single-execution case (most common), avoid Set allocation entirely
-            PositionMonitor singleMonitor = null;
-            Set<PositionMonitor> monitorsToUpdate = null;
+            PositionMonitorV2 singleMonitor = null;
+            Set<PositionMonitorV2> monitorsToUpdate = null;
 
             for (int i = 0; i < tickCount; i++) {
                 final long token = ticks.get(i).getInstrumentToken();
                 final Set<String> executions = c.instrumentToExecutions.get(token);
                 if (executions != null && !executions.isEmpty()) {
                     for (String executionId : executions) {
-                        final PositionMonitor monitor = monitors.get(executionId);
+                        final PositionMonitorV2 monitor = monitors.get(executionId);
                         if (monitor != null && monitor.isActive()) {
                             // HFT: Optimize for single-monitor case (most common)
                             if (singleMonitor == null && monitorsToUpdate == null) {
@@ -627,7 +627,7 @@ public class WebSocketService implements DisposableBean {
             if (singleMonitor != null) {
                 singleMonitor.updatePriceWithDifferenceCheck(ticks);
             } else if (monitorsToUpdate != null) {
-                for (PositionMonitor monitor : monitorsToUpdate) {
+                for (PositionMonitorV2 monitor : monitorsToUpdate) {
                     monitor.updatePriceWithDifferenceCheck(ticks);
                 }
             }

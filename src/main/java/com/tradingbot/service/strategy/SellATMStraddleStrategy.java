@@ -16,7 +16,7 @@ import com.tradingbot.service.StrategyService;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.service.greeks.DeltaCacheService;
-import com.tradingbot.service.strategy.monitoring.PositionMonitor;
+import com.tradingbot.service.strategy.monitoring.PositionMonitorV2;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import com.tradingbot.util.CurrentUserContext;
 import com.tradingbot.util.StrategyConstants;
@@ -880,7 +880,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
             log.info("Orders validated - Call: {} (Price: {}), Put: {} (Price: {})",
                     latestCallOrder.status, callEntryPrice, latestPutOrder.status, putEntryPrice);
 
-            PositionMonitor monitor = createPositionMonitor(executionId, stopLossPoints, targetPoints,
+            PositionMonitorV2 monitor = createPositionMonitor(executionId, stopLossPoints, targetPoints,
                     targetDecayPct, stopLossExpansionPct, slTargetMode,
                     callOrderId, putOrderId, callInstrument, putInstrument,
                     callEntryPrice, putEntryPrice, quantity, completionCallback);
@@ -928,7 +928,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         return true;
     }
 
-    private PositionMonitor createPositionMonitor(String executionId, double stopLossPoints, double targetPoints,
+    private PositionMonitorV2 createPositionMonitor(String executionId, double stopLossPoints, double targetPoints,
                                                   double targetDecayPct, double stopLossExpansionPct,
                                                   SlTargetMode slTargetMode,
                                                   String callOrderId, String putOrderId,
@@ -949,11 +949,11 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         boolean premiumBasedExitEnabled = (slTargetMode == SlTargetMode.PREMIUM)
                 || (slTargetMode == null && strategyConfig.isPremiumBasedExitEnabled());
 
-        PositionMonitor monitor = new PositionMonitor(
+        PositionMonitorV2 monitor = new PositionMonitorV2(
                 executionId,
                 stopLossPoints,
                 targetPoints,
-                PositionMonitor.PositionDirection.SHORT,
+                PositionMonitorV2.PositionDirection.SHORT,
                 strategyConfig.isTrailingStopEnabled(),
                 strategyConfig.getTrailingActivationPoints(),
                 strategyConfig.getTrailingDistancePoints(),
@@ -1063,7 +1063,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         return monitor;
     }
 
-    private void startWebSocketMonitoring(String executionId, PositionMonitor monitor,
+    private void startWebSocketMonitoring(String executionId, PositionMonitorV2 monitor,
                                           double callEntryPrice, double putEntryPrice) {
         double totalPremium = (callEntryPrice + putEntryPrice) * monitor.getLegs().get(0).getQuantity();
         log.info("Starting monitoring for execution {} with total premium: {}", executionId, totalPremium);
@@ -1139,7 +1139,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     }
 
     private void exitIndividualLeg(String executionId, String legSymbol, int quantity, String reason,
-                                   PositionMonitor monitor, StrategyCompletionCallback completionCallback) {
+                                   PositionMonitorV2 monitor, StrategyCompletionCallback completionCallback) {
         String tradingMode = getTradingMode();
         String legType = legSymbol.contains(StrategyConstants.OPTION_TYPE_CALL) ? "Call" : "Put";
 
@@ -1568,7 +1568,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     private void placeReplacementLegOrder(String executionId, String exitedLegSymbol,
                                            String legType, double targetPremium,
                                            String lossMakingLegSymbol, int quantity,
-                                           PositionMonitor monitor) {
+                                           PositionMonitorV2 monitor) {
         String tradingMode = getTradingMode();
         log.info("[{}] Placing replacement {} leg for execution {}: exitedLeg={}, targetPremium={}, " +
                         "referenceLeg={}",

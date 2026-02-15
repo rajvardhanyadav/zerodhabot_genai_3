@@ -9,7 +9,7 @@ import com.tradingbot.model.StrategyCompletionReason;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.service.greeks.DeltaCacheService;
-import com.tradingbot.service.strategy.monitoring.PositionMonitor;
+import com.tradingbot.service.strategy.monitoring.PositionMonitorV2;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import com.tradingbot.util.StrategyConstants;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
@@ -323,7 +323,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
             log.info("Orders validated - Call: {} (Price: {}), Put: {} (Price: {})",
                     latestCallOrder.status, callEntryPrice, latestPutOrder.status, putEntryPrice);
 
-            PositionMonitor monitor = createPositionMonitor(executionId, stopLossPoints, targetPoints,
+            PositionMonitorV2 monitor = createPositionMonitor(executionId, stopLossPoints, targetPoints,
                                                             callOrderId, putOrderId, callInstrument, putInstrument,
                                                             callEntryPrice, putEntryPrice, quantity, completionCallback);
 
@@ -370,7 +370,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
         return true;
     }
 
-    private PositionMonitor createPositionMonitor(String executionId, double stopLossPoints, double targetPoints,
+    private PositionMonitorV2 createPositionMonitor(String executionId, double stopLossPoints, double targetPoints,
                                                   String callOrderId, String putOrderId,
                                                   Instrument callInstrument, Instrument putInstrument,
                                                   double callEntryPrice, double putEntryPrice,
@@ -379,11 +379,11 @@ public class ATMStraddleStrategy extends BaseStrategy {
 
         // BUY ATM straddle: long volatility exposure -> use LONG direction
         // Include trailing stop loss configuration from StrategyConfig
-        PositionMonitor monitor = new PositionMonitor(
+        PositionMonitorV2 monitor = new PositionMonitorV2(
                 executionId,
                 stopLossPoints,
                 targetPoints,
-                PositionMonitor.PositionDirection.LONG,
+                PositionMonitorV2.PositionDirection.LONG,
                 strategyConfig.isTrailingStopEnabled(),
                 strategyConfig.getTrailingActivationPoints(),
                 strategyConfig.getTrailingDistancePoints()
@@ -445,7 +445,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
         return monitor;
     }
 
-    private void startWebSocketMonitoring(String executionId, PositionMonitor monitor,
+    private void startWebSocketMonitoring(String executionId, PositionMonitorV2 monitor,
                                          double callEntryPrice, double putEntryPrice) {
         double totalPremium = (callEntryPrice + putEntryPrice) * monitor.getLegs().get(0).getQuantity();
         log.info("Starting monitoring for execution {} with total premium: {}", executionId, totalPremium);
@@ -558,7 +558,7 @@ public class ATMStraddleStrategy extends BaseStrategy {
      * If all legs are closed, it will stop monitoring and notify completion
      */
     private void exitIndividualLeg(String executionId, String legSymbol, int quantity,
-                                   String reason, PositionMonitor monitor,
+                                   String reason, PositionMonitorV2 monitor,
                                    StrategyCompletionCallback completionCallback) {
         try {
             String tradingMode = getTradingMode();
