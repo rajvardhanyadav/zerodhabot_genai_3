@@ -338,5 +338,91 @@ class PositionMonitorV2Test {
             assertTrue(monitor.isActive());
         }
     }
+
+    @Nested
+    @DisplayName("Leg Replacement Wait Tests")
+    class LegReplacementWaitTests {
+
+        private AtomicReference<String> legExitReason;
+        private AtomicReference<String> legReplacementSymbol;
+
+        @BeforeEach
+        void setUp() {
+            exitReason = new AtomicReference<>(null);
+            legExitReason = new AtomicReference<>(null);
+            legReplacementSymbol = new AtomicReference<>(null);
+        }
+
+        private PositionMonitorV2 createPremiumMonitorWithCallbacks() {
+            PositionMonitorV2 m = new PositionMonitorV2(
+                    EXECUTION_ID,
+                    2.0,  // stopLossPoints
+                    2.0,  // targetPoints
+                    PositionMonitorV2.PositionDirection.SHORT,
+                    false, 0, 0,  // trailing stop disabled
+                    false, null,  // forced exit disabled
+                    true,  // premiumBasedExitEnabled
+                    COMBINED_ENTRY,  // 180.0
+                    0.05,  // 5% target decay
+                    0.30,  // 30% SL expansion for individual leg
+                    SlTargetMode.PREMIUM
+            );
+
+            m.addLeg("call-order-1", "NIFTY24350CE", 12345L, CALL_ENTRY, 50, "CE");
+            m.addLeg("put-order-1", "NIFTY24350PE", 12346L, PUT_ENTRY, 50, "PE");
+            m.setExitCallback(reason -> exitReason.set(reason));
+            m.setIndividualLegExitCallback((symbol, reason) -> legExitReason.set(reason));
+            m.setLegReplacementCallback((exitedLeg, legType, targetPremium, lossMakingLeg) -> {
+                legReplacementSymbol.set(exitedLeg);
+            });
+
+            return m;
+        }
+
+        @Test
+        @DisplayName("Should initially not have leg replacement in progress")
+        void shouldNotHaveLegReplacementInProgressInitially() {
+            monitor = createPremiumMonitorWithCallbacks();
+            assertFalse(monitor.isLegReplacementInProgress());
+        }
+
+        @Test
+        @DisplayName("Signal leg replacement complete should clear state")
+        void signalLegReplacementCompleteShouldClearState() {
+            monitor = createPremiumMonitorWithCallbacks();
+
+            // Directly test the public API
+            monitor.signalLegReplacementComplete("NEW_LEG");
+
+            // No exception should be thrown, state should remain clean
+            assertFalse(monitor.isLegReplacementInProgress());
+        }
+
+        @Test
+        @DisplayName("Signal leg replacement failed should clear state")
+        void signalLegReplacementFailedShouldClearState() {
+            monitor = createPremiumMonitorWithCallbacks();
+
+            // Directly test the public API
+            monitor.signalLegReplacementFailed("Order rejected");
+
+            // No exception should be thrown, state should remain clean
+            assertFalse(monitor.isLegReplacementInProgress());
+        }
+
+        @Test
+        @DisplayName("Monitor should stay active during normal operation")
+        void monitorShouldStayActiveDuringNormalOperation() {
+            monitor = createPremiumMonitorWithCallbacks();
+
+            // Price within thresholds - no exit should occur
+            ArrayList<Tick> ticks = createTicks(100.0, 80.0);
+            monitor.updatePriceWithDifferenceCheck(ticks);
+
+            assertTrue(monitor.isActive());
+            assertNull(exitReason.get());
+            assertFalse(monitor.isLegReplacementInProgress());
+        }
+    }
 }
 

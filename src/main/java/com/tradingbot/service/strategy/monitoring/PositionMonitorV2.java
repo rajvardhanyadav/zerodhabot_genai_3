@@ -140,6 +140,27 @@ public class PositionMonitorV2 {
     @Getter
     private volatile String ownerUserId;
 
+    /**
+     * Flag indicating a leg replacement is in progress.
+     * <p>
+     * When true, exit condition evaluation is paused to prevent conflicting
+     * decisions while waiting for the replacement leg to be placed.
+     * <p>
+     * HFT: Uses volatile for thread visibility without lock overhead.
+     */
+    @Getter
+    private volatile boolean legReplacementInProgress = false;
+
+    /**
+     * Symbol of the leg being replaced (for logging/debugging).
+     */
+    private volatile String legBeingReplaced;
+
+    /**
+     * Timestamp when leg replacement started (for timeout detection).
+     */
+    private volatile long legReplacementStartTimeNanos;
+
     // ==================== CALLBACKS ====================
 
     @Setter
@@ -437,8 +458,30 @@ public class PositionMonitorV2 {
 
     /**
      * HFT-optimized exit evaluation using strategy pattern.
+     * <p>
+     * This method skips evaluation when a leg replacement is in progress to prevent
+     * conflicting exit decisions while waiting for the replacement order to be placed.
      */
     private void evaluateExitConditions() {
+        // Skip evaluation if leg replacement is in progress
+        // This prevents conflicting exit decisions while waiting for replacement
+        if (legReplacementInProgress) {
+            // Check for timeout (30 seconds) to prevent infinite blocking
+            long elapsedNanos = System.nanoTime() - legReplacementStartTimeNanos;
+            long elapsedSeconds = elapsedNanos / 1_000_000_000L;
+            if (elapsedSeconds > 30) {
+                log.warn("Leg replacement timeout for {} after {}s - resuming exit evaluation. Leg: {}",
+                        executionId, elapsedSeconds, legBeingReplaced);
+                clearLegReplacementState();
+            } else {
+                if (log.isDebugEnabled()) {
+                    log.debug("Skipping exit evaluation for {} - leg replacement in progress for {}",
+                            executionId, legBeingReplaced);
+                }
+                return;
+            }
+        }
+
         final LegMonitor[] legs = cachedLegsArray;
         final int count = cachedLegsCount;
         if (count == 0) return;
@@ -506,6 +549,10 @@ public class PositionMonitorV2 {
             }
 
             case ADJUST_LEG -> {
+                // Set leg replacement state BEFORE triggering callback
+                // This ensures evaluateExitConditions will skip evaluation on next tick
+                setLegReplacementState(result.getLegSymbol());
+
                 if (individualLegExitCallback != null) {
                     individualLegExitCallback.accept(result.getLegSymbol(), result.getExitReason());
                 }
@@ -518,6 +565,10 @@ public class PositionMonitorV2 {
                             result.getTargetPremiumForNewLeg(),
                             result.getLossMakingLegSymbol()
                     );
+                } else {
+                    // No callback registered - clear state to avoid blocking
+                    log.warn("No legReplacementCallback registered for {} - clearing replacement state", executionId);
+                    clearLegReplacementState();
                 }
             }
 
@@ -536,6 +587,80 @@ public class PositionMonitorV2 {
         if (exitCallback != null) {
             exitCallback.accept(exitReason);
         }
+    }
+
+    // ==================== LEG REPLACEMENT STATE MANAGEMENT ====================
+
+    /**
+     * Sets the leg replacement in-progress state.
+     * <p>
+     * Called internally when ADJUST_LEG exit result is triggered.
+     * This pauses exit evaluation until the replacement leg is placed.
+     *
+     * @param legSymbol the symbol of the leg being replaced
+     */
+    private void setLegReplacementState(String legSymbol) {
+        this.legBeingReplaced = legSymbol;
+        this.legReplacementStartTimeNanos = System.nanoTime();
+        this.legReplacementInProgress = true;
+        log.info("Leg replacement started for {} - pausing exit evaluation until replacement is complete. Leg: {}",
+                executionId, legSymbol);
+    }
+
+    /**
+     * Clears the leg replacement in-progress state.
+     * <p>
+     * Called after replacement is complete or on timeout.
+     */
+    private void clearLegReplacementState() {
+        this.legReplacementInProgress = false;
+        this.legBeingReplaced = null;
+        this.legReplacementStartTimeNanos = 0;
+    }
+
+    /**
+     * Signals that the leg replacement has been completed.
+     * <p>
+     * This method should be called by external code (e.g., SellATMStraddleStrategy)
+     * after the replacement leg order has been placed and added to the monitor.
+     * Calling this method resumes exit condition evaluation.
+     *
+     * @param newLegSymbol the symbol of the newly placed replacement leg (for logging)
+     */
+    public void signalLegReplacementComplete(String newLegSymbol) {
+        if (!legReplacementInProgress) {
+            log.debug("signalLegReplacementComplete called for {} but no replacement was in progress", executionId);
+            return;
+        }
+
+        long elapsedNanos = System.nanoTime() - legReplacementStartTimeNanos;
+        long elapsedMs = elapsedNanos / 1_000_000L;
+
+        log.info("Leg replacement completed for {} - resuming exit evaluation. " +
+                 "Replaced: {} -> New: {}, Duration: {}ms",
+                executionId, legBeingReplaced, newLegSymbol, elapsedMs);
+
+        clearLegReplacementState();
+    }
+
+    /**
+     * Signals that the leg replacement has failed.
+     * <p>
+     * This method should be called when the replacement leg order fails.
+     * Exit evaluation will resume, which may trigger a full position exit.
+     *
+     * @param reason the reason for failure
+     */
+    public void signalLegReplacementFailed(String reason) {
+        if (!legReplacementInProgress) {
+            log.debug("signalLegReplacementFailed called for {} but no replacement was in progress", executionId);
+            return;
+        }
+
+        log.warn("Leg replacement failed for {} - resuming exit evaluation. Leg: {}, Reason: {}",
+                executionId, legBeingReplaced, reason);
+
+        clearLegReplacementState();
     }
 
     // ==================== PUBLIC API ====================
