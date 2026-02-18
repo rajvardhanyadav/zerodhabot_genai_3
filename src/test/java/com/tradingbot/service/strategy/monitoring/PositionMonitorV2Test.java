@@ -372,7 +372,7 @@ class PositionMonitorV2Test {
             m.addLeg("put-order-1", "NIFTY24350PE", 12346L, PUT_ENTRY, 50, "PE");
             m.setExitCallback(reason -> exitReason.set(reason));
             m.setIndividualLegExitCallback((symbol, reason) -> legExitReason.set(reason));
-            m.setLegReplacementCallback((exitedLeg, legType, targetPremium, lossMakingLeg) -> {
+            m.setLegReplacementCallback((exitedLeg, legType, targetPremium, lossMakingLeg, exitedLegLtp) -> {
                 legReplacementSymbol.set(exitedLeg);
             });
 
@@ -449,7 +449,7 @@ class PositionMonitorV2Test {
             AtomicReference<String> replacementLegSymbol = new AtomicReference<>(null);
             monitor.setExitCallback(reason -> exitReason.set(reason));
             monitor.setIndividualLegExitCallback((symbol, reason) -> legExitReason.set(reason));
-            monitor.setLegReplacementCallback((exitedLeg, legType, targetPremium, lossMakingLeg) -> {
+            monitor.setLegReplacementCallback((exitedLeg, legType, targetPremium, lossMakingLeg, exitedLegLtp) -> {
                 replacementLegSymbol.set(exitedLeg);
                 // Simulate what placeReplacementLegOrder does - add replacement leg
                 // This should automatically clear the legReplacementInProgress flag

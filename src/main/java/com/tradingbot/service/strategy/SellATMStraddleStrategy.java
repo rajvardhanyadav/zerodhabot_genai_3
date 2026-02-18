@@ -1021,7 +1021,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         // Set leg replacement callback for premium-based individual leg exit
         // This is triggered when a profitable leg is exited and needs to be replaced
         // with a new leg having similar premium to the loss-making leg
-        monitor.setLegReplacementCallback((exitedLegSymbol, legTypeToAdd, targetPremium, lossMakingLegSymbol) -> {
+        monitor.setLegReplacementCallback((exitedLegSymbol, legTypeToAdd, targetPremium, lossMakingLegSymbol, exitedLegLtp) -> {
             String previousUser = com.tradingbot.util.CurrentUserContext.getUserId();
             try {
                 // CLOUD RUN: Restore user context from monitor's stored ownerUserId
@@ -1029,9 +1029,9 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 if (monitorOwner != null && !monitorOwner.isBlank()) {
                     com.tradingbot.util.CurrentUserContext.setUserId(monitorOwner);
                 }
-                log.info("Leg replacement triggered for execution {}: exitedLeg={}, newLegType={}, " +
-                                "targetPremium={}, referenceLeg={}",
-                        executionId, exitedLegSymbol, legTypeToAdd, targetPremium, lossMakingLegSymbol);
+                log.info("Leg replacement triggered for execution {}: exitedLeg={}, exitedLegLtp={}, " +
+                                "newLegType={}, targetPremium={}, referenceLeg={}",
+                        executionId, exitedLegSymbol, exitedLegLtp, legTypeToAdd, targetPremium, lossMakingLegSymbol);
 
                 // Execute leg replacement asynchronously to avoid blocking WebSocket thread
                 CompletableFuture.runAsync(() -> {
@@ -1042,7 +1042,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                             com.tradingbot.util.CurrentUserContext.setUserId(innerMonitorOwner);
                         }
                         placeReplacementLegOrder(executionId, exitedLegSymbol, legTypeToAdd,
-                                targetPremium, lossMakingLegSymbol, quantity, monitor);
+                                targetPremium, lossMakingLegSymbol, quantity, monitor, exitedLegLtp);
                     } finally {
                         if (innerPreviousUser != null && !innerPreviousUser.isBlank()) {
                             com.tradingbot.util.CurrentUserContext.setUserId(innerPreviousUser);
@@ -1465,17 +1465,25 @@ public class SellATMStraddleStrategy extends BaseStrategy {
      * @param optionType option type to search for (CE or PE)
      * @param targetPremium target premium to match
      * @param maxPremiumDifference maximum acceptable premium difference (e.g., 10% of target)
+     * @param exitedLegSymbol symbol of the leg that was just closed (to exclude from selection)
+     * @param exitedLegLtp LTP of the exited leg (replacement must have LTP > this value)
      * @return Instrument with closest premium, or null if none found within tolerance
      */
     private Instrument findInstrumentByTargetPremium(String optionType, double targetPremium,
-                                                      double maxPremiumDifference) {
-        log.info("Finding {} instrument with target premium {} (max diff: {})",
-                optionType, targetPremium, maxPremiumDifference);
+                                                      double maxPremiumDifference,
+                                                      String exitedLegSymbol, double exitedLegLtp) {
+        log.info("Finding {} instrument with target premium {} (max diff: {}), excluding: {}, minLtp: {}",
+                optionType, targetPremium, maxPremiumDifference, exitedLegSymbol, exitedLegLtp);
 
         // Collect candidate instruments of the specified type
         List<Instrument> candidates = new ArrayList<>();
         for (Map.Entry<InstrumentKey, Instrument> entry : instrumentIndex.entrySet()) {
             if (entry.getKey().optionType().equals(optionType)) {
+                // Exclude the exited leg symbol - cannot select the same instrument
+                if (exitedLegSymbol != null && entry.getValue().tradingsymbol.equals(exitedLegSymbol)) {
+                    log.debug("Excluding exited leg symbol from candidates: {}", exitedLegSymbol);
+                    continue;
+                }
                 candidates.add(entry.getValue());
             }
         }
@@ -1511,42 +1519,57 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         }
 
         // Find instrument with closest premium to target
+        // Additional constraint: LTP must be greater than the exited leg's LTP
         Instrument bestMatch = null;
         double bestDifference = Double.MAX_VALUE;
+        double bestMatchLtp = 0.0;
 
         for (int i = 0; i < maxCandidates; i++) {
             Instrument candidate = candidates.get(i);
             String identifier = "NFO:" + candidate.tradingsymbol;
             com.zerodhatech.models.LTPQuote ltp = ltpMap.get(identifier);
-            log.info("identifier : {}",identifier);
+            log.debug("Evaluating candidate: {} with identifier: {}", candidate.tradingsymbol, identifier);
+
             if (ltp == null || ltp.lastPrice <= 0) {
                 continue;
             }
 
             double currentPremium = ltp.lastPrice;
+
+            // Validation: Replacement leg LTP must be greater than the exited leg's LTP
+            // This ensures we're not selecting a cheaper instrument
+            if (exitedLegLtp > 0 && currentPremium <= exitedLegLtp) {
+                log.debug("Skipping {} - LTP {} is not greater than exited leg LTP {}",
+                        candidate.tradingsymbol, currentPremium, exitedLegLtp);
+                continue;
+            }
+
             double difference = Math.abs(currentPremium - targetPremium);
 
             if (difference < bestDifference) {
                 bestDifference = difference;
                 bestMatch = candidate;
+                bestMatchLtp = currentPremium;
 
                 // Early termination if we find an exact or very close match
                 if (difference < 0.5) {
-                    log.info("Found exact match {} with premium {} (target: {})",
-                            candidate.tradingsymbol, currentPremium, targetPremium);
+                    log.info("Found exact match {} with premium {} (target: {}, exitedLegLtp: {})",
+                            candidate.tradingsymbol, currentPremium, targetPremium, exitedLegLtp);
                     break;
                 }
             }
         }
 
-        if (bestMatch != null && bestDifference <= maxPremiumDifference) {
-            log.info("Found best match {} with premium difference {} (within tolerance {})",
-                    bestMatch.tradingsymbol, bestDifference, maxPremiumDifference);
+        // DISABLED: Premium tolerance check - now returns best match regardless of tolerance
+        // Original condition: if (bestMatch != null && bestDifference <= maxPremiumDifference)
+        if (bestMatch != null) {
+            log.info("Found best match {} with LTP {} (premium diff: {}, tolerance: {} [DISABLED], exitedLegLtp: {})",
+                    bestMatch.tradingsymbol, bestMatchLtp, bestDifference, maxPremiumDifference, exitedLegLtp);
             return bestMatch;
         }
 
-        log.warn("No instrument found within premium tolerance {} for target {}",
-                maxPremiumDifference, targetPremium);
+        log.warn("No instrument found with LTP > {} (premium tolerance check DISABLED)",
+                exitedLegLtp);
         return null;
     }
 
@@ -1556,33 +1579,48 @@ public class SellATMStraddleStrategy extends BaseStrategy {
      * This method is called when the leg replacement callback is triggered.
      * It finds an instrument with similar premium to the target, places a SELL order,
      * and adds the new leg to the monitor with adjusted thresholds.
+     * <p>
+     * <b>Replacement leg selection rules:</b>
+     * <ul>
+     *   <li>Must not be the same instrument as the exited leg</li>
+     *   <li>Must have LTP greater than the exited leg's LTP</li>
+     *   <li><s>Must have premium within tolerance of target premium</s> (DISABLED)</li>
+     * </ul>
      *
      * @param executionId execution ID for logging and state tracking
-     * @param exitedLegSymbol symbol of the exited leg (for logging)
+     * @param exitedLegSymbol symbol of the exited leg (excluded from selection)
      * @param legType type of leg to add (CE or PE)
      * @param targetPremium target premium for the new leg
      * @param lossMakingLegSymbol symbol of the loss-making leg (for reference)
      * @param quantity order quantity
      * @param monitor PositionMonitor to add the new leg to
+     * @param exitedLegLtp LTP of the exited leg at time of exit (replacement must have LTP > this)
      */
     private void placeReplacementLegOrder(String executionId, String exitedLegSymbol,
                                            String legType, double targetPremium,
                                            String lossMakingLegSymbol, int quantity,
-                                           PositionMonitorV2 monitor) {
+                                           PositionMonitorV2 monitor, double exitedLegLtp) {
         String tradingMode = getTradingMode();
-        log.info("[{}] Placing replacement {} leg for execution {}: exitedLeg={}, targetPremium={}, " +
-                        "referenceLeg={}",
-                tradingMode, legType, executionId, exitedLegSymbol, targetPremium, lossMakingLegSymbol);
+        log.info("[{}] Placing replacement {} leg for execution {}: exitedLeg={}, exitedLegLtp={}, " +
+                        "targetPremium={}, referenceLeg={}",
+                tradingMode, legType, executionId, exitedLegSymbol, exitedLegLtp, targetPremium, lossMakingLegSymbol);
 
         try {
             // Allow up to 20% premium difference for finding a replacement
             double maxPremiumDiff = targetPremium * 0.20;
-            Instrument replacementInstrument = findInstrumentByTargetPremium(legType, targetPremium, maxPremiumDiff);
+
+            // Find replacement instrument with constraints:
+            // 1. Not the same as exited leg
+            // 2. LTP must be greater than exited leg's LTP
+            Instrument replacementInstrument = findInstrumentByTargetPremium(
+                    legType, targetPremium, maxPremiumDiff, exitedLegSymbol, exitedLegLtp);
 
             if (replacementInstrument == null) {
-                log.error("[{}] Could not find replacement {} instrument with target premium {} for execution {}",
-                        tradingMode, legType, targetPremium, executionId);
-                // Continue monitoring with remaining legs - don't stop the strategy
+                log.error("[{}] Could not find replacement {} instrument with target premium {} " +
+                                "(minLtp: {}, excludeSymbol: {}) for execution {}",
+                        tradingMode, legType, targetPremium, exitedLegLtp, exitedLegSymbol, executionId);
+                // Signal failure to resume exit evaluation
+                monitor.signalLegReplacementFailed("No suitable replacement instrument found");
                 return;
             }
 

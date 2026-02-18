@@ -194,11 +194,27 @@ public class PositionMonitorV2 {
 
     /**
      * Functional interface for leg replacement callback.
+     * <p>
+     * Called when a profitable leg is exited and needs to be replaced with a new leg.
+     * The replacement leg selection should:
+     * <ul>
+     *   <li>Not be the same symbol as the exited leg</li>
+     *   <li>Have LTP greater than the exited leg's LTP</li>
+     * </ul>
      */
     @FunctionalInterface
     public interface LegReplacementCallback {
+        /**
+         * Called when a leg needs to be replaced.
+         *
+         * @param exitedLegSymbol symbol of the leg that was exited (should be excluded from selection)
+         * @param legTypeToAdd type of leg to add (CE or PE)
+         * @param targetPremium target premium for the new leg
+         * @param lossMakingLegSymbol symbol of the loss-making leg (for reference)
+         * @param exitedLegLtp LTP of the exited leg at time of exit (replacement must have LTP > this)
+         */
         void onLegReplacement(String exitedLegSymbol, String legTypeToAdd,
-                              double targetPremium, String lossMakingLegSymbol);
+                              double targetPremium, String lossMakingLegSymbol, double exitedLegLtp);
     }
 
     // ==================== CONSTRUCTORS ====================
@@ -573,7 +589,8 @@ public class PositionMonitorV2 {
                             result.getLegSymbol(),
                             result.getNewLegType(),
                             result.getTargetPremiumForNewLeg(),
-                            result.getLossMakingLegSymbol()
+                            result.getLossMakingLegSymbol(),
+                            result.getExitedLegLtp()  // Pass the exited leg's LTP for replacement validation
                     );
                 } else {
                     // No callback registered - clear state to avoid blocking

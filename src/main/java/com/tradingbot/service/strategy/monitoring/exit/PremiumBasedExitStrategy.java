@@ -134,10 +134,15 @@ public class PremiumBasedExitStrategy extends AbstractExitStrategy {
 
                 // Only proceed if we found distinct profitable and loss-making legs
                 if (profitableLeg != null && lossMakingLeg != null && profitableLeg != lossMakingLeg) {
+                    // Capture the exited leg's LTP before creating the result
+                    // This is used to ensure replacement leg has LTP > exited leg's LTP
+                    final double exitedLegLtp = profitableLeg.getCurrentPrice();
+
                     log.warn("PREMIUM_LEG_ADJUSTMENT for execution {}: combinedLTP={} reached halfThreshold={} " +
-                                    "(slLevel={}, entryPremium={}) - Exiting profitable leg {} and adding replacement",
+                                    "(slLevel={}, entryPremium={}) - Exiting profitable leg {} (LTP={}) and adding replacement",
                             ctx.getExecutionId(), formatDouble(combinedLTP), formatDouble(halfThreshold),
-                            formatDouble(slLevel), formatDouble(entryPremium), profitableLeg.getSymbol());
+                            formatDouble(slLevel), formatDouble(entryPremium), profitableLeg.getSymbol(),
+                            formatDouble(exitedLegLtp));
 
                     // Calculate target premium for the new leg (similar to loss-making leg's current price)
                     final double targetPremiumForNewLeg = lossMakingLeg.getCurrentPrice();
@@ -147,8 +152,9 @@ public class PremiumBasedExitStrategy extends AbstractExitStrategy {
                     String exitReason = buildExitReasonLegAdjustment(
                             profitableLeg.getSymbol(), combinedLTP, halfThreshold, entryPremium);
 
+                    // Pass exitedLegLtp to ensure replacement leg has higher LTP
                     return ExitResult.adjustLeg(exitReason, profitableLeg.getSymbol(),
-                            newLegType, targetPremiumForNewLeg, lossMakingLeg.getSymbol());
+                            newLegType, targetPremiumForNewLeg, lossMakingLeg.getSymbol(), exitedLegLtp);
                 }
             }
         }
