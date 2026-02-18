@@ -1518,7 +1518,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
             Instrument candidate = candidates.get(i);
             String identifier = "NFO:" + candidate.tradingsymbol;
             com.zerodhatech.models.LTPQuote ltp = ltpMap.get(identifier);
-
+            log.info("identifier : {}",identifier);
             if (ltp == null || ltp.lastPrice <= 0) {
                 continue;
             }

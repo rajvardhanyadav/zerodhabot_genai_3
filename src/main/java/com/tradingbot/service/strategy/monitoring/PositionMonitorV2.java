@@ -407,8 +407,12 @@ public class PositionMonitorV2 {
     /**
      * Adds a replacement leg and updates the premium thresholds.
      * <p>
-     * This is a convenience method that combines addLeg() and updateEntryPremiumAfterLegReplacement()
-     * for use after an individual leg exit in premium-based exit mode.
+     * This is a convenience method that combines addLeg(), updateEntryPremiumAfterLegReplacement(),
+     * and signalLegReplacementComplete() for use after an individual leg exit in premium-based exit mode.
+     * <p>
+     * <b>Important:</b> This method automatically clears the leg replacement in-progress state,
+     * resuming exit condition evaluation. If you need more control, use addLeg() and
+     * signalLegReplacementComplete() separately.
      *
      * @param orderId unique order identifier for exit operations
      * @param symbol trading symbol (e.g., "NIFTY24350CE")
@@ -428,6 +432,12 @@ public class PositionMonitorV2 {
         log.info("Replacement leg added and thresholds adjusted for {}: new leg={} at {}, newEntryPremium={}, newTargetLevel={}, newSlLevel={}",
                 executionId, symbol, formatDouble(entryPrice),
                 formatDouble(entryPremium), formatDouble(targetPremiumLevel), formatDouble(stopLossPremiumLevel));
+
+        // Automatically signal completion to resume exit evaluation
+        // This is the key fix - clear the legReplacementInProgress flag
+        if (legReplacementInProgress) {
+            signalLegReplacementComplete(symbol);
+        }
     }
 
     // ==================== PRICE UPDATE & EXIT EVALUATION ====================
