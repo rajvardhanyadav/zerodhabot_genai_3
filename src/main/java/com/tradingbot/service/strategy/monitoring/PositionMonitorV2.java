@@ -581,6 +581,19 @@ public class PositionMonitorV2 {
                 // This ensures evaluateExitConditions will skip evaluation on next tick
                 setLegReplacementState(result.getLegSymbol());
 
+                // Update the loss-making leg's entry price to its current LTP
+                final String lossMakingLegSymbol = result.getLossMakingLegSymbol();
+                final double newEntryPrice = result.getLossMakingLegNewEntryPrice();
+                if (lossMakingLegSymbol != null && newEntryPrice > 0.0) {
+                    LegMonitor lossMakingLeg = legsBySymbol.get(lossMakingLegSymbol);
+                    if (lossMakingLeg != null) {
+                        double oldEntryPrice = lossMakingLeg.getEntryPrice();
+                        lossMakingLeg.setEntryPrice(newEntryPrice);
+                        log.info("Updated entry price for {} from {} to {} during leg replacement",
+                                lossMakingLegSymbol, formatDouble(oldEntryPrice), formatDouble(newEntryPrice));
+                    }
+                }
+
                 if (individualLegExitCallback != null) {
                     individualLegExitCallback.accept(result.getLegSymbol(), result.getExitReason());
                 }

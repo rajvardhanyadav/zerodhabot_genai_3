@@ -29,7 +29,7 @@ public class LegMonitor {
     private final String orderId;
     private final String symbol;
     private final long instrumentToken;
-    private final double entryPrice;
+    private double entryPrice;
     private final int quantity;
     private final String type; // CE or PE
 
@@ -75,6 +75,18 @@ public class LegMonitor {
      */
     public void setCurrentPrice(double price) {
         this.currentPrice = price;
+    }
+
+    /**
+     * Set entry price for this leg.
+     * <p>
+     * Used during leg replacement to reset the entry price to the current LTP
+     * when a paired leg is being replaced.
+     *
+     * @param price new entry price
+     */
+    public void setEntryPrice(double price) {
+        this.entryPrice = price;
     }
 
     /**

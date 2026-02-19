@@ -41,7 +41,7 @@ public final class ExitResult {
     }
 
     /** Pre-allocated singleton for NO_EXIT (zero allocation on hot path) */
-    public static final ExitResult NO_EXIT_RESULT = new ExitResult(ExitType.NO_EXIT, null, null, null, 0.0, null, 0.0);
+    public static final ExitResult NO_EXIT_RESULT = new ExitResult(ExitType.NO_EXIT, null, null, null, 0.0, null, 0.0, 0.0);
 
     /** Exit type determining the action to take */
     private final ExitType exitType;
@@ -64,12 +64,15 @@ public final class ExitResult {
     /** LTP of the exited leg at time of exit (for ADJUST_LEG type, replacement must have LTP > this) */
     private final double exitedLegLtp;
 
+    /** New entry price for the loss-making leg (for ADJUST_LEG type, set to its current LTP) */
+    private final double lossMakingLegNewEntryPrice;
+
     /**
      * Private constructor - use factory methods for construction.
      */
     private ExitResult(ExitType exitType, String exitReason, String legSymbol,
                        String newLegType, double targetPremiumForNewLeg, String lossMakingLegSymbol,
-                       double exitedLegLtp) {
+                       double exitedLegLtp, double lossMakingLegNewEntryPrice) {
         this.exitType = exitType;
         this.exitReason = exitReason;
         this.legSymbol = legSymbol;
@@ -77,6 +80,7 @@ public final class ExitResult {
         this.targetPremiumForNewLeg = targetPremiumForNewLeg;
         this.lossMakingLegSymbol = lossMakingLegSymbol;
         this.exitedLegLtp = exitedLegLtp;
+        this.lossMakingLegNewEntryPrice = lossMakingLegNewEntryPrice;
     }
 
     /**
@@ -95,7 +99,7 @@ public final class ExitResult {
      * @return new EXIT_ALL result
      */
     public static ExitResult exitAll(String exitReason) {
-        return new ExitResult(ExitType.EXIT_ALL, exitReason, null, null, 0.0, null, 0.0);
+        return new ExitResult(ExitType.EXIT_ALL, exitReason, null, null, 0.0, null, 0.0, 0.0);
     }
 
     /**
@@ -106,7 +110,7 @@ public final class ExitResult {
      * @return new EXIT_LEG result
      */
     public static ExitResult exitLeg(String exitReason, String legSymbol) {
-        return new ExitResult(ExitType.EXIT_LEG, exitReason, legSymbol, null, 0.0, null, 0.0);
+        return new ExitResult(ExitType.EXIT_LEG, exitReason, legSymbol, null, 0.0, null, 0.0, 0.0);
     }
 
     /**
@@ -123,7 +127,7 @@ public final class ExitResult {
                                         String newLegType, double targetPremiumForNewLeg,
                                         String lossMakingLegSymbol) {
         return new ExitResult(ExitType.ADJUST_LEG, exitReason, legSymbol,
-                newLegType, targetPremiumForNewLeg, lossMakingLegSymbol, 0.0);
+                newLegType, targetPremiumForNewLeg, lossMakingLegSymbol, 0.0, 0.0);
     }
 
     /**
@@ -144,7 +148,30 @@ public final class ExitResult {
                                         String newLegType, double targetPremiumForNewLeg,
                                         String lossMakingLegSymbol, double exitedLegLtp) {
         return new ExitResult(ExitType.ADJUST_LEG, exitReason, legSymbol,
-                newLegType, targetPremiumForNewLeg, lossMakingLegSymbol, exitedLegLtp);
+                newLegType, targetPremiumForNewLeg, lossMakingLegSymbol, exitedLegLtp, 0.0);
+    }
+
+    /**
+     * Factory method for ADJUST_LEG result with exited leg LTP and loss-making leg entry price update.
+     * <p>
+     * This overload includes both the LTP of the exited leg and the new entry price
+     * to set on the loss-making leg during leg replacement.
+     *
+     * @param exitReason formatted exit reason string
+     * @param legSymbol symbol of the leg to exit
+     * @param newLegType type of new leg to add (CE or PE)
+     * @param targetPremiumForNewLeg target premium for the new leg
+     * @param lossMakingLegSymbol symbol of the loss-making leg for reference
+     * @param exitedLegLtp LTP of the exited leg (replacement must have LTP > this)
+     * @param lossMakingLegNewEntryPrice new entry price for the loss-making leg (set to its current LTP)
+     * @return new ADJUST_LEG result
+     */
+    public static ExitResult adjustLeg(String exitReason, String legSymbol,
+                                        String newLegType, double targetPremiumForNewLeg,
+                                        String lossMakingLegSymbol, double exitedLegLtp,
+                                        double lossMakingLegNewEntryPrice) {
+        return new ExitResult(ExitType.ADJUST_LEG, exitReason, legSymbol,
+                newLegType, targetPremiumForNewLeg, lossMakingLegSymbol, exitedLegLtp, lossMakingLegNewEntryPrice);
     }
 
     /**
