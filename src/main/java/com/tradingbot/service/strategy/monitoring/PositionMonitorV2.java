@@ -14,7 +14,6 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 import org.eclipse.collections.impl.map.mutable.primitive.LongObjectHashMap;
-import org.eclipse.collections.impl.map.mutable.primitive.SynchronizedLongObjectMap;
 
 /**
  * High-performance position monitor using Strategy pattern for exit logic.
@@ -83,8 +82,11 @@ public class PositionMonitorV2 {
 
     // ==================== EXIT STRATEGY CONFIGURATION ====================
 
-    /** Ordered list of exit strategies (immutable after construction) */
+    /** Ordered list of exit strategies (immutable after construction, for external access) */
     private final List<ExitStrategy> exitStrategies;
+
+    /** HFT: Array copy of exit strategies for indexed iteration (no Iterator allocation on hot path) */
+    private final ExitStrategy[] exitStrategiesArray;
 
     /** Time-based forced exit strategy (for external access) */
     @Getter
@@ -122,8 +124,8 @@ public class PositionMonitorV2 {
     // ==================== LEG MANAGEMENT ====================
 
     private final Map<String, LegMonitor> legsBySymbol = new ConcurrentHashMap<>();
-    private final SynchronizedLongObjectMap<LegMonitor> legsByInstrumentToken =
-        new SynchronizedLongObjectMap<>(new LongObjectHashMap<>(4));
+    /** HFT: Volatile reference swap pattern — lock-free reads on hot path, rebuilt on addLeg/removeLeg */
+    private volatile LongObjectHashMap<LegMonitor> legsByInstrumentToken = new LongObjectHashMap<>(4);
 
     /** HFT: Pre-cached legs array for fast iteration */
     private volatile LegMonitor[] cachedLegsArray;
@@ -179,6 +181,9 @@ public class PositionMonitorV2 {
 
     private static final ThreadLocal<StringBuilder> FORMAT_DOUBLE_BUILDER =
         ThreadLocal.withInitial(() -> new StringBuilder(16));
+
+    /** HFT: Pre-allocated mutable context — reset and reused on every tick to avoid allocation */
+    private final ExitContext reusableExitContext;
 
     // ==================== ENUMS AND INTERFACES ====================
 
@@ -305,6 +310,15 @@ public class PositionMonitorV2 {
         // Sort strategies by priority
         strategies.sort(Comparator.comparingInt(ExitStrategy::getPriority));
         this.exitStrategies = List.copyOf(strategies);
+        this.exitStrategiesArray = this.exitStrategies.toArray(new ExitStrategy[0]);
+
+        // HFT: Pre-allocate reusable ExitContext — will be mutated on every tick instead of creating new instances
+        this.reusableExitContext = new ExitContext(
+                executionId, this.directionMultiplier, this.direction,
+                this.cumulativeTargetPoints, this.cumulativeStopPoints,
+                this.entryPremium, this.targetPremiumLevel, this.stopLossPremiumLevel,
+                null, 0, null, null
+        );
 
         log.info("PositionMonitorV2 initialized for {}: {} strategies configured, direction={}, mode={}",
                 executionId, exitStrategies.size(), this.direction, this.slTargetMode);
@@ -353,8 +367,8 @@ public class PositionMonitorV2 {
                        double entryPrice, int quantity, String type) {
         LegMonitor leg = new LegMonitor(orderId, symbol, instrumentToken, entryPrice, quantity, type);
         legsBySymbol.put(symbol, leg);
-        legsByInstrumentToken.put(instrumentToken, leg);
         rebuildCachedLegsArray();
+        rebuildInstrumentTokenMap();
         log.info("Added leg to monitor: {} at entry price: {}", symbol, entryPrice);
     }
 
@@ -364,8 +378,8 @@ public class PositionMonitorV2 {
     public void removeLeg(String symbol) {
         LegMonitor leg = legsBySymbol.remove(symbol);
         if (leg != null) {
-            legsByInstrumentToken.remove(leg.getInstrumentToken());
             rebuildCachedLegsArray();
+            rebuildInstrumentTokenMap();
             log.info("Removed leg from monitor: {}", symbol);
         }
     }
@@ -374,6 +388,19 @@ public class PositionMonitorV2 {
         LegMonitor[] newArray = legsBySymbol.values().toArray(new LegMonitor[0]);
         cachedLegsCount = newArray.length;
         cachedLegsArray = newArray;
+    }
+
+    /**
+     * HFT: Rebuild the instrument token → LegMonitor map as a new volatile reference.
+     * This is the write side of the volatile-swap pattern. Called only on addLeg/removeLeg (rare).
+     * Reads on the hot path (tick processing) are lock-free.
+     */
+    private void rebuildInstrumentTokenMap() {
+        LongObjectHashMap<LegMonitor> newMap = new LongObjectHashMap<>(legsBySymbol.size() * 2);
+        for (LegMonitor leg : legsBySymbol.values()) {
+            newMap.put(leg.getInstrumentToken(), leg);
+        }
+        legsByInstrumentToken = newMap; // volatile write — publishes to tick thread
     }
 
     // ==================== PREMIUM MANAGEMENT ====================
@@ -464,19 +491,20 @@ public class PositionMonitorV2 {
      * This is the <b>hot path</b> - called on every tick from WebSocket thread.
      */
     public void updatePriceWithDifferenceCheck(ArrayList<Tick> ticks) {
-        log.debug("updatePriceWithDifferenceCheck() called for {} with {} ticks", executionId, ticks != null ? ticks.size() : 0);
         if (!active || ticks == null) return;
 
         final int tickCount = ticks.size();
         if (tickCount == 0) return;
 
+        // HFT: Read volatile reference once for the entire tick batch
+        final LongObjectHashMap<LegMonitor> tokenMap = legsByInstrumentToken;
+
         // Update leg prices
         for (int i = 0; i < tickCount; i++) {
             final Tick tick = ticks.get(i);
-            final LegMonitor leg = legsByInstrumentToken.get(tick.getInstrumentToken());
+            final LegMonitor leg = tokenMap.get(tick.getInstrumentToken());
             if (leg != null) {
                 leg.setCurrentPrice(tick.getLastTradedPrice());
-                log.debug("Updated price for leg {}: {}", leg.getSymbol(), leg.getCurrentPrice());
             }
         }
 
@@ -520,7 +548,7 @@ public class PositionMonitorV2 {
             cumulative += (legs[i].getCurrentPrice() - legs[i].getEntryPrice()) * directionMultiplier;
         }
 
-        // Debug logging
+        // Debug logging (guarded to avoid StringBuilder/formatDouble overhead when disabled)
         if (log.isDebugEnabled()) {
             final StringBuilder legPrices = DEBUG_LOG_BUILDER.get();
             legPrices.setLength(0);
@@ -532,28 +560,23 @@ public class PositionMonitorV2 {
                     executionId, formatDouble(cumulative), legPrices);
         }
 
-        // Create evaluation context
-        ExitContext ctx = new ExitContext(
-                executionId,
-                directionMultiplier,
-                direction,
-                cumulativeTargetPoints,
-                cumulativeStopPoints,
-                entryPremium,
-                targetPremiumLevel,
-                stopLossPremiumLevel,
-                legs,
-                count,
-                individualLegExitCallback,
-                legReplacementCallback
+        // HFT: Reuse pre-allocated ExitContext — zero allocation on hot path
+        reusableExitContext.resetForTick(
+                cumulativeTargetPoints, cumulativeStopPoints,
+                entryPremium, targetPremiumLevel, stopLossPremiumLevel,
+                legs, count,
+                individualLegExitCallback, legReplacementCallback
         );
-        ctx.setCumulativePnL(cumulative);
+        reusableExitContext.setCumulativePnL(cumulative);
 
-        // Evaluate strategies in priority order
-        for (ExitStrategy strategy : exitStrategies) {
-            if (!strategy.isEnabled(ctx)) continue;
+        // HFT: Evaluate strategies using indexed array loop (no Iterator allocation)
+        final ExitStrategy[] strategies = exitStrategiesArray;
+        final int strategyCount = strategies.length;
+        for (int i = 0; i < strategyCount; i++) {
+            final ExitStrategy strategy = strategies[i];
+            if (!strategy.isEnabled(reusableExitContext)) continue;
 
-            ExitResult result = strategy.evaluate(ctx);
+            ExitResult result = strategy.evaluate(reusableExitContext);
 
             if (result.requiresAction()) {
                 handleExitResult(result);

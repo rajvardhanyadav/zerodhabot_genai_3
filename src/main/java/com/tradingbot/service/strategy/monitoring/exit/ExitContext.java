@@ -55,21 +55,26 @@ public class ExitContext {
     // ==================== PREMIUM-BASED CONFIGURATION ====================
 
     /** Entry premium (CE + PE) for premium-based exits */
-    private final double entryPremium;
+    @Setter
+    private double entryPremium;
 
     /** Pre-computed target premium level */
-    private final double targetPremiumLevel;
+    @Setter
+    private double targetPremiumLevel;
 
     /** Pre-computed stop loss premium level */
-    private final double stopLossPremiumLevel;
+    @Setter
+    private double stopLossPremiumLevel;
 
     // ==================== LEG STATE (snapshot from PositionMonitor) ====================
 
     /** Pre-cached legs array (read-only snapshot) */
-    private final LegMonitor[] legs;
+    @Setter
+    private LegMonitor[] legs;
 
     /** Number of active legs */
-    private final int legsCount;
+    @Setter
+    private int legsCount;
 
     // ==================== COMPUTED VALUES (set during evaluation) ====================
 
@@ -84,10 +89,12 @@ public class ExitContext {
     // ==================== CALLBACKS ====================
 
     /** Callback for individual leg exits */
-    private final BiConsumer<String, String> individualLegExitCallback;
+    @Setter
+    private BiConsumer<String, String> individualLegExitCallback;
 
     /** Callback for leg replacement in premium mode */
-    private final PositionMonitorV2.LegReplacementCallback legReplacementCallback;
+    @Setter
+    private PositionMonitorV2.LegReplacementCallback legReplacementCallback;
 
     /**
      * Creates an exit context with all required evaluation state.
@@ -147,6 +154,41 @@ public class ExitContext {
      */
     public boolean hasLegReplacementCallback() {
         return legReplacementCallback != null;
+    }
+
+    /**
+     * HFT: Reset mutable fields for reuse on the next tick.
+     * <p>
+     * This is used with the pre-allocated ExitContext pattern in PositionMonitorV2
+     * to eliminate per-tick object allocation. Static fields (executionId, directionMultiplier,
+     * direction) are not reset — they remain from construction.
+     *
+     * @param cumulativeTargetPoints current target threshold
+     * @param cumulativeStopPoints current stop loss threshold
+     * @param entryPremium current entry premium
+     * @param targetPremiumLevel current target premium level
+     * @param stopLossPremiumLevel current stop loss premium level
+     * @param legs cached legs array snapshot
+     * @param legsCount number of active legs
+     * @param individualLegExitCallback leg exit callback
+     * @param legReplacementCallback leg replacement callback
+     */
+    public void resetForTick(double cumulativeTargetPoints, double cumulativeStopPoints,
+                             double entryPremium, double targetPremiumLevel, double stopLossPremiumLevel,
+                             LegMonitor[] legs, int legsCount,
+                             BiConsumer<String, String> individualLegExitCallback,
+                             PositionMonitorV2.LegReplacementCallback legReplacementCallback) {
+        this.cumulativeTargetPoints = cumulativeTargetPoints;
+        this.cumulativeStopPoints = cumulativeStopPoints;
+        this.entryPremium = entryPremium;
+        this.targetPremiumLevel = targetPremiumLevel;
+        this.stopLossPremiumLevel = stopLossPremiumLevel;
+        this.legs = legs;
+        this.legsCount = legsCount;
+        this.individualLegExitCallback = individualLegExitCallback;
+        this.legReplacementCallback = legReplacementCallback;
+        this.cumulativePnL = 0.0;
+        this.combinedLTP = 0.0;
     }
 }
 

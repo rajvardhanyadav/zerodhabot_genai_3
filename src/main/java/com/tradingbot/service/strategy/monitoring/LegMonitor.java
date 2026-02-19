@@ -29,7 +29,9 @@ public class LegMonitor {
     private final String orderId;
     private final String symbol;
     private final long instrumentToken;
-    private double entryPrice;
+    // HFT: volatile because entryPrice is written by exit handler thread (leg replacement)
+    // and read by WebSocket tick thread (P&L calculation)
+    private volatile double entryPrice;
     private final int quantity;
     private final String type; // CE or PE
 

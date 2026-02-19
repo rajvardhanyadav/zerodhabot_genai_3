@@ -589,10 +589,11 @@ public class WebSocketService implements DisposableBean {
 
         // CLOUD RUN: Restore user context in WebSocket callback thread
         // This is critical because KiteTicker's thread doesn't inherit ThreadLocal from request threads
+        // HFT: Use setUserIdFast to avoid diagnostic overhead (Thread.getName(), System.currentTimeMillis())
         String previousUserId = CurrentUserContext.getUserId();
         try {
             if (c.userId != null && !c.userId.isBlank()) {
-                CurrentUserContext.setUserId(c.userId);
+                CurrentUserContext.setUserIdFast(c.userId);
             }
 
             // HFT: For single-execution case (most common), avoid Set allocation entirely
@@ -633,8 +634,9 @@ public class WebSocketService implements DisposableBean {
             }
         } finally {
             // CLOUD RUN: Restore previous context or clear to prevent leaks on thread reuse
+            // HFT: Use setUserIdFast for restore path too
             if (previousUserId != null && !previousUserId.isBlank()) {
-                CurrentUserContext.setUserId(previousUserId);
+                CurrentUserContext.setUserIdFast(previousUserId);
             } else {
                 CurrentUserContext.clear();
             }

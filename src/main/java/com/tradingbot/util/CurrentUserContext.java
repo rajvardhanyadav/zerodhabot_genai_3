@@ -63,6 +63,27 @@ public final class CurrentUserContext {
     }
 
     /**
+     * HFT fast-path: Set user ID without diagnostic metadata or logging.
+     * <p>
+     * Use this on the WebSocket tick thread where {@code setUserId()} is called on every
+     * tick batch and the overhead of {@code Thread.currentThread().getName()},
+     * {@code System.currentTimeMillis()}, and debug logging is measurable.
+     * <p>
+     * Skips update entirely if the current value already matches (common case when
+     * processing consecutive tick batches for the same user).
+     *
+     * @param userId User ID to set (must not be null or blank — caller is responsible for validation)
+     */
+    public static void setUserIdFast(String userId) {
+        // Fast equality check: skip if already set to the same value
+        String current = USER_ID.get();
+        if (userId.equals(current)) {
+            return;
+        }
+        USER_ID.set(userId);
+    }
+
+    /**
      * Get user ID from current thread context.
      *
      * @return User ID or null if not set

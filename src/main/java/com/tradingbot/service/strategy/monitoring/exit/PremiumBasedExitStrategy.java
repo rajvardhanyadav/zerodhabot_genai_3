@@ -76,12 +76,12 @@ public class PremiumBasedExitStrategy extends AbstractExitStrategy {
         final double entryPremium = ctx.getEntryPremium();
         final double dirMult = ctx.getDirectionMultiplier();
 
-        // HFT: Lazy debug logging
+        // HFT: Pass raw doubles to SLF4J — avoids formatDouble() String allocation when debug is disabled
         if (log.isDebugEnabled()) {
             log.debug("Premium check for {}: combinedLTP={}, entryPremium={}, targetLevel={}, slLevel={}",
-                    ctx.getExecutionId(), formatDouble(combinedLTP), formatDouble(entryPremium),
-                    formatDouble(targetLevel), formatDouble(slLevel));
+                    ctx.getExecutionId(), combinedLTP, entryPremium, targetLevel, slLevel);
         }
+
 
         // PREMIUM TARGET: Combined LTP has decayed below target level (profit for SHORT)
         // For SHORT straddle: We sold premium, so lower LTP = profit

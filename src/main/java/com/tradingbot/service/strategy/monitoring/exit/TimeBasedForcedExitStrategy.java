@@ -46,6 +46,15 @@ public class TimeBasedForcedExitStrategy extends AbstractExitStrategy {
     /** Tracks if exit has already been triggered */
     private volatile boolean triggered = false;
 
+    /** HFT: Cached result of time check to avoid ZonedDateTime.now() allocation per tick */
+    private volatile boolean cachedTimeCheckResult = false;
+
+    /** HFT: Nanotime of last time check — re-check at most once per second */
+    private volatile long lastTimeCheckNanos = 0;
+
+    /** HFT: Re-check interval in nanoseconds (1 second) */
+    private static final long TIME_CHECK_INTERVAL_NANOS = 1_000_000_000L;
+
     /**
      * Creates a time-based forced exit strategy.
      *
@@ -85,12 +94,23 @@ public class TimeBasedForcedExitStrategy extends AbstractExitStrategy {
 
     /**
      * Check if current time (IST) is at or after the forced exit cutoff time.
+     * <p>
+     * HFT: Caches result for 1 second to avoid ZonedDateTime.now() allocation per tick.
+     * Time-based exit has second-level granularity so this is safe.
      *
      * @return true if current time >= forced exit time
      */
     private boolean isAfterForcedExitTime() {
-        LocalTime now = ZonedDateTime.now(IST).toLocalTime();
-        return !now.isBefore(forcedExitTime);
+        // HFT: Return cached result if checked within the last second
+        final long now = System.nanoTime();
+        if (now - lastTimeCheckNanos < TIME_CHECK_INTERVAL_NANOS) {
+            return cachedTimeCheckResult;
+        }
+        // Re-check actual time
+        lastTimeCheckNanos = now;
+        LocalTime currentTime = ZonedDateTime.now(IST).toLocalTime();
+        cachedTimeCheckResult = !currentTime.isBefore(forcedExitTime);
+        return cachedTimeCheckResult;
     }
 
     /**
