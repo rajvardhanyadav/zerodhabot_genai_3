@@ -464,6 +464,7 @@ public class PositionMonitorV2 {
      * This is the <b>hot path</b> - called on every tick from WebSocket thread.
      */
     public void updatePriceWithDifferenceCheck(ArrayList<Tick> ticks) {
+        log.debug("updatePriceWithDifferenceCheck() called for {} with {} ticks", executionId, ticks != null ? ticks.size() : 0);
         if (!active || ticks == null) return;
 
         final int tickCount = ticks.size();
@@ -475,6 +476,7 @@ public class PositionMonitorV2 {
             final LegMonitor leg = legsByInstrumentToken.get(tick.getInstrumentToken());
             if (leg != null) {
                 leg.setCurrentPrice(tick.getLastTradedPrice());
+                log.debug("Updated price for leg {}: {}", leg.getSymbol(), leg.getCurrentPrice());
             }
         }
 
@@ -782,7 +784,7 @@ public class PositionMonitorV2 {
 
     private static double normalizePercentage(double value, double defaultPct) {
         if (value <= 0) return defaultPct / 100.0;
-        if (value > 1.0) return value / 100.0;
+        if (value >= 1.0) return value / 100.0;
         return value;
     }
 

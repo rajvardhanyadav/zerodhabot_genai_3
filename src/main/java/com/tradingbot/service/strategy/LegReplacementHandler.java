@@ -49,9 +49,13 @@ public class LegReplacementHandler {
     private final WebSocketService webSocketService;
 
     // Maximum candidates to evaluate for replacement (avoid API overload)
-    private static final int MAX_CANDIDATES = 50;
+    private static final int MAX_CANDIDATES = 500;
     // Threshold for "exact" premium match
     private static final double EXACT_MATCH_THRESHOLD = 0.5;
+    // Number of strikes to check on each side of exited leg
+    private static final int STRIKE_RANGE = 10;
+    // Default strike interval for NIFTY (50) and BANKNIFTY (100)
+    private static final double DEFAULT_STRIKE_INTERVAL = 50.0;
 
     public LegReplacementHandler(TradingService tradingService,
                                  UnifiedTradingService unifiedTradingService,
@@ -69,8 +73,10 @@ public class LegReplacementHandler {
      * Selection constraints:
      * <ul>
      *   <li>Must be of specified option type (CE or PE)</li>
+     *   <li>Must be within ±10 strikes of the exited leg</li>
      *   <li>Must not be the same as the exited leg</li>
      *   <li>Must have LTP greater than the exited leg's LTP</li>
+     *   <li>Premium should be closest to target premium</li>
      * </ul>
      *
      * @param instrumentIndex  pre-built instrument index
@@ -92,14 +98,22 @@ public class LegReplacementHandler {
         log.info("Finding {} instrument with target premium {} (max diff: {}), excluding: {}, minLtp: {}",
                 optionType, targetPremium, maxPremiumDiff, exitedLegSymbol, exitedLegLtp);
 
-        List<Instrument> candidates = collectCandidates(instrumentIndex, optionType, exitedLegSymbol);
+        // Find the exited leg's strike to determine the search range
+        double exitedLegStrike = findExitedLegStrike(instrumentIndex, exitedLegSymbol);
+        if (exitedLegStrike < 0) {
+            log.warn("Could not determine exited leg strike, falling back to full search");
+            // Fallback: collect all candidates of the same option type
+            exitedLegStrike = 0; // Will use wide range
+        }
+
+        List<Instrument> candidates = collectCandidates(instrumentIndex, optionType, exitedLegSymbol, exitedLegStrike);
 
         if (candidates.isEmpty()) {
-            log.warn("No {} instruments found in index", optionType);
+            log.warn("No {} instruments found within ±{} strikes of exited leg", optionType, STRIKE_RANGE);
             return null;
         }
 
-        log.debug("Found {} candidate {} instruments", candidates.size(), optionType);
+        log.debug("Found {} candidate {} instruments within strike range", candidates.size(), optionType);
 
         Map<String, LTPQuote> ltpMap = fetchLTPsForCandidates(candidates);
         if (ltpMap == null || ltpMap.isEmpty()) {
@@ -200,22 +214,97 @@ public class LegReplacementHandler {
 
     // ==================== Private Helper Methods ====================
 
+    /**
+     * Collect candidate instruments within ±STRIKE_RANGE strikes of the exited leg.
+     * This limits the search space to instruments close to the exited leg's strike.
+     *
+     * @param instrumentIndex  pre-built instrument index
+     * @param optionType       option type (CE or PE)
+     * @param exitedLegSymbol  symbol of exited leg (excluded)
+     * @param exitedLegStrike  strike of the exited leg
+     * @return list of candidate instruments within strike range
+     */
     private List<Instrument> collectCandidates(Map<?, Instrument> instrumentIndex,
                                                String optionType,
-                                               String exitedLegSymbol) {
+                                               String exitedLegSymbol,
+                                               double exitedLegStrike) {
         List<Instrument> candidates = new ArrayList<>();
+
+        // Determine strike interval based on underlying (NIFTY=50, BANKNIFTY=100)
+        double strikeInterval = getStrikeIntervalFromSymbol(exitedLegSymbol);
+
+        // Calculate min and max strike range (±STRIKE_RANGE legs)
+        double minStrike = exitedLegStrike - (STRIKE_RANGE * strikeInterval);
+        double maxStrike = exitedLegStrike + (STRIKE_RANGE * strikeInterval);
+
+        log.info("Collecting {} candidates within strike range [{}, {}] (exitedStrike: {}, interval: {})",
+                optionType, minStrike, maxStrike, exitedLegStrike, strikeInterval);
 
         for (Map.Entry<?, Instrument> entry : instrumentIndex.entrySet()) {
             Instrument inst = entry.getValue();
-            if (optionType.equals(inst.instrument_type)) {
-                if (Objects.equals(inst.tradingsymbol, exitedLegSymbol)) {
-                    log.debug("Excluding exited leg: {}", exitedLegSymbol);
-                    continue;
+            if (!optionType.equals(inst.instrument_type)) {
+                continue;
+            }
+
+            // Exclude the recently closed leg
+            if (Objects.equals(inst.tradingsymbol, exitedLegSymbol)) {
+                log.debug("Excluding exited leg: {}", exitedLegSymbol);
+                continue;
+            }
+
+            // Check if instrument strike is within range
+            try {
+                double instStrike = Double.parseDouble(inst.strike);
+                if (instStrike >= minStrike && instStrike <= maxStrike) {
+                    candidates.add(inst);
                 }
-                candidates.add(inst);
+            } catch (NumberFormatException e) {
+                log.trace("Skipping instrument with invalid strike: {}", inst.tradingsymbol);
             }
         }
+
+        log.debug("Found {} {} candidates within ±{} strikes of {}",
+                candidates.size(), optionType, STRIKE_RANGE, exitedLegStrike);
         return candidates;
+    }
+
+    /**
+     * Get strike interval based on the trading symbol (NIFTY=50, BANKNIFTY=100)
+     */
+    private double getStrikeIntervalFromSymbol(String tradingSymbol) {
+        if (tradingSymbol == null || tradingSymbol.isEmpty()) {
+            return DEFAULT_STRIKE_INTERVAL;
+        }
+        String upperSymbol = tradingSymbol.toUpperCase();
+        if (upperSymbol.startsWith("BANKNIFTY")) {
+            return 100.0;
+        } else if (upperSymbol.startsWith("NIFTY")) {
+            return 50.0;
+        }
+        return DEFAULT_STRIKE_INTERVAL;
+    }
+
+    /**
+     * Find the strike price of the exited leg from the instrument index.
+     *
+     * @param instrumentIndex  pre-built instrument index
+     * @param exitedLegSymbol  symbol of exited leg
+     * @return strike price of the exited leg, or -1 if not found
+     */
+    private double findExitedLegStrike(Map<?, Instrument> instrumentIndex, String exitedLegSymbol) {
+        for (Map.Entry<?, Instrument> entry : instrumentIndex.entrySet()) {
+            Instrument inst = entry.getValue();
+            if (Objects.equals(inst.tradingsymbol, exitedLegSymbol)) {
+                try {
+                    return Double.parseDouble(inst.strike);
+                } catch (NumberFormatException e) {
+                    log.warn("Invalid strike format for exited leg: {}", exitedLegSymbol);
+                    return -1;
+                }
+            }
+        }
+        log.warn("Exited leg {} not found in instrument index", exitedLegSymbol);
+        return -1;
     }
 
     private Map<String, LTPQuote> fetchLTPsForCandidates(List<Instrument> candidates) {
@@ -257,10 +346,12 @@ public class LegReplacementHandler {
 
             // Skip if LTP not greater than exited leg
             if (exitedLegLtp > 0 && currentPremium <= exitedLegLtp) {
-                log.debug("Skipping {} - LTP {} <= exitedLegLtp {}",
-                        candidate.tradingsymbol, currentPremium, exitedLegLtp);
+//                log.debug("Skipping {} - LTP {} <= exitedLegLtp {}",
+//                        candidate.tradingsymbol, currentPremium, exitedLegLtp);
                 continue;
             }
+            log.debug("tradingsymbol {} - LTP {}, exitedLegLtp {}",
+                    candidate.tradingsymbol, currentPremium, exitedLegLtp);
 
             double difference = Math.abs(currentPremium - targetPremium);
 

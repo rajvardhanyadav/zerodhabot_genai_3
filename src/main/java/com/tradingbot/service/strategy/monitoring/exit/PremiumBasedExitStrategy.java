@@ -96,14 +96,65 @@ public class PremiumBasedExitStrategy extends AbstractExitStrategy {
         if (combinedLTP >= slLevel) {
             log.warn("PREMIUM_EXPANSION_SL_HIT for execution {}: combinedLTP={}, slLevel={}, entryPremium={} - Closing ALL legs",
                     ctx.getExecutionId(), formatDouble(combinedLTP), formatDouble(slLevel), formatDouble(entryPremium));
-            return ExitResult.exitAll(buildExitReasonExpansionSL(combinedLTP, entryPremium, slLevel));
+//            return ExitResult.exitAll(buildExitReasonExpansionSL(combinedLTP, entryPremium, slLevel));
+
+            if (count >= 2 && ctx.hasIndividualLegExitCallback()) {
+                LegMonitor profitableLeg = null;
+                LegMonitor lossMakingLeg = null;
+                double profitableLegPnl = Double.NEGATIVE_INFINITY;
+                double lossMakingLegPnl = Double.POSITIVE_INFINITY;
+
+                for (int i = 0; i < count; i++) {
+                    final LegMonitor leg = legs[i];
+                    // For SHORT: P&L = (current - entry) * directionMultiplier
+                    // Since directionMultiplier = -1 for SHORT:
+                    // P&L = (current - entry) * (-1) = entry - current
+                    final double legPnl = (leg.getCurrentPrice() - leg.getEntryPrice()) * dirMult;
+
+                    if (legPnl > profitableLegPnl) {
+                        profitableLegPnl = legPnl;
+                        profitableLeg = leg;
+                    }
+                    if (legPnl < lossMakingLegPnl) {
+                        lossMakingLegPnl = legPnl;
+                        lossMakingLeg = leg;
+                    }
+                }
+
+                // Only proceed if we found distinct profitable and loss-making legs
+                if (profitableLeg != null && lossMakingLeg != null && profitableLeg != lossMakingLeg) {
+                    // Capture the exited leg's LTP before creating the result
+                    // This is used to ensure replacement leg has LTP > exited leg's LTP
+                    final double exitedLegLtp = profitableLeg.getCurrentPrice();
+
+                    log.warn("PREMIUM_LEG_ADJUSTMENT for execution {}: combinedLTP={} reached slLevel={} " +
+                                    "(slLevel={}, entryPremium={}) - Exiting profitable leg {} (LTP={}) and adding replacement",
+                            ctx.getExecutionId(), formatDouble(combinedLTP), formatDouble(slLevel),
+                            formatDouble(slLevel), formatDouble(entryPremium), profitableLeg.getSymbol(),
+                            formatDouble(exitedLegLtp));
+
+                    // Calculate target premium for the new leg (similar to loss-making leg's current price)
+                    final double targetPremiumForNewLeg = lossMakingLeg.getCurrentPrice();
+                    final String exitedLegType = profitableLeg.getType();
+                    final String newLegType = exitedLegType; // Same type (CE or PE) as the exited leg
+
+                    String exitReason = buildExitReasonLegAdjustment(
+                            profitableLeg.getSymbol(), combinedLTP, slLevel, entryPremium);
+
+                    // Pass exitedLegLtp to ensure replacement leg has higher LTP
+                    return ExitResult.adjustLeg(exitReason, profitableLeg.getSymbol(),
+                            newLegType, targetPremiumForNewLeg, lossMakingLeg.getSymbol(), exitedLegLtp);
+                }
+            }else{
+                return ExitResult.exitAll(buildExitReasonExpansionSL(combinedLTP, entryPremium, slLevel));
+            }
         }
 
         // PREMIUM-BASED INDIVIDUAL LEG ADJUSTMENT
         // When combinedLTP reaches half the distance between entryPremium and slLevel:
         // 1. Exit the profitable leg (the one with lower current price for SHORT)
         // 2. Request new leg with similar premium to the loss-making leg
-        if (count >= 2 && ctx.hasIndividualLegExitCallback()) {
+        /*if (count >= 2 && ctx.hasIndividualLegExitCallback()) {
             final double halfThreshold = entryPremium + (slLevel - entryPremium) / 2.0;
 
             if (combinedLTP >= halfThreshold) {
@@ -157,7 +208,7 @@ public class PremiumBasedExitStrategy extends AbstractExitStrategy {
                             newLegType, targetPremiumForNewLeg, lossMakingLeg.getSymbol(), exitedLegLtp);
                 }
             }
-        }
+        }*/
 
         return ExitResult.noExit();
     }
