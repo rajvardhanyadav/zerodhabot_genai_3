@@ -1,4 +1,14 @@
-# Backtesting API Documentation
+# Backtesting API Documentation (Planning Spec)
+
+> **⚠️ SUPERSEDED:** This was the original planning document. For the **accurate, implementation-verified** integration guide, see:
+> **[`BACKTEST_FRONTEND_INTEGRATION.md`](./BACKTEST_FRONTEND_INTEGRATION.md)**
+>
+> Key differences from this planning doc:
+> - Trade structure is straddle-level (CE + PE combined), not per-leg
+> - Exit reasons include detailed signal values (e.g., `CUMULATIVE_TARGET_HIT (Signal: 2.25 points)`)
+> - `BacktestStatus` enum: `COMPLETED`, `FAILED`, `RUNNING` (no `PARTIAL`)
+> - Request fields: `autoRestartEnabled`, `autoSquareOffTime`, `trailingStop*` added; `fastForwardEnabled` removed
+> - Async endpoint returns `backtestId` string, not `"pending"`
 
 ## Overview
 The Backtesting API allows users to test trading strategies against historical market data. It's completely isolated from live trading and provides detailed performance metrics.

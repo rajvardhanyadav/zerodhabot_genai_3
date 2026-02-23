@@ -191,6 +191,15 @@ persistence:
     cron: "0 0 2 * * ?"  # Run at 2 AM daily
 
 
+# Backtesting Configuration
+backtest:
+  enabled: true
+  max-cache-size: 100
+  async-pool-size: 4
+  default-candle-interval: minute
+  rate-limit-delay-ms: 350
+
+
 # Actuator endpoints
 management:
   endpoints:

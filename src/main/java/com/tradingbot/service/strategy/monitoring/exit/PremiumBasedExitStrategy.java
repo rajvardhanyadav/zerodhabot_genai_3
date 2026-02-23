@@ -96,9 +96,9 @@ public class PremiumBasedExitStrategy extends AbstractExitStrategy {
         if (combinedLTP >= slLevel) {
             log.warn("PREMIUM_EXPANSION_SL_HIT for execution {}: combinedLTP={}, slLevel={}, entryPremium={} - Closing ALL legs",
                     ctx.getExecutionId(), formatDouble(combinedLTP), formatDouble(slLevel), formatDouble(entryPremium));
-//            return ExitResult.exitAll(buildExitReasonExpansionSL(combinedLTP, entryPremium, slLevel));
+            return ExitResult.exitAll(buildExitReasonExpansionSL(combinedLTP, entryPremium, slLevel));
 
-            if (count >= 2 && ctx.hasIndividualLegExitCallback()) {
+            /*if (count >= 2 && ctx.hasIndividualLegExitCallback()) {
                 LegMonitor profitableLeg = null;
                 LegMonitor lossMakingLeg = null;
                 double profitableLegPnl = Double.NEGATIVE_INFINITY;
@@ -152,7 +152,7 @@ public class PremiumBasedExitStrategy extends AbstractExitStrategy {
                 }
             }else{
                 return ExitResult.exitAll(buildExitReasonExpansionSL(combinedLTP, entryPremium, slLevel));
-            }
+            }*/
         }
 
         // PREMIUM-BASED INDIVIDUAL LEG ADJUSTMENT
