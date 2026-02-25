@@ -68,6 +68,28 @@ public class MonitoringSetupHelper {
     ) {}
 
     /**
+     * Configuration parameters for strangle monitoring (4 legs: 2 sell + 2 hedge).
+     */
+    public record StrangleMonitoringParams(
+            String executionId,
+            Instrument sellCallInstrument,
+            Instrument sellPutInstrument,
+            Instrument hedgeCallInstrument,
+            Instrument hedgePutInstrument,
+            String sellCallOrderId,
+            String sellPutOrderId,
+            String hedgeCallOrderId,
+            String hedgePutOrderId,
+            int quantity,
+            double stopLossPoints,
+            double targetPoints,
+            double targetDecayPct,
+            double stopLossExpansionPct,
+            SlTargetMode slTargetMode,
+            StrategyCompletionCallback completionCallback
+    ) {}
+
+    /**
      * Callbacks for position monitor events.
      */
     public record MonitorCallbacks(
@@ -109,6 +131,133 @@ public class MonitoringSetupHelper {
             log.error("Error setting up monitoring for {}: {}", params.executionId(), ex.getMessage(), ex);
             return null;
         });
+    }
+
+    /**
+     * Setup strangle monitoring asynchronously with 4 legs (2 sell + 2 hedge).
+     * <p>
+     * HFT: Spawns async task to avoid blocking the main thread.
+     *
+     * @param params     strangle monitoring parameters (4 instruments + 4 order IDs)
+     * @param callbacks  event callbacks
+     * @param executor   executor for async operations
+     */
+    public void setupStrangleMonitoringAsync(StrangleMonitoringParams params, MonitorCallbacks callbacks,
+                                              ExecutorService executor) {
+        final String ownerUserId = CurrentUserContext.getUserId();
+        if (ownerUserId == null || ownerUserId.isBlank()) {
+            log.error("No user context for strangle monitoring setup, executionId: {}", params.executionId());
+            return;
+        }
+
+        CompletableFuture.runAsync(
+                CurrentUserContext.wrapWithContext(() ->
+                        setupStrangleMonitoringInternal(params, callbacks, executor, ownerUserId)),
+                executor
+        ).exceptionally(ex -> {
+            log.error("Error setting up strangle monitoring for {}: {}", params.executionId(), ex.getMessage(), ex);
+            return null;
+        });
+    }
+
+    /**
+     * Internal strangle monitoring setup for 4 legs.
+     */
+    private void setupStrangleMonitoringInternal(StrangleMonitoringParams params, MonitorCallbacks callbacks,
+                                                  ExecutorService executor, String ownerUserId) {
+        try {
+            // HFT: Parallel fetch of all 4 order histories
+            CompletableFuture<Double> sellCallPriceFuture = CompletableFuture.supplyAsync(
+                    CurrentUserContext.wrapSupplier(() -> fetchOrderPriceSafe(params.sellCallOrderId())), executor);
+            CompletableFuture<Double> sellPutPriceFuture = CompletableFuture.supplyAsync(
+                    CurrentUserContext.wrapSupplier(() -> fetchOrderPriceSafe(params.sellPutOrderId())), executor);
+            CompletableFuture<Double> hedgeCallPriceFuture = CompletableFuture.supplyAsync(
+                    CurrentUserContext.wrapSupplier(() -> fetchOrderPriceSafe(params.hedgeCallOrderId())), executor);
+            CompletableFuture<Double> hedgePutPriceFuture = CompletableFuture.supplyAsync(
+                    CurrentUserContext.wrapSupplier(() -> fetchOrderPriceSafe(params.hedgePutOrderId())), executor);
+
+            double sellCallPrice = sellCallPriceFuture.join();
+            double sellPutPrice = sellPutPriceFuture.join();
+            double hedgeCallPrice = hedgeCallPriceFuture.join();
+            double hedgePutPrice = hedgePutPriceFuture.join();
+
+            if (sellCallPrice == 0.0 || sellPutPrice == 0.0) {
+                log.error("Invalid sell leg entry prices - Call: {}, Put: {}", sellCallPrice, sellPutPrice);
+                return;
+            }
+            if (hedgeCallPrice == 0.0 || hedgePutPrice == 0.0) {
+                log.warn("Hedge leg prices could not be fetched - HedgeCall: {}, HedgePut: {}. Using fallback.", hedgeCallPrice, hedgePutPrice);
+                // Hedges are protective; allow monitoring to start even with zero prices
+            }
+
+            log.info("Strangle orders validated - SellCall: {}, SellPut: {}, HedgeCall: {}, HedgePut: {}",
+                    sellCallPrice, sellPutPrice, hedgeCallPrice, hedgePutPrice);
+
+            // Combined entry premium for sell legs only (premium received)
+            // Net premium = sell premium - hedge premium
+            double sellPremium = sellCallPrice + sellPutPrice;
+            double hedgePremium = hedgeCallPrice + hedgePutPrice;
+            double netEntryPremium = sellPremium - hedgePremium;
+
+            LocalTime forcedExitTime = parseForcedExitTime(strategyConfig.getAutoSquareOffTime());
+
+            boolean premiumBasedExitEnabled = (params.slTargetMode() == SlTargetMode.PREMIUM)
+                    || (params.slTargetMode() == null && strategyConfig.isPremiumBasedExitEnabled());
+
+            PositionMonitorV2 monitor = new PositionMonitorV2(
+                    params.executionId(),
+                    params.stopLossPoints(),
+                    params.targetPoints(),
+                    PositionMonitorV2.PositionDirection.SHORT,
+                    strategyConfig.isTrailingStopEnabled(),
+                    strategyConfig.getTrailingActivationPoints(),
+                    strategyConfig.getTrailingDistancePoints(),
+                    strategyConfig.isAutoSquareOffEnabled(),
+                    forcedExitTime,
+                    premiumBasedExitEnabled,
+                    netEntryPremium > 0 ? netEntryPremium : sellPremium,
+                    params.targetDecayPct(),
+                    params.stopLossExpansionPct(),
+                    params.slTargetMode()
+            );
+
+            // Add sell legs (same direction as monitor: legDirectionMultiplier = 1.0)
+            monitor.addLeg(params.sellCallOrderId(), params.sellCallInstrument().tradingsymbol,
+                    params.sellCallInstrument().instrument_token,
+                    sellCallPrice, params.quantity(), StrategyConstants.OPTION_TYPE_CALL);
+
+            monitor.addLeg(params.sellPutOrderId(), params.sellPutInstrument().tradingsymbol,
+                    params.sellPutInstrument().instrument_token,
+                    sellPutPrice, params.quantity(), StrategyConstants.OPTION_TYPE_PUT);
+
+            // Add hedge legs (opposite direction: legDirectionMultiplier = -1.0)
+            monitor.addLeg(params.hedgeCallOrderId(), params.hedgeCallInstrument().tradingsymbol,
+                    params.hedgeCallInstrument().instrument_token,
+                    hedgeCallPrice, params.quantity(), StrategyConstants.OPTION_TYPE_CALL, -1.0);
+
+            monitor.addLeg(params.hedgePutOrderId(), params.hedgePutInstrument().tradingsymbol,
+                    params.hedgePutInstrument().instrument_token,
+                    hedgePutPrice, params.quantity(), StrategyConstants.OPTION_TYPE_PUT, -1.0);
+
+            monitor.setOwnerUserId(ownerUserId);
+
+            // Setup callbacks (same pattern as straddle)
+            setupCallbacks(monitor, params.executionId(), params.slTargetMode(), callbacks);
+
+            // Start WebSocket monitoring for all 4 instruments
+            double totalPremium = sellPremium * params.quantity();
+            log.info("Starting strangle monitoring for {} with net premium: {} (sell: {}, hedge: {})",
+                    params.executionId(), netEntryPremium, sellPremium, hedgePremium);
+
+            if (!webSocketService.isConnected()) {
+                webSocketService.connect();
+            }
+            webSocketService.startMonitoring(params.executionId(), monitor);
+            log.info("Strangle position monitoring started for: {}", params.executionId());
+
+        } catch (Exception e) {
+            log.error("Error in strangle monitoring setup for {}: {}", params.executionId(), e.getMessage(), e);
+        }
     }
 
     /**
@@ -274,10 +423,18 @@ public class MonitoringSetupHelper {
      * Setup callbacks with user context propagation.
      */
     private void setupCallbacks(PositionMonitorV2 monitor, MonitoringParams params, MonitorCallbacks callbacks) {
+        setupCallbacks(monitor, params.executionId(), params.slTargetMode(), callbacks);
+    }
+
+    /**
+     * Setup callbacks with user context propagation (generalized for both straddle and strangle).
+     */
+    private void setupCallbacks(PositionMonitorV2 monitor, String executionId,
+                                SlTargetMode slTargetMode, MonitorCallbacks callbacks) {
         // Exit callback
         monitor.setExitCallback(reason -> {
             executeWithUserContext(monitor, () -> {
-                log.warn("Exit triggered for {}: {}", params.executionId(), reason);
+                log.warn("Exit triggered for {}: {}", executionId, reason);
                 callbacks.exitCallback().accept(reason);
             });
         });
@@ -286,7 +443,7 @@ public class MonitoringSetupHelper {
         monitor.setIndividualLegExitCallback((legSymbol, reason) -> {
             executeWithUserContext(monitor, () -> {
                 log.warn("Individual leg exit for {}: leg={}, reason={}",
-                        params.executionId(), legSymbol, reason);
+                        executionId, legSymbol, reason);
                 callbacks.individualLegExitCallback().accept(legSymbol, reason);
             });
         });
@@ -296,7 +453,7 @@ public class MonitoringSetupHelper {
                                            lossMakingLegSymbol, exitedLegLtp) -> {
             executeWithUserContext(monitor, () -> {
                 log.info("Leg replacement for {}: exitedLeg={}, newLegType={}, targetPremium={}",
-                        params.executionId(), exitedLegSymbol, legTypeToAdd, targetPremium);
+                        executionId, exitedLegSymbol, legTypeToAdd, targetPremium);
                 callbacks.legReplacementCallback().onLegReplacement(
                         exitedLegSymbol, legTypeToAdd, targetPremium, lossMakingLegSymbol, exitedLegLtp);
             });

@@ -365,11 +365,30 @@ public class PositionMonitorV2 {
      */
     public void addLeg(String orderId, String symbol, long instrumentToken,
                        double entryPrice, int quantity, String type) {
-        LegMonitor leg = new LegMonitor(orderId, symbol, instrumentToken, entryPrice, quantity, type);
+        addLeg(orderId, symbol, instrumentToken, entryPrice, quantity, type, 1.0);
+    }
+
+    /**
+     * Adds a leg with explicit direction multiplier.
+     * <p>
+     * Use legDirectionMultiplier = 1.0 for legs in the same direction as the monitor (e.g., SELL legs in SHORT).
+     * Use legDirectionMultiplier = -1.0 for legs opposite to the monitor (e.g., BUY hedge legs in SHORT).
+     *
+     * @param orderId            order ID
+     * @param symbol             trading symbol
+     * @param instrumentToken    instrument token for price lookup
+     * @param entryPrice         entry price
+     * @param quantity           quantity
+     * @param type               leg type (CE, PE)
+     * @param legDirectionMultiplier per-leg direction multiplier
+     */
+    public void addLeg(String orderId, String symbol, long instrumentToken,
+                       double entryPrice, int quantity, String type, double legDirectionMultiplier) {
+        LegMonitor leg = new LegMonitor(orderId, symbol, instrumentToken, entryPrice, quantity, type, legDirectionMultiplier);
         legsBySymbol.put(symbol, leg);
         rebuildCachedLegsArray();
         rebuildInstrumentTokenMap();
-        log.info("Added leg to monitor: {} at entry price: {}", symbol, entryPrice);
+        log.info("Added leg to monitor: {} at entry price: {} (legDirection={})", symbol, entryPrice, legDirectionMultiplier);
     }
 
     /**
@@ -543,9 +562,12 @@ public class PositionMonitorV2 {
         if (count == 0) return;
 
         // Calculate cumulative P&L
+        // Uses per-leg direction multiplier to handle mixed-direction strategies
+        // (e.g., short strangle: SELL main legs + BUY hedge legs)
         double cumulative = 0.0;
         for (int i = 0; i < count; i++) {
-            cumulative += (legs[i].getCurrentPrice() - legs[i].getEntryPrice()) * directionMultiplier;
+            cumulative += (legs[i].getCurrentPrice() - legs[i].getEntryPrice())
+                    * directionMultiplier * legs[i].getLegDirectionMultiplier();
         }
 
         // Debug logging (guarded to avoid StringBuilder/formatDouble overhead when disabled)

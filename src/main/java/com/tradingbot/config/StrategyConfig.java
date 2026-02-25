@@ -106,6 +106,22 @@ public class StrategyConfig {
      */
     private double stopLossExpansionPct = 7;
 
+    // ==================== SHORT STRANGLE CONFIGURATION ====================
+
+    /**
+     * Target delta for the main sell legs in a short strangle.
+     * The strategy will find strikes closest to this delta for CE and PE.
+     * Default: 0.4 (OTM options with ~40% probability of expiring ITM)
+     */
+    private double shortStrangleSellDelta = 0.4;
+
+    /**
+     * Target delta for the hedge (buy) legs in a short strangle.
+     * The strategy will find strikes closest to this delta for CE and PE.
+     * Default: 0.1 (far OTM options for risk protection)
+     */
+    private double shortStrangleHedgeDelta = 0.1;
+
     @Bean
     public TaskScheduler strategyTaskScheduler() {
         ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();

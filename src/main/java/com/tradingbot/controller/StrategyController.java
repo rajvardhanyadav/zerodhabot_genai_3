@@ -167,13 +167,14 @@ public class StrategyController {
     }
 
     private boolean isImplemented(StrategyType type) {
-        return type == StrategyType.ATM_STRADDLE || type == StrategyType.SELL_ATM_STRADDLE;
+        return type == StrategyType.ATM_STRADDLE || type == StrategyType.SELL_ATM_STRADDLE || type == StrategyType.SHORT_STRANGLE;
     }
 
     private String getStrategyDescription(StrategyType type) {
         return switch (type) {
             case ATM_STRADDLE -> "Buy 1 ATM Call + Buy 1 ATM Put (Non-directional, profits from high volatility)";
             case SELL_ATM_STRADDLE -> "Sell 1 ATM Call + Sell 1 ATM Put (Non-directional, profits from low volatility and time decay)";
+            case SHORT_STRANGLE -> "Sell OTM CE (~0.4Δ) + Sell OTM PE (~0.4Δ) + Buy Hedge CE (~0.1Δ) + Buy Hedge PE (~0.1Δ) (Short volatility with defined risk)";
         };
     }
 }

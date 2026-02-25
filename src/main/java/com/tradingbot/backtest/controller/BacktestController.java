@@ -124,6 +124,9 @@ public class BacktestController {
                        "backtestSupported", true),
                 Map.of("name", "ATM_STRADDLE",
                        "description", "Buy ATM Call + Put (long straddle) - profits from high volatility",
+                       "backtestSupported", false),
+                Map.of("name", "SHORT_STRANGLE",
+                       "description", "Sell OTM CE/PE (~0.4Δ) + Buy Hedge CE/PE (~0.1Δ) - short volatility with defined risk",
                        "backtestSupported", false)
         );
         return ResponseEntity.ok(ApiResponse.success(strategies));

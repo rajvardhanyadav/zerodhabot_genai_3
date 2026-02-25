@@ -18,6 +18,7 @@ public class StrategyFactory {
 
     private final ATMStraddleStrategy atmStraddleStrategy;
     private final SellATMStraddleStrategy sellAtmStraddleStrategy;
+    private final ShortStrangleStrategy shortStrangleStrategy;
 
     /**
      * Get strategy implementation based on strategy type
@@ -32,6 +33,7 @@ public class StrategyFactory {
         return switch (strategyType) {
             case ATM_STRADDLE -> atmStraddleStrategy;
             case SELL_ATM_STRADDLE -> sellAtmStraddleStrategy;
+            case SHORT_STRANGLE -> shortStrangleStrategy;
         };
     }
 
@@ -43,7 +45,8 @@ public class StrategyFactory {
      */
     public boolean isStrategyImplemented(StrategyType strategyType) {
         return strategyType == StrategyType.ATM_STRADDLE ||
-               strategyType == StrategyType.SELL_ATM_STRADDLE;
+               strategyType == StrategyType.SELL_ATM_STRADDLE ||
+               strategyType == StrategyType.SHORT_STRANGLE;
     }
 
     /**
@@ -55,6 +58,7 @@ public class StrategyFactory {
         Map<StrategyType, TradingStrategy> strategies = new HashMap<>();
         strategies.put(StrategyType.ATM_STRADDLE, atmStraddleStrategy);
         strategies.put(StrategyType.SELL_ATM_STRADDLE, sellAtmStraddleStrategy);
+        strategies.put(StrategyType.SHORT_STRANGLE, shortStrangleStrategy);
         return strategies;
     }
 }

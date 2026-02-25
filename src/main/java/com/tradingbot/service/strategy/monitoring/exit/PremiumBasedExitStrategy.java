@@ -62,10 +62,13 @@ public class PremiumBasedExitStrategy extends AbstractExitStrategy {
             return ExitResult.noExit();
         }
 
-        // Calculate combined current premium (sum of all leg current prices)
+        // Calculate combined current premium
+        // Uses legDirectionMultiplier to compute net premium for mixed-direction strategies:
+        // - Straddle (all SELL, multiplier=1.0): combinedLTP = sum of all prices (unchanged)
+        // - Strangle (SELL main + BUY hedge, multipliers 1.0/-1.0): combinedLTP = sell prices - hedge prices
         double combinedLTP = 0.0;
         for (int i = 0; i < count; i++) {
-            combinedLTP += legs[i].getCurrentPrice();
+            combinedLTP += legs[i].getCurrentPrice() * legs[i].getLegDirectionMultiplier();
         }
         // Store in context for potential reuse by other strategies
         ctx.setCombinedLTP(combinedLTP);

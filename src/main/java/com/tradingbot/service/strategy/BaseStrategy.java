@@ -206,7 +206,82 @@ public abstract class BaseStrategy implements TradingStrategy {
         return bestStrike;
     }
 
-    private Map<Double, Double> computeCallDeltas(String instrumentType, Date expiry, double spotPrice, Set<Double> strikes, double timeToExpiry) {
+    /**
+     * Find the strike price whose option delta is closest to the given target delta.
+     * <p>
+     * For CE (Call) options: finds the strike where call delta ≈ targetDelta.
+     * For PE (Put) options: finds the strike where |put delta| ≈ targetDelta
+     * (put delta = call delta - 1, so |put delta| = 1 - call delta).
+     * <p>
+     * Searches a wider range (±15 strikes around ATM) to cover OTM options needed for strangles.
+     *
+     * @param spotPrice      current spot price of the underlying
+     * @param instrumentType instrument type (NIFTY, BANKNIFTY)
+     * @param expiry         expiry date of the options
+     * @param targetDelta    target absolute delta (e.g., 0.4, 0.1)
+     * @param optionType     "CE" for call, "PE" for put
+     * @return strike price closest to the target delta
+     */
+    protected double getStrikeByDelta(double spotPrice, String instrumentType, Date expiry,
+                                       double targetDelta, String optionType) {
+        double strikeInterval = getStrikeInterval(instrumentType);
+        double approximateATM = Math.round(spotPrice / strikeInterval) * strikeInterval;
+
+        // Use wider range (±15 strikes) for OTM options needed by strangle strategies
+        Set<Double> strikesToCheck = new LinkedHashSet<>();
+        for (int i = -15; i <= 15; i++) {
+            strikesToCheck.add(approximateATM + i * strikeInterval);
+        }
+
+        double timeToExpiry = calculateTimeToExpiryPrecise(expiry);
+        if (timeToExpiry <= 0) {
+            log.warn("Time to expiry is zero or negative. Cannot compute delta. Falling back to ATM: {}", approximateATM);
+            return approximateATM;
+        }
+
+        log.info("Finding strike by delta for {}: targetΔ={}, spot={}, ATM≈{}, T={} years",
+                optionType, targetDelta, spotPrice, approximateATM, String.format("%.6f", timeToExpiry));
+
+        Map<Double, Double> callDeltas = computeCallDeltas(instrumentType, expiry, spotPrice, strikesToCheck, timeToExpiry);
+
+        if (callDeltas.isEmpty()) {
+            log.warn("Delta computation failed for all strikes. Falling back to ATM: {}", approximateATM);
+            return approximateATM;
+        }
+
+        boolean isCE = OPTION_TYPE_CE.equals(optionType);
+
+        double bestStrike = approximateATM;
+        double minDiff = Double.MAX_VALUE;
+
+        for (Map.Entry<Double, Double> e : callDeltas.entrySet()) {
+            double callDelta = e.getValue();
+            double effectiveDelta;
+
+            if (isCE) {
+                // For CE: delta = callDelta
+                effectiveDelta = callDelta;
+            } else {
+                // For PE: |put delta| = 1 - callDelta
+                effectiveDelta = 1.0 - callDelta;
+            }
+
+            double diff = Math.abs(effectiveDelta - targetDelta);
+            if (diff < minDiff) {
+                minDiff = diff;
+                bestStrike = e.getKey();
+            }
+        }
+
+        double bestDelta = isCE
+                ? callDeltas.getOrDefault(bestStrike, 0.0)
+                : 1.0 - callDeltas.getOrDefault(bestStrike, 0.0);
+        log.info("Selected {} strike {} (effective |Δ| ≈ {}, target {})",
+                optionType, bestStrike, String.format("%.4f", bestDelta), targetDelta);
+        return bestStrike;
+    }
+
+    protected Map<Double, Double> computeCallDeltas(String instrumentType, Date expiry, double spotPrice, Set<Double> strikes, double timeToExpiry) {
         // HFT: Use indexed iteration instead of stream for mid price fetching
         Map<Double, MidPrices> midPriceMap = new HashMap<>(strikes.size());
         for (Double strike : strikes) {
@@ -305,7 +380,7 @@ public abstract class BaseStrategy implements TradingStrategy {
 
     // Calculate time to expiry with second-level precision
     // HFT OPTIMIZED: Uses ThreadLocal Calendar to avoid getInstance() overhead
-    private double calculateTimeToExpiryPrecise(Date expiry) {
+    protected double calculateTimeToExpiryPrecise(Date expiry) {
         Calendar now = CALENDAR_IST.get();
         now.setTimeInMillis(System.currentTimeMillis()); // Reset to current time
 

@@ -93,6 +93,12 @@ strategy:
   # Default target in points (can be overridden via API request)
   default-target-points: 2.0
 
+  # Short Strangle Configuration
+  # Delta values for sell legs (main premium-generating legs)
+  short-strangle-sell-delta: 0.4
+  # Delta values for hedge legs (risk protection)
+  short-strangle-hedge-delta: 0.1
+
   # Trailing Stop Loss Configuration
   # When enabled, stop loss trails up as position becomes profitable
   trailing-stop-enabled: false
