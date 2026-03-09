@@ -108,6 +108,31 @@ public class StrategyConfig {
 
     // ==================== SHORT STRANGLE CONFIGURATION ====================
 
+    // ==================== DAILY P&L THRESHOLD CONFIGURATION ====================
+
+    /**
+     * Maximum cumulative daily profit (in INR) before auto-restart is halted and bot is stopped.
+     * When the sum of realized P&L across all completed strategy nodes for a user on a given day
+     * meets or exceeds this value, no further auto-restarts are scheduled.
+     * <p>
+     * Set to 0 or negative to disable the daily profit cap.
+     * Default: 0 (disabled)
+     */
+    private double dailyMaxProfit = 0;
+
+    /**
+     * Maximum cumulative daily loss (in INR, expressed as a positive number) before auto-restart
+     * is halted and bot is stopped.
+     * When the absolute value of cumulative realized loss meets or exceeds this value,
+     * no further auto-restarts are scheduled.
+     * <p>
+     * Set to 0 or negative to disable the daily loss cap.
+     * Default: 0 (disabled)
+     */
+    private double dailyMaxLoss = 0;
+
+    // ==================== SHORT STRANGLE CONFIGURATION (continued) ====================
+
     /**
      * Target delta for the main sell legs in a short strangle.
      * The strategy will find strikes closest to this delta for CE and PE.

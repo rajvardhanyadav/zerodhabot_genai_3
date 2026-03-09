@@ -65,6 +65,10 @@ public class StrategyService {
     @org.springframework.beans.factory.annotation.Qualifier("persistenceExecutor")
     private Executor persistenceExecutor;
 
+    @Autowired
+    @Lazy
+    private com.tradingbot.service.strategy.DailyPnlGateService dailyPnlGateService;
+
     // Keyed by executionId but owned by userId; maintain both maps for efficient lookups
     private final Map<String, StrategyExecution> executionsById = new ConcurrentHashMap<>();
 
@@ -312,6 +316,12 @@ public class StrategyService {
                 persistenceExecutor.execute(() -> {
                     try {
                         persistStrategyExecutionAsync(execCopy);
+
+                        // Accumulate realized P&L into the daily gate for SELL_ATM_STRADDLE
+                        // This must happen BEFORE the event is published so that
+                        // StrategyRestartScheduler sees the up-to-date cumulative P&L.
+                        accumulateDailyPnl(execCopy);
+
                         eventPublisher.publishEvent(new StrategyCompletionEvent(this, execCopy));
                     } catch (Exception e) {
                         log.error("Error in async strategy completion handling for {}: {}",
@@ -321,6 +331,7 @@ public class StrategyService {
             } else {
                 // Fallback if executor not available
                 persistStrategyExecutionAsync(execution);
+                accumulateDailyPnl(execution);
                 eventPublisher.publishEvent(new StrategyCompletionEvent(this, execution));
             }
         } else {
@@ -391,6 +402,32 @@ public class StrategyService {
     public void markStrategyAsCompleted(String executionId, String reason) {
         log.debug("markStrategyAsCompleted invoked for {} with reason={} (deprecated path)", executionId, reason);
         handleStrategyCompletion(executionId, StrategyCompletionReason.OTHER);
+    }
+
+    /**
+     * Accumulate realized P&L for the completed execution into the daily P&L gate.
+     * Currently scoped to SELL_ATM_STRADDLE only.
+     * <p>
+     * HFT-safe: this runs on the persistence executor thread, not the tick thread.
+     */
+    private void accumulateDailyPnl(StrategyExecution execution) {
+        if (dailyPnlGateService == null) {
+            return;
+        }
+        try {
+            if (execution.getStrategyType() == com.tradingbot.model.StrategyType.SELL_ATM_STRADDLE
+                    && execution.getProfitLoss() != null) {
+                dailyPnlGateService.accumulate(
+                        execution.getUserId(),
+                        BigDecimal.valueOf(execution.getProfitLoss()));
+                log.debug("Accumulated daily P&L for user={}: nodePnl={}, cumulative={}",
+                        execution.getUserId(), execution.getProfitLoss(),
+                        dailyPnlGateService.getDailyPnl(execution.getUserId()));
+            }
+        } catch (Exception e) {
+            log.warn("Failed to accumulate daily P&L for execution {}: {}",
+                    execution.getExecutionId(), e.getMessage());
+        }
     }
 
     /**

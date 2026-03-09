@@ -6,6 +6,7 @@ import com.tradingbot.model.StrategyCompletionReason;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyStatus;
 import com.tradingbot.model.StrategyType;
+import com.tradingbot.service.BotStatusService;
 import com.tradingbot.service.StrategyService;
 import com.tradingbot.util.CandleUtils;
 import com.tradingbot.util.CurrentUserContext;
@@ -46,6 +47,8 @@ public class StrategyRestartScheduler {
     @Lazy
     private final StrategyService strategyService;
     private final TaskScheduler taskScheduler;
+    private final DailyPnlGateService dailyPnlGateService;
+    private final BotStatusService botStatusService;
 
     // Track scheduled restarts to avoid duplicates per executionId
     private final Map<String, ScheduledFuture<?>> scheduledRestarts = new ConcurrentHashMap<>();
@@ -116,6 +119,29 @@ public class StrategyRestartScheduler {
         if (maxAutoRestarts > 0 && execution.getAutoRestartCount() >= maxAutoRestarts) {
             log.info("Execution {} reached max auto restarts ({}), skipping schedule", execution.getExecutionId(), maxAutoRestarts);
             return;
+        }
+
+        // ==================== DAILY P&L GATE CHECK (SELL_ATM_STRADDLE only) ====================
+        // After a strategy node completes, check if cumulative daily P&L has breached
+        // the configured max profit or max loss threshold. If breached, block the restart
+        // and stop the bot.
+        if (execution.getStrategyType() == StrategyType.SELL_ATM_STRADDLE) {
+            java.util.Optional<StrategyCompletionReason> breachReason =
+                    dailyPnlGateService.getBreachReason(execution.getUserId());
+            if (breachReason.isPresent()) {
+                java.math.BigDecimal cumulativePnl = dailyPnlGateService.getDailyPnl(execution.getUserId());
+                log.warn("⛔ DAILY P&L GATE TRIGGERED for user={}: reason={}, cumulativePnl={}, execution={}. " +
+                         "Auto-restart BLOCKED. Stopping bot.",
+                         execution.getUserId(), breachReason.get(), cumulativePnl, execution.getExecutionId());
+
+                // Stop the bot
+                botStatusService.markStopped();
+
+                // Cancel any other scheduled restarts for this user
+                cancelScheduledRestartsForUser(execution.getUserId());
+
+                return;
+            }
         }
 
         String executionId = execution.getExecutionId();

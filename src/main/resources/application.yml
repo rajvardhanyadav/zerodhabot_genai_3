@@ -145,6 +145,15 @@ volatility:
   auto-restart-enabled: true
   auto-restart-paper-enabled: true
 
+  # ==================== DAILY P&L THRESHOLD CONFIGURATION ====================
+  # Maximum cumulative daily profit (in INR) before auto-restart is halted and bot is stopped.
+  # Set to 0 to disable. Example: 5000 = stop after ₹5,000 daily profit.
+  daily-max-profit: 2500
+
+  # Maximum cumulative daily loss (in INR, positive number) before auto-restart is halted.
+  # Set to 0 to disable. Example: 3000 = stop after ₹3,000 daily loss.
+  daily-max-loss: 2500
+
   # ==================== PREMIUM-BASED EXIT CONFIGURATION ====================
   # Dynamic exit based on percentage change from combined entry premium.
   # When enabled, replaces fixed-point MTM exits with premium decay/expansion logic.

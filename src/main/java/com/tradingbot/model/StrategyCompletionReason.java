@@ -33,6 +33,16 @@ public enum StrategyCompletionReason {
     ERROR,
 
     /**
+     * Auto-restart blocked because cumulative daily profit exceeded the configured threshold.
+     */
+    DAY_PROFIT_LIMIT_HIT,
+
+    /**
+     * Auto-restart blocked because cumulative daily loss exceeded the configured threshold.
+     */
+    DAY_LOSS_LIMIT_HIT,
+
+    /**
      * Generic fallback when no specific reason is available.
      */
     OTHER
