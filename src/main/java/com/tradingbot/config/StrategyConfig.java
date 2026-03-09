@@ -131,6 +131,23 @@ public class StrategyConfig {
      */
     private double dailyMaxLoss = 0;
 
+    // ==================== SELL STRADDLE HEDGE CONFIGURATION ====================
+
+    /**
+     * Enable hedge legs (buy OTM CE + PE) for the Sell ATM Straddle strategy.
+     * When enabled, 0.1 delta OTM options are purchased as protective hedges
+     * to reduce margin requirements and cap maximum loss.
+     * When disabled (default), the strategy runs as a naked 2-leg straddle.
+     */
+    private boolean sellStraddleHedgeEnabled = false;
+
+    /**
+     * Target delta for the hedge (buy) legs in a sell ATM straddle.
+     * The strategy will find strikes closest to this delta for CE and PE.
+     * Default: 0.1 (far OTM options for risk protection / margin reduction)
+     */
+    private double sellStraddleHedgeDelta = 0.1;
+
     // ==================== SHORT STRANGLE CONFIGURATION (continued) ====================
 
     /**

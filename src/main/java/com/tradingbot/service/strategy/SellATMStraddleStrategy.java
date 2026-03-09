@@ -38,6 +38,10 @@ import static com.tradingbot.service.TradingConstants.*;
 /**
  * SELL ATM Straddle Strategy - Sell 1 ATM Call + Sell 1 ATM Put
  * <p>
+ * Optionally includes hedge legs: Buy 0.1Δ OTM CE + Buy 0.1Δ OTM PE to reduce margin
+ * requirements and cap maximum loss. Hedge is configurable via
+ * {@code strategy.sell-straddle-hedge-enabled} or per-request via {@code hedgeEnabled}.
+ * <p>
  * Entry/exit thresholds match PositionMonitor (2.5 & 4 points).
  * Flow mirrors ATMStraddleStrategy but uses SELL instead of BUY.
  * <p>
@@ -45,7 +49,7 @@ import static com.tradingbot.service.TradingConstants.*;
  * <ul>
  *   <li>O(1) instrument lookup via pre-built HashMap index</li>
  *   <li>Pre-parsed strike values to avoid Double.parseDouble() on hot path</li>
- *   <li>Parallel order placement for both legs</li>
+ *   <li>Parallel order placement for all legs</li>
  *   <li>High-priority dedicated thread pool for exit orders</li>
  *   <li>Pre-computed string constants to avoid concatenation</li>
  * </ul>
@@ -81,6 +85,14 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     private static final String CALL_SHORT_SUFFIX = "_SHORT";
     private static final String ANNOTATED_CALL_TYPE = StrategyConstants.OPTION_TYPE_CALL + CALL_SHORT_SUFFIX;
     private static final String ANNOTATED_PUT_TYPE = StrategyConstants.OPTION_TYPE_PUT + CALL_SHORT_SUFFIX;
+
+    // Hedge leg constants (BUY far OTM options for margin reduction)
+    private static final String HEDGE_CALL_TYPE = StrategyConstants.OPTION_TYPE_CALL + "_HEDGE";
+    private static final String HEDGE_PUT_TYPE = StrategyConstants.OPTION_TYPE_PUT + "_HEDGE";
+    private static final String LEG_TYPE_SELL_CALL = "SellCall";
+    private static final String LEG_TYPE_SELL_PUT = "SellPut";
+    private static final String LEG_TYPE_HEDGE_CALL = "HedgeCall";
+    private static final String LEG_TYPE_HEDGE_PUT = "HedgePut";
 
     // ==================== HFT Instrument Index ====================
     /**
@@ -131,8 +143,13 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         final double stopLossExpansionPct = resolveStopLossExpansionPct(request);
         final SlTargetMode slTargetMode = resolveSlTargetMode(request);
         final String tradingMode = getTradingMode();
+        final boolean hedgeEnabled = resolveHedgeEnabled(request);
+        final double hedgeDelta = strategyConfig.getSellStraddleHedgeDelta();
 
         logExecutionStart(tradingMode, instrumentType, stopLossPoints, targetPoints, slTargetMode, targetDecayPct, stopLossExpansionPct);
+        if (hedgeEnabled) {
+            log.info("[{}] Hedge legs ENABLED with delta={}", tradingMode, hedgeDelta);
+        }
 
         // Get spot price and instruments
         final double spotPrice = getCurrentSpotPrice(instrumentType);
@@ -154,31 +171,84 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         Instrument atmPut = instrumentIndex.get(InstrumentKey.of(atmStrike, StrategyConstants.OPTION_TYPE_PUT));
         validateATMOptions(atmCall, atmPut, atmStrike);
 
+        // ==================== HEDGE STRIKE SELECTION (conditional) ====================
+        Instrument hedgeCall = null;
+        Instrument hedgePut = null;
+
+        if (hedgeEnabled) {
+            if (expiryDate == null) {
+                throw new RuntimeException("Could not determine expiry date for hedge delta calculation");
+            }
+
+            final double hedgeCEStrike = getStrikeByDelta(spotPrice, instrumentType, expiryDate, hedgeDelta, OPTION_TYPE_CE);
+            final double hedgePEStrike = getStrikeByDelta(spotPrice, instrumentType, expiryDate, hedgeDelta, OPTION_TYPE_PE);
+            log.info("Hedge leg strikes - CE: {} (target Δ={}), PE: {} (target Δ={})",
+                    hedgeCEStrike, hedgeDelta, hedgePEStrike, hedgeDelta);
+
+            // Validate hedge is further OTM than ATM
+            if (hedgeCEStrike <= atmStrike) {
+                log.warn("Hedge CE strike {} is not further OTM than ATM CE {} - proceeding with delta-selected strike", hedgeCEStrike, atmStrike);
+            }
+            if (hedgePEStrike >= atmStrike) {
+                log.warn("Hedge PE strike {} is not further OTM than ATM PE {} - proceeding with delta-selected strike", hedgePEStrike, atmStrike);
+            }
+
+            hedgeCall = instrumentIndex.get(InstrumentKey.of(hedgeCEStrike, StrategyConstants.OPTION_TYPE_CALL));
+            hedgePut = instrumentIndex.get(InstrumentKey.of(hedgePEStrike, StrategyConstants.OPTION_TYPE_PUT));
+            validateHedgeInstruments(hedgeCall, hedgePut, hedgeCEStrike, hedgePEStrike);
+        }
+
         // Place basket order
         final int quantity = calculateOrderQuantity(request);
         final String orderType = resolveOrderType(request);
 
-        List<StrategyExecutionResponse.OrderDetail> orderDetails = placeBasketOrderForStraddle(
-                atmCall, atmPut, quantity, orderType, tradingMode, executionId);
-
-        // Extract order IDs
-        String callOrderId = null, putOrderId = null;
-        for (StrategyExecutionResponse.OrderDetail od : orderDetails) {
-            if (od.getOptionType().contains(StrategyConstants.OPTION_TYPE_CALL)) {
-                callOrderId = od.getOrderId();
-            } else if (od.getOptionType().contains(StrategyConstants.OPTION_TYPE_PUT)) {
-                putOrderId = od.getOrderId();
-            }
+        List<StrategyExecutionResponse.OrderDetail> orderDetails;
+        if (hedgeEnabled) {
+            orderDetails = placeHedgedBasketOrder(atmCall, atmPut, hedgeCall, hedgePut,
+                    quantity, orderType, tradingMode, executionId);
+        } else {
+            orderDetails = placeBasketOrderForStraddle(atmCall, atmPut, quantity, orderType, tradingMode, executionId);
         }
-        validateOrderIds(callOrderId, putOrderId);
 
-        // Setup monitoring
-        setupMonitoring(executionId, atmCall, atmPut, callOrderId, putOrderId,
-                quantity, stopLossPoints, targetPoints, targetDecayPct, stopLossExpansionPct,
-                slTargetMode, completionCallback);
+        // Extract order IDs based on whether hedging is active
+        if (hedgeEnabled) {
+            String sellCallOrderId = null, sellPutOrderId = null;
+            String hedgeCallOrderId = null, hedgePutOrderId = null;
 
-        return buildSuccessResponse(executionId, orderDetails,
-                calculateTotalPremium(orderDetails), stopLossPoints, targetPoints, tradingMode);
+            for (StrategyExecutionResponse.OrderDetail od : orderDetails) {
+                String optType = od.getOptionType();
+                if (ANNOTATED_CALL_TYPE.equals(optType)) sellCallOrderId = od.getOrderId();
+                else if (ANNOTATED_PUT_TYPE.equals(optType)) sellPutOrderId = od.getOrderId();
+                else if (HEDGE_CALL_TYPE.equals(optType)) hedgeCallOrderId = od.getOrderId();
+                else if (HEDGE_PUT_TYPE.equals(optType)) hedgePutOrderId = od.getOrderId();
+            }
+            validateHedgedOrderIds(sellCallOrderId, sellPutOrderId, hedgeCallOrderId, hedgePutOrderId);
+
+            // Setup 4-leg monitoring (strangle-style) — hedge legs tracked with -1.0 direction
+            setupHedgedMonitoring(executionId, atmCall, atmPut, hedgeCall, hedgePut,
+                    sellCallOrderId, sellPutOrderId, hedgeCallOrderId, hedgePutOrderId,
+                    quantity, stopLossPoints, targetPoints, targetDecayPct, stopLossExpansionPct,
+                    slTargetMode, completionCallback);
+        } else {
+            // Original 2-leg flow
+            String callOrderId = null, putOrderId = null;
+            for (StrategyExecutionResponse.OrderDetail od : orderDetails) {
+                if (od.getOptionType().contains(StrategyConstants.OPTION_TYPE_CALL)) {
+                    callOrderId = od.getOrderId();
+                } else if (od.getOptionType().contains(StrategyConstants.OPTION_TYPE_PUT)) {
+                    putOrderId = od.getOrderId();
+                }
+            }
+            validateOrderIds(callOrderId, putOrderId);
+
+            // Setup original 2-leg monitoring with leg replacement
+            setupMonitoring(executionId, atmCall, atmPut, callOrderId, putOrderId,
+                    quantity, stopLossPoints, targetPoints, targetDecayPct, stopLossExpansionPct,
+                    slTargetMode, completionCallback);
+        }
+
+        double premium = hedgeEnabled ? calculateNetPremium(orderDetails) : calculateTotalPremium(orderDetails);
+        return buildSuccessResponse(executionId, orderDetails, premium, stopLossPoints, targetPoints, tradingMode);
     }
 
     // ==================== Basket Order Handling ====================
@@ -197,9 +267,140 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 tradingMode, basketResponse.getStatus(),
                 basketResponse.getSuccessCount(), basketResponse.getTotalOrders());
 
-        validateBasketResponse(basketResponse, atmCall, atmPut, quantity, tradingMode, executionId);
+        validateBasketResponse(basketResponse, quantity, tradingMode, executionId);
 
         return convertToOrderDetails(basketResponse, atmCall, atmPut, quantity);
+    }
+
+    // ==================== Hedged 4-Leg Basket Order ====================
+
+    private List<StrategyExecutionResponse.OrderDetail> placeHedgedBasketOrder(
+            Instrument atmCall, Instrument atmPut,
+            Instrument hedgeCall, Instrument hedgePut,
+            int quantity, String orderType, String tradingMode, String executionId) {
+
+        log.info("[{}] Placing hedged 4-leg basket order - SellCE: {}, SellPE: {}, HedgeCE: {}, HedgePE: {}, Qty: {}",
+                tradingMode, atmCall.tradingsymbol, atmPut.tradingsymbol,
+                hedgeCall.tradingsymbol, hedgePut.tradingsymbol, quantity);
+
+        BasketOrderRequest basketRequest = buildHedgedBasketOrderRequest(
+                atmCall, atmPut, hedgeCall, hedgePut, quantity, orderType, executionId);
+        BasketOrderResponse basketResponse = unifiedTradingService.placeBasketOrder(basketRequest);
+
+        log.info("[{}] Hedged basket response - Status: {}, Success: {}/{}",
+                tradingMode, basketResponse.getStatus(),
+                basketResponse.getSuccessCount(), basketResponse.getTotalOrders());
+
+        validateBasketResponse(basketResponse, quantity, tradingMode, executionId);
+
+        return convertHedgedToOrderDetails(basketResponse, atmCall, atmPut, hedgeCall, hedgePut, quantity);
+    }
+
+    private BasketOrderRequest buildHedgedBasketOrderRequest(
+            Instrument atmCall, Instrument atmPut,
+            Instrument hedgeCall, Instrument hedgePut,
+            int quantity, String orderType, String executionId) {
+
+        List<BasketOrderRequest.BasketOrderItem> items = new ArrayList<>(4);
+
+        // Hedge BUY legs placed FIRST for margin benefit
+        items.add(BasketOrderRequest.BasketOrderItem.builder()
+                .tradingSymbol(hedgeCall.tradingsymbol)
+                .exchange(EXCHANGE_NFO)
+                .transactionType(StrategyConstants.TRANSACTION_BUY)
+                .quantity(quantity)
+                .product(PRODUCT_MIS)
+                .orderType(orderType)
+                .validity(VALIDITY_DAY)
+                .legType(LEG_TYPE_HEDGE_CALL)
+                .instrumentToken(hedgeCall.instrument_token)
+                .build());
+
+        items.add(BasketOrderRequest.BasketOrderItem.builder()
+                .tradingSymbol(hedgePut.tradingsymbol)
+                .exchange(EXCHANGE_NFO)
+                .transactionType(StrategyConstants.TRANSACTION_BUY)
+                .quantity(quantity)
+                .product(PRODUCT_MIS)
+                .orderType(orderType)
+                .validity(VALIDITY_DAY)
+                .legType(LEG_TYPE_HEDGE_PUT)
+                .instrumentToken(hedgePut.instrument_token)
+                .build());
+
+        // Sell ATM legs
+        items.add(BasketOrderRequest.BasketOrderItem.builder()
+                .tradingSymbol(atmCall.tradingsymbol)
+                .exchange(EXCHANGE_NFO)
+                .transactionType(StrategyConstants.TRANSACTION_SELL)
+                .quantity(quantity)
+                .product(PRODUCT_MIS)
+                .orderType(orderType)
+                .validity(VALIDITY_DAY)
+                .legType(LEG_TYPE_SELL_CALL)
+                .instrumentToken(atmCall.instrument_token)
+                .build());
+
+        items.add(BasketOrderRequest.BasketOrderItem.builder()
+                .tradingSymbol(atmPut.tradingsymbol)
+                .exchange(EXCHANGE_NFO)
+                .transactionType(StrategyConstants.TRANSACTION_SELL)
+                .quantity(quantity)
+                .product(PRODUCT_MIS)
+                .orderType(orderType)
+                .validity(VALIDITY_DAY)
+                .legType(LEG_TYPE_SELL_PUT)
+                .instrumentToken(atmPut.instrument_token)
+                .build());
+
+        return BasketOrderRequest.builder()
+                .orders(items)
+                .tag("HEDGED_SELL_STRADDLE_" + executionId)
+                .build();
+    }
+
+    private List<StrategyExecutionResponse.OrderDetail> convertHedgedToOrderDetails(
+            BasketOrderResponse response,
+            Instrument atmCall, Instrument atmPut,
+            Instrument hedgeCall, Instrument hedgePut,
+            int quantity) {
+
+        List<StrategyExecutionResponse.OrderDetail> orderDetails = new ArrayList<>(4);
+
+        for (BasketOrderResponse.BasketOrderResult result : response.getOrderResults()) {
+            if (STATUS_SUCCESS.equals(result.getStatus())) {
+                Instrument instrument;
+                String annotatedType;
+
+                switch (result.getLegType()) {
+                    case LEG_TYPE_SELL_CALL -> { instrument = atmCall; annotatedType = ANNOTATED_CALL_TYPE; }
+                    case LEG_TYPE_SELL_PUT -> { instrument = atmPut; annotatedType = ANNOTATED_PUT_TYPE; }
+                    case LEG_TYPE_HEDGE_CALL -> { instrument = hedgeCall; annotatedType = HEDGE_CALL_TYPE; }
+                    case LEG_TYPE_HEDGE_PUT -> { instrument = hedgePut; annotatedType = HEDGE_PUT_TYPE; }
+                    default -> {
+                        log.warn("Unknown leg type in hedged straddle: {}", result.getLegType());
+                        continue;
+                    }
+                }
+
+                double price = getOrderPriceFromResult(result);
+                orderDetails.add(new StrategyExecutionResponse.OrderDetail(
+                        result.getOrderId(),
+                        result.getTradingSymbol(),
+                        annotatedType,
+                        Double.parseDouble(instrument.strike),
+                        quantity,
+                        price,
+                        StrategyConstants.ORDER_STATUS_COMPLETE
+                ));
+            }
+        }
+
+        if (orderDetails.size() < 4) {
+            throw new RuntimeException("Expected 4 order details for hedged straddle but got " + orderDetails.size());
+        }
+
+        return orderDetails;
     }
 
     private BasketOrderRequest buildBasketOrderRequest(Instrument atmCall, Instrument atmPut,
@@ -236,8 +437,8 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 .build();
     }
 
-    private void validateBasketResponse(BasketOrderResponse response, Instrument atmCall, Instrument atmPut,
-                                        int quantity, String tradingMode, String executionId) {
+    private void validateBasketResponse(BasketOrderResponse response, int quantity,
+                                        String tradingMode, String executionId) {
         if (!response.hasAnySuccess()) {
             throw new RuntimeException("Basket order failed: " + response.getMessage());
         }
@@ -251,7 +452,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     }
 
     private String buildPartialFillErrorMessage(BasketOrderResponse response) {
-        StringBuilder sb = new StringBuilder("Straddle requires both legs. Partial fill detected: ");
+        StringBuilder sb = new StringBuilder("Straddle requires all legs. Partial fill detected: ");
         for (BasketOrderResponse.BasketOrderResult result : response.getOrderResults()) {
             if (!STATUS_SUCCESS.equals(result.getStatus())) {
                 sb.append('[').append(result.getLegType())
@@ -337,9 +538,21 @@ public class SellATMStraddleStrategy extends BaseStrategy {
             CurrentUserContext.setUserId(userId);
         }
         try {
+            // Determine the reverse transaction type based on leg type
+            String reverseTransaction;
+            if (LEG_TYPE_SELL_CALL.equals(result.getLegType()) || LEG_TYPE_SELL_PUT.equals(result.getLegType())
+                    || StrategyConstants.LEG_TYPE_CALL.equals(result.getLegType())
+                    || StrategyConstants.LEG_TYPE_PUT.equals(result.getLegType())) {
+                // SELL legs need BUY to rollback
+                reverseTransaction = StrategyConstants.TRANSACTION_BUY;
+            } else {
+                // BUY (hedge) legs need SELL to rollback
+                reverseTransaction = StrategyConstants.TRANSACTION_SELL;
+            }
+
             OrderRequest exitOrder = createOrderRequest(
                     result.getTradingSymbol(),
-                    StrategyConstants.TRANSACTION_BUY,
+                    reverseTransaction,
                     quantity,
                     StrategyConstants.ORDER_TYPE_MARKET);
 
@@ -352,10 +565,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 log.error("[{}] ROLLBACK FAILED: {} leg - {}", tradingMode, result.getLegType(), exitResponse.getMessage());
                 return false;
             }
-        } catch (Exception e) {
-            log.error("[{}] ROLLBACK ERROR: {} leg - {}", tradingMode, result.getLegType(), e.getMessage(), e);
-            return false;
-        } catch (KiteException e) {
+        } catch (Exception | KiteException e) {
             log.error("[{}] ROLLBACK ERROR: {} leg - {}", tradingMode, result.getLegType(), e.getMessage(), e);
             return false;
         } finally {
@@ -412,6 +622,41 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         );
 
         monitoringSetupHelper.setupMonitoringAsync(params, callbacks, EXIT_ORDER_EXECUTOR);
+    }
+
+    /**
+     * Setup 4-leg monitoring for hedged straddle using StrangleMonitoringParams.
+     * Hedge legs are tracked with -1.0 direction multiplier (net P&L contribution)
+     * but are NOT independently monitored for SL/target.
+     * Leg replacement is disabled for hedged positions.
+     */
+    private void setupHedgedMonitoring(String executionId,
+                                       Instrument sellCall, Instrument sellPut,
+                                       Instrument hedgeCall, Instrument hedgePut,
+                                       String sellCallOrderId, String sellPutOrderId,
+                                       String hedgeCallOrderId, String hedgePutOrderId,
+                                       int quantity, double stopLossPoints, double targetPoints,
+                                       double targetDecayPct, double stopLossExpansionPct,
+                                       SlTargetMode slTargetMode, StrategyCompletionCallback completionCallback) {
+
+        MonitoringSetupHelper.StrangleMonitoringParams params = new MonitoringSetupHelper.StrangleMonitoringParams(
+                executionId, sellCall, sellPut, hedgeCall, hedgePut,
+                sellCallOrderId, sellPutOrderId, hedgeCallOrderId, hedgePutOrderId,
+                quantity, stopLossPoints, targetPoints, targetDecayPct, stopLossExpansionPct,
+                slTargetMode, completionCallback
+        );
+
+        // Disable leg replacement for hedged straddle — only support full exit of all legs
+        MonitoringSetupHelper.MonitorCallbacks callbacks = new MonitoringSetupHelper.MonitorCallbacks(
+                reason -> exitAllLegs(executionId, reason, completionCallback),
+                (legSymbol, reason) -> exitAllLegs(executionId,
+                        "Individual leg exit (" + legSymbol + "): " + reason, completionCallback),
+                // No leg replacement for hedged straddle — noop callback
+                (exitedLegSymbol, legTypeToAdd, targetPremium, lossMakingLegSymbol, exitedLegLtp) ->
+                        log.info("Leg replacement not supported for HEDGED_SELL_STRADDLE; ignoring for {}", executionId)
+        );
+
+        monitoringSetupHelper.setupStrangleMonitoringAsync(params, callbacks, EXIT_ORDER_EXECUTOR);
     }
 
     // ==================== Exit Operations ====================
@@ -548,6 +793,19 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         }
     }
 
+    private void validateHedgeInstruments(Instrument hedgeCall, Instrument hedgePut,
+                                          double hedgeCEStrike, double hedgePEStrike) {
+        StringBuilder errors = new StringBuilder();
+        if (hedgeCall == null) errors.append("Hedge CE not found for strike ").append(hedgeCEStrike).append(". ");
+        if (hedgePut == null) errors.append("Hedge PE not found for strike ").append(hedgePEStrike).append(". ");
+
+        if (!errors.isEmpty()) {
+            throw new RuntimeException("Hedge instruments not found: " + errors);
+        }
+
+        log.info("Hedge instruments - HedgeCE: {}, HedgePE: {}", hedgeCall.tradingsymbol, hedgePut.tradingsymbol);
+    }
+
     private void validateOrderIds(String callOrderId, String putOrderId) {
         if (callOrderId == null) {
             throw new RuntimeException("Call order not found in basket response");
@@ -557,6 +815,14 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         }
     }
 
+    private void validateHedgedOrderIds(String sellCallOrderId, String sellPutOrderId,
+                                        String hedgeCallOrderId, String hedgePutOrderId) {
+        if (sellCallOrderId == null) throw new RuntimeException("Sell Call order not found in basket response");
+        if (sellPutOrderId == null) throw new RuntimeException("Sell Put order not found in basket response");
+        if (hedgeCallOrderId == null) throw new RuntimeException("Hedge Call order not found in basket response");
+        if (hedgePutOrderId == null) throw new RuntimeException("Hedge Put order not found in basket response");
+    }
+
     private double calculateTotalPremium(List<StrategyExecutionResponse.OrderDetail> orderDetails) {
         double callPrice = orderDetails.get(0).getPrice();
         double putPrice = orderDetails.get(1).getPrice();
@@ -564,6 +830,32 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
         log.info(StrategyConstants.LOG_BOTH_LEGS_PLACED, getTradingMode(), callPrice, putPrice);
         return (callPrice + putPrice) * quantity;
+    }
+
+    /**
+     * Calculate net premium for hedged straddle: sellPremium - hedgePremium.
+     * This represents the net credit received after paying for hedge legs.
+     */
+    private double calculateNetPremium(List<StrategyExecutionResponse.OrderDetail> orderDetails) {
+        double sellPremium = 0.0;
+        double hedgePremium = 0.0;
+        int quantity = 0;
+
+        for (StrategyExecutionResponse.OrderDetail od : orderDetails) {
+            if (quantity == 0 && od.getQuantity() != null) quantity = od.getQuantity();
+            String optType = od.getOptionType();
+            if (ANNOTATED_CALL_TYPE.equals(optType) || ANNOTATED_PUT_TYPE.equals(optType)) {
+                sellPremium += od.getPrice();
+            } else {
+                hedgePremium += od.getPrice();
+            }
+        }
+
+        double netPremiumPerUnit = sellPremium - hedgePremium;
+        log.info("[{}] Hedged straddle legs placed - SellPremium: {}, HedgePremium: {}, NetPremium/unit: {}",
+                getTradingMode(), sellPremium, hedgePremium, netPremiumPerUnit);
+
+        return netPremiumPerUnit * quantity;
     }
 
     private StrategyExecutionResponse buildSuccessResponse(String executionId,
@@ -586,6 +878,12 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     }
 
     // ==================== Configuration Resolvers ====================
+
+    private boolean resolveHedgeEnabled(StrategyRequest request) {
+        return request.getHedgeEnabled() != null
+                ? request.getHedgeEnabled()
+                : strategyConfig.isSellStraddleHedgeEnabled();
+    }
 
     private double resolveStopLossPoints(StrategyRequest request) {
         return request.getStopLossPoints() != null

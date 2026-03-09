@@ -74,4 +74,13 @@ public class StrategyRequest {
      * If null or empty, defaults to "points" mode (or "percentage" if premiumBasedExitEnabled is true in config).
      */
     private String slTargetMode;
+
+    // ==================== HEDGE CONFIGURATION ====================
+
+    /**
+     * Enable hedge legs for sell strategies (e.g., Sell ATM Straddle).
+     * When true, 0.1 delta OTM CE + PE are bought as protective hedges to reduce margin.
+     * If null, falls back to StrategyConfig.sellStraddleHedgeEnabled.
+     */
+    private Boolean hedgeEnabled;
 }

@@ -99,6 +99,12 @@ strategy:
   # Delta values for hedge legs (risk protection)
   short-strangle-hedge-delta: 0.1
 
+  # Sell ATM Straddle Hedge Configuration
+  # Enable/disable hedge legs (buy OTM CE + PE) for margin reduction
+  sell-straddle-hedge-enabled: true
+  # Target delta for hedge (buy) legs in sell ATM straddle
+  sell-straddle-hedge-delta: 0.1
+
   # Trailing Stop Loss Configuration
   # When enabled, stop loss trails up as position becomes profitable
   trailing-stop-enabled: false
