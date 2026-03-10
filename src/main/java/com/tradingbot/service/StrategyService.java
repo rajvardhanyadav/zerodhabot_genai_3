@@ -619,77 +619,54 @@ public class StrategyService {
     }
 
     /**
-     * Common method to exit all legs for any strategy
+     * Common method to exit all legs for any strategy.
+     * <p>
+     * Exit sequence: SELL (SHORT) legs are closed first (buy-back ATM), then HEDGE legs.
+     * This prevents momentary naked short exposure and potential margin spikes.
+     * Non-hedged strategies (no _HEDGE legs) execute as a single pass.
      */
     private Map<String, Object> exitAllLegs(String executionId, List<StrategyExecution.OrderLeg> orderLegs) throws KiteException {
         String tradingMode = unifiedTradingService.isPaperTradingEnabled() ? StrategyConstants.TRADING_MODE_PAPER : StrategyConstants.TRADING_MODE_LIVE;
         log.info("[{} MODE] Exiting all legs for execution {}: {} legs", tradingMode, executionId, orderLegs.size());
 
+        // Partition legs: SELL/SHORT first, HEDGE second
+        List<StrategyExecution.OrderLeg> sellLegs = new ArrayList<>();
+        List<StrategyExecution.OrderLeg> hedgeLegs = new ArrayList<>();
+        for (StrategyExecution.OrderLeg leg : orderLegs) {
+            String optionType = leg.getOptionType();
+            if (optionType != null && optionType.contains("_HEDGE")) {
+                hedgeLegs.add(leg);
+            } else {
+                sellLegs.add(leg);
+            }
+        }
+
+        log.debug("Partitioned {} legs: {} SELL/SHORT, {} HEDGE", orderLegs.size(), sellLegs.size(), hedgeLegs.size());
+
         List<Map<String, String>> exitOrders = new ArrayList<>();
         int successCount = 0;
         int failureCount = 0;
 
-        // Close all legs at market price
-        for (StrategyExecution.OrderLeg leg : orderLegs) {
-            StrategyExecution.OrderLeg workingLeg = leg;
-            try {
-                workingLeg.setLifecycleState(LegLifecycleState.EXIT_PENDING);
-                workingLeg.setExitRequestedAt(System.currentTimeMillis());
-
-                String exitTransactionType = determineExitTransactionType(workingLeg);
-
-                OrderRequest exitOrder = new OrderRequest();
-                exitOrder.setTradingSymbol(workingLeg.getTradingSymbol());
-                exitOrder.setExchange(EXCHANGE_NFO);
-                exitOrder.setTransactionType(exitTransactionType);
-                exitOrder.setQuantity(workingLeg.getQuantity());
-                exitOrder.setProduct(PRODUCT_MIS);
-                exitOrder.setOrderType(ORDER_TYPE_MARKET);
-                exitOrder.setValidity(VALIDITY_DAY);
-
-                OrderResponse response = unifiedTradingService.placeOrder(exitOrder);
-
-                workingLeg.setExitOrderId(response.getOrderId());
-                workingLeg.setExitTransactionType(exitTransactionType);
-                workingLeg.setExitQuantity(workingLeg.getQuantity());
-                workingLeg.setExitStatus(response.getStatus());
-                workingLeg.setExitMessage(response.getMessage());
-                workingLeg.setExitTimestamp(System.currentTimeMillis());
-
-                Double exitPrice = resolveOrderFillPrice(response.getOrderId());
-                if (exitPrice != null) {
-                    workingLeg.setExitPrice(exitPrice);
-                    workingLeg.setRealizedPnl(calculateRealizedPnl(workingLeg, exitPrice));
-                }
-
-                Map<String, String> orderResult = new HashMap<>();
-                orderResult.put("tradingSymbol", workingLeg.getTradingSymbol());
-                orderResult.put("optionType", workingLeg.getOptionType());
-                orderResult.put("exitOrderId", response.getOrderId());
-                orderResult.put("status", response.getStatus());
-                orderResult.put("message", response.getMessage());
-                exitOrders.add(orderResult);
-
-                if (STATUS_SUCCESS.equals(response.getStatus())) {
-                    successCount++;
-                    workingLeg.setLifecycleState(LegLifecycleState.EXITED);
-                } else {
-                    failureCount++;
-                    workingLeg.setLifecycleState(LegLifecycleState.EXIT_FAILED);
-                    log.error("Failed to close {} leg: {} - {}", workingLeg.getOptionType(), workingLeg.getTradingSymbol(), response.getMessage());
-                }
-
-            } catch (Exception e) {
-                failureCount++;
-                workingLeg.setLifecycleState(LegLifecycleState.EXIT_FAILED);
-                log.error("Error closing {} leg: {}", workingLeg.getOptionType(), workingLeg.getTradingSymbol(), e);
-                Map<String, String> orderResult = new HashMap<>();
-                orderResult.put("tradingSymbol", workingLeg.getTradingSymbol());
-                orderResult.put("optionType", workingLeg.getOptionType());
-                orderResult.put("status", STATUS_FAILED);
-                orderResult.put("message", "Exception: " + e.getMessage());
-                exitOrders.add(orderResult);
+        // Phase 1: Close SELL (SHORT) legs first — buy back ATM short positions
+        if (!sellLegs.isEmpty()) {
+            log.info("[{} MODE] Phase 1: Closing {} SELL ATM leg(s) for execution {}", tradingMode, sellLegs.size(), executionId);
+            for (StrategyExecution.OrderLeg leg : sellLegs) {
+                int[] result = processLegExitSequential(leg, exitOrders);
+                successCount += result[0];
+                failureCount += result[1];
             }
+            log.info("[{} MODE] Phase 1 complete: {} processed", tradingMode, sellLegs.size());
+        }
+
+        // Phase 2: Close HEDGE (BUY) legs — sell the protective positions
+        if (!hedgeLegs.isEmpty()) {
+            log.info("[{} MODE] Phase 2: Closing {} HEDGE leg(s) for execution {}", tradingMode, hedgeLegs.size(), executionId);
+            for (StrategyExecution.OrderLeg leg : hedgeLegs) {
+                int[] result = processLegExitSequential(leg, exitOrders);
+                successCount += result[0];
+                failureCount += result[1];
+            }
+            log.info("[{} MODE] Phase 2 complete: {} processed", tradingMode, hedgeLegs.size());
         }
 
         // Stop monitoring for this execution
@@ -717,6 +694,85 @@ public class StrategyService {
                  tradingMode, executionId, successCount, failureCount);
 
         return result;
+    }
+
+    /**
+     * Process a single leg exit sequentially.
+     *
+     * @param workingLeg  the leg to close
+     * @param exitOrders  accumulator for exit order results
+     * @return int array: [successCount, failureCount] (either [1,0] or [0,1])
+     */
+    private int[] processLegExitSequential(StrategyExecution.OrderLeg workingLeg,
+                                           List<Map<String, String>> exitOrders) {
+        try {
+            workingLeg.setLifecycleState(LegLifecycleState.EXIT_PENDING);
+            workingLeg.setExitRequestedAt(System.currentTimeMillis());
+
+            String exitTransactionType = determineExitTransactionType(workingLeg);
+
+            OrderRequest exitOrder = new OrderRequest();
+            exitOrder.setTradingSymbol(workingLeg.getTradingSymbol());
+            exitOrder.setExchange(EXCHANGE_NFO);
+            exitOrder.setTransactionType(exitTransactionType);
+            exitOrder.setQuantity(workingLeg.getQuantity());
+            exitOrder.setProduct(PRODUCT_MIS);
+            exitOrder.setOrderType(ORDER_TYPE_MARKET);
+            exitOrder.setValidity(VALIDITY_DAY);
+
+            OrderResponse response = unifiedTradingService.placeOrder(exitOrder);
+
+            workingLeg.setExitOrderId(response.getOrderId());
+            workingLeg.setExitTransactionType(exitTransactionType);
+            workingLeg.setExitQuantity(workingLeg.getQuantity());
+            workingLeg.setExitStatus(response.getStatus());
+            workingLeg.setExitMessage(response.getMessage());
+            workingLeg.setExitTimestamp(System.currentTimeMillis());
+
+            Double exitPrice = resolveOrderFillPrice(response.getOrderId());
+            if (exitPrice != null) {
+                workingLeg.setExitPrice(exitPrice);
+                workingLeg.setRealizedPnl(calculateRealizedPnl(workingLeg, exitPrice));
+            }
+
+            Map<String, String> orderResult = new HashMap<>();
+            orderResult.put("tradingSymbol", workingLeg.getTradingSymbol());
+            orderResult.put("optionType", workingLeg.getOptionType());
+            orderResult.put("exitOrderId", response.getOrderId());
+            orderResult.put("status", response.getStatus());
+            orderResult.put("message", response.getMessage());
+            exitOrders.add(orderResult);
+
+            if (STATUS_SUCCESS.equals(response.getStatus())) {
+                workingLeg.setLifecycleState(LegLifecycleState.EXITED);
+                return new int[]{1, 0};
+            } else {
+                workingLeg.setLifecycleState(LegLifecycleState.EXIT_FAILED);
+                log.error("Failed to close {} leg: {} - {}", workingLeg.getOptionType(), workingLeg.getTradingSymbol(), response.getMessage());
+                return new int[]{0, 1};
+            }
+
+        } catch (KiteException | IOException e) {
+            return handleLegExitError(workingLeg, e, exitOrders);
+        } catch (Exception e) {
+            return handleLegExitError(workingLeg, e, exitOrders);
+        }
+    }
+
+    /**
+     * Handle error during single leg exit in the sequential path.
+     */
+    private int[] handleLegExitError(StrategyExecution.OrderLeg workingLeg, Throwable e,
+                                     List<Map<String, String>> exitOrders) {
+        workingLeg.setLifecycleState(LegLifecycleState.EXIT_FAILED);
+        log.error("Error closing {} leg: {}", workingLeg.getOptionType(), workingLeg.getTradingSymbol(), e);
+        Map<String, String> orderResult = new HashMap<>();
+        orderResult.put("tradingSymbol", workingLeg.getTradingSymbol());
+        orderResult.put("optionType", workingLeg.getOptionType());
+        orderResult.put("status", STATUS_FAILED);
+        orderResult.put("message", "Exception: " + e.getMessage());
+        exitOrders.add(orderResult);
+        return new int[]{0, 1};
     }
 
     public String determineExitTransactionType(StrategyExecution.OrderLeg leg) {

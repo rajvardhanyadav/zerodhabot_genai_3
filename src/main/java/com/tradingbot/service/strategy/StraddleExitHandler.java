@@ -78,32 +78,36 @@ public class StraddleExitHandler {
 
         final String tradingMode = getTradingMode();
 
-        // HFT: Process all exit orders in parallel
-        List<CompletableFuture<Map<String, String>>> exitFutures = new ArrayList<>(orderLegs.size());
+        // Partition legs: SELL (SHORT) legs first, then HEDGE legs
+        // Exit sequence: BUY-back ATM shorts first → then SELL hedges
+        // This avoids momentary naked short exposure and margin spikes
+        List<StrategyExecution.OrderLeg> sellLegs = new ArrayList<>();
+        List<StrategyExecution.OrderLeg> hedgeLegs = new ArrayList<>();
+        partitionLegsForSequencedExit(orderLegs, sellLegs, hedgeLegs);
 
-        for (StrategyExecution.OrderLeg leg : orderLegs) {
-            exitFutures.add(CompletableFuture.supplyAsync(
-                    CurrentUserContext.wrapSupplier(() -> processLegExit(leg, tradingMode)),
-                    executor
-            ));
-        }
-
-        // Wait for all exits and collect results
         int successCount = 0;
         int failureCount = 0;
 
-        for (CompletableFuture<Map<String, String>> future : exitFutures) {
-            try {
-                Map<String, String> result = future.join();
-                if (STATUS_SUCCESS.equals(result.get("status"))) {
-                    successCount++;
-                } else {
-                    failureCount++;
-                }
-            } catch (Exception e) {
-                failureCount++;
-                log.error("Error waiting for exit order: {}", e.getMessage());
-            }
+        // Phase 1: Close SELL (SHORT) legs first — buy back the ATM positions
+        if (!sellLegs.isEmpty()) {
+            log.info("[{} MODE] Phase 1: Closing {} SELL ATM leg(s) for execution {}",
+                    tradingMode, sellLegs.size(), executionId);
+            int[] phase1Result = processLegsInParallel(sellLegs, tradingMode, executor);
+            successCount += phase1Result[0];
+            failureCount += phase1Result[1];
+            log.info("[{} MODE] Phase 1 complete: {} closed, {} failed",
+                    tradingMode, phase1Result[0], phase1Result[1]);
+        }
+
+        // Phase 2: Close HEDGE (BUY) legs — sell the protective positions
+        if (!hedgeLegs.isEmpty()) {
+            log.info("[{} MODE] Phase 2: Closing {} HEDGE leg(s) for execution {}",
+                    tradingMode, hedgeLegs.size(), executionId);
+            int[] phase2Result = processLegsInParallel(hedgeLegs, tradingMode, executor);
+            successCount += phase2Result[0];
+            failureCount += phase2Result[1];
+            log.info("[{} MODE] Phase 2 complete: {} closed, {} failed",
+                    tradingMode, phase2Result[0], phase2Result[1]);
         }
 
         execution.setOrderLegs(orderLegs);
@@ -266,6 +270,81 @@ public class StraddleExitHandler {
         }
 
         return StrategyCompletionReason.TARGET_HIT;
+    }
+
+    // ==================== Sequenced Exit Helpers ====================
+
+    /**
+     * Suffix used to identify hedge legs in optionType (e.g. CE_HEDGE, PE_HEDGE).
+     */
+    private static final String HEDGE_SUFFIX = "_HEDGE";
+
+    /**
+     * Partition legs into SELL (SHORT) legs and HEDGE legs for sequenced exit.
+     * <p>
+     * SELL legs (optionType containing _SHORT or without _HEDGE suffix) are closed first
+     * to buy-back ATM short positions. HEDGE legs (_HEDGE suffix) are closed after.
+     * <p>
+     * Non-hedged strategies will have an empty hedgeLegs list, preserving the original
+     * single-phase parallel behavior.
+     *
+     * @param allLegs    all order legs
+     * @param sellLegs   output list for SELL/SHORT legs (closed first)
+     * @param hedgeLegs  output list for HEDGE legs (closed second)
+     */
+    private void partitionLegsForSequencedExit(List<StrategyExecution.OrderLeg> allLegs,
+                                               List<StrategyExecution.OrderLeg> sellLegs,
+                                               List<StrategyExecution.OrderLeg> hedgeLegs) {
+        for (StrategyExecution.OrderLeg leg : allLegs) {
+            String optionType = leg.getOptionType();
+            if (optionType != null && optionType.contains(HEDGE_SUFFIX)) {
+                hedgeLegs.add(leg);
+            } else {
+                sellLegs.add(leg);
+            }
+        }
+        log.debug("Partitioned {} legs: {} SELL/SHORT, {} HEDGE",
+                allLegs.size(), sellLegs.size(), hedgeLegs.size());
+    }
+
+    /**
+     * Process a batch of legs in parallel and wait for all to complete.
+     *
+     * @param legs        legs to exit
+     * @param tradingMode current trading mode
+     * @param executor    executor for parallel processing
+     * @return int array: [successCount, failureCount]
+     */
+    private int[] processLegsInParallel(List<StrategyExecution.OrderLeg> legs,
+                                        String tradingMode,
+                                        ExecutorService executor) {
+        List<CompletableFuture<Map<String, String>>> futures = new ArrayList<>(legs.size());
+
+        for (StrategyExecution.OrderLeg leg : legs) {
+            futures.add(CompletableFuture.supplyAsync(
+                    CurrentUserContext.wrapSupplier(() -> processLegExit(leg, tradingMode)),
+                    executor
+            ));
+        }
+
+        int successCount = 0;
+        int failureCount = 0;
+
+        for (CompletableFuture<Map<String, String>> future : futures) {
+            try {
+                Map<String, String> result = future.join();
+                if (STATUS_SUCCESS.equals(result.get("status"))) {
+                    successCount++;
+                } else {
+                    failureCount++;
+                }
+            } catch (Exception e) {
+                failureCount++;
+                log.error("Error waiting for exit order: {}", e.getMessage());
+            }
+        }
+
+        return new int[]{successCount, failureCount};
     }
 }
 
