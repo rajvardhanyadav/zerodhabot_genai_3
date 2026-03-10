@@ -213,7 +213,13 @@ public abstract class BaseStrategy implements TradingStrategy {
      * For PE (Put) options: finds the strike where |put delta| ≈ targetDelta
      * (put delta = call delta - 1, so |put delta| = 1 - call delta).
      * <p>
-     * Searches a wider range (±15 strikes around ATM) to cover OTM options needed for strangles.
+     * The search range is dynamically expanded based on the target delta:
+     * - Targets ≥ 0.3 (near ATM): ±15 strikes
+     * - Targets 0.1–0.3 (OTM hedges): ±30 strikes
+     * - Targets < 0.1 (far OTM): ±40 strikes
+     * <p>
+     * For far OTM strikes where market-data-based IV computation fails (no quotes / wide spreads),
+     * a model-based delta approximation is used as fallback to ensure correct strike selection.
      *
      * @param spotPrice      current spot price of the underlying
      * @param instrumentType instrument type (NIFTY, BANKNIFTY)
@@ -227,9 +233,18 @@ public abstract class BaseStrategy implements TradingStrategy {
         double strikeInterval = getStrikeInterval(instrumentType);
         double approximateATM = Math.round(spotPrice / strikeInterval) * strikeInterval;
 
-        // Use wider range (±15 strikes) for OTM options needed by strangle strategies
+        // Dynamic range based on target delta — far OTM needs wider scan
+        int strikeRange;
+        if (targetDelta >= 0.3) {
+            strikeRange = 15;
+        } else if (targetDelta >= 0.1) {
+            strikeRange = 30;
+        } else {
+            strikeRange = 40;
+        }
+
         Set<Double> strikesToCheck = new LinkedHashSet<>();
-        for (int i = -15; i <= 15; i++) {
+        for (int i = -strikeRange; i <= strikeRange; i++) {
             strikesToCheck.add(approximateATM + i * strikeInterval);
         }
 
@@ -239,10 +254,40 @@ public abstract class BaseStrategy implements TradingStrategy {
             return approximateATM;
         }
 
-        log.info("Finding strike by delta for {}: targetΔ={}, spot={}, ATM≈{}, T={} years",
-                optionType, targetDelta, spotPrice, approximateATM, String.format("%.6f", timeToExpiry));
+        log.info("Finding strike by delta for {}: targetΔ={}, spot={}, ATM≈{}, T={} years, range=±{} strikes",
+                optionType, targetDelta, spotPrice, approximateATM, String.format("%.6f", timeToExpiry), strikeRange);
 
-        Map<Double, Double> callDeltas = computeCallDeltas(instrumentType, expiry, spotPrice, strikesToCheck, timeToExpiry);
+        // Phase 1: Compute deltas from market data (IV-based)
+        DeltaComputationResult computationResult = computeCallDeltasWithIVs(instrumentType, expiry, spotPrice, strikesToCheck, timeToExpiry);
+        Map<Double, Double> callDeltas = computationResult.deltas();
+
+        // Phase 2: For strikes that failed IV computation, use model-based delta fallback
+        // This is critical for far OTM options where mid prices are unavailable
+        int fallbackCount = 0;
+        if (targetDelta < 0.3) {
+            double fallbackIV = estimateFallbackIV(computationResult.computedIVs(), approximateATM, strikeInterval);
+            double forwardPrice = spotPrice * Math.exp((RISK_FREE_RATE - DIVIDEND_YIELD) * timeToExpiry);
+            double sqrtT = Math.sqrt(timeToExpiry);
+
+            for (Double strike : strikesToCheck) {
+                if (!callDeltas.containsKey(strike)) {
+                    // Model-based delta using estimated IV
+                    double d1 = (Math.log(forwardPrice / strike) + 0.5 * fallbackIV * fallbackIV * timeToExpiry)
+                            / (fallbackIV * sqrtT);
+                    double modelDelta = cumulativeNormalDistribution(d1);
+
+                    // Only add if the model delta is in a reasonable OTM range
+                    if (modelDelta > 0.001 && modelDelta < 0.999) {
+                        callDeltas.put(strike, modelDelta);
+                        fallbackCount++;
+                    }
+                }
+            }
+            if (fallbackCount > 0) {
+                log.info("Added {} model-based delta estimates (fallback IV={}) for OTM strikes",
+                        fallbackCount, String.format("%.4f", fallbackIV));
+            }
+        }
 
         if (callDeltas.isEmpty()) {
             log.warn("Delta computation failed for all strikes. Falling back to ATM: {}", approximateATM);
@@ -273,15 +318,124 @@ public abstract class BaseStrategy implements TradingStrategy {
             }
         }
 
+        // OTM-side validation: ensure selected hedge strike is on the correct OTM side
+        if (targetDelta < 0.4) {
+            if (isCE && bestStrike < approximateATM) {
+                log.warn("Selected CE strike {} is ITM (ATM={}). Searching OTM side only.", bestStrike, approximateATM);
+                bestStrike = findBestOTMStrike(callDeltas, targetDelta, true, approximateATM);
+            } else if (!isCE && bestStrike > approximateATM) {
+                log.warn("Selected PE strike {} is ITM (ATM={}). Searching OTM side only.", bestStrike, approximateATM);
+                bestStrike = findBestOTMStrike(callDeltas, targetDelta, false, approximateATM);
+            }
+        }
+
         double bestDelta = isCE
                 ? callDeltas.getOrDefault(bestStrike, 0.0)
                 : 1.0 - callDeltas.getOrDefault(bestStrike, 0.0);
-        log.info("Selected {} strike {} (effective |Δ| ≈ {}, target {})",
-                optionType, bestStrike, String.format("%.4f", bestDelta), targetDelta);
+        log.info("Selected {} strike {} (effective |Δ| ≈ {}, target {}, diff={})",
+                optionType, bestStrike, String.format("%.4f", bestDelta), targetDelta,
+                String.format("%.4f", Math.abs(bestDelta - targetDelta)));
         return bestStrike;
     }
 
-    protected Map<Double, Double> computeCallDeltas(String instrumentType, Date expiry, double spotPrice, Set<Double> strikes, double timeToExpiry) {
+    /**
+     * Find the best OTM strike for a given target delta, restricted to the correct side.
+     * <p>
+     * For CE options, OTM means strike > ATM.
+     * For PE options, OTM means strike < ATM (we look at 1 - callDelta).
+     *
+     * @param callDeltas    map of strike → call delta
+     * @param targetDelta   target absolute delta
+     * @param isCE          true for CE, false for PE
+     * @param approximateATM approximate ATM strike for OTM boundary
+     * @return best OTM strike, or approximateATM as fallback
+     */
+    private double findBestOTMStrike(Map<Double, Double> callDeltas, double targetDelta,
+                                      boolean isCE, double approximateATM) {
+        double bestStrike = approximateATM;
+        double minDiff = Double.MAX_VALUE;
+
+        for (Map.Entry<Double, Double> e : callDeltas.entrySet()) {
+            double strike = e.getKey();
+
+            // Enforce OTM side: CE → strike >= ATM, PE → strike <= ATM
+            if (isCE && strike < approximateATM) continue;
+            if (!isCE && strike > approximateATM) continue;
+
+            double callDelta = e.getValue();
+            double effectiveDelta = isCE ? callDelta : 1.0 - callDelta;
+            double diff = Math.abs(effectiveDelta - targetDelta);
+
+            if (diff < minDiff) {
+                minDiff = diff;
+                bestStrike = strike;
+            }
+        }
+        return bestStrike;
+    }
+
+    /**
+     * Estimate a fallback IV for model-based delta computation when market data is unavailable.
+     * <p>
+     * Extracts IVs from near-ATM strikes that were successfully computed, and returns
+     * the median IV. If none are available, falls back to a conservative default.
+     *
+     * @param computedIVs    map of strike → IV from successful computations (populated by computeCallDeltas)
+     * @param approximateATM approximate ATM strike
+     * @param strikeInterval strike interval for the instrument
+     * @return estimated implied volatility for model-based computation
+     */
+    private double estimateFallbackIV(Map<Double, Double> computedIVs, double approximateATM,
+                                       double strikeInterval) {
+        if (computedIVs == null || computedIVs.isEmpty()) {
+            log.info("No computed IVs available for fallback; using default IV=0.15");
+            return 0.15;
+        }
+
+        // Collect IVs from near-ATM strikes (within ±5 strike intervals)
+        double nearATMBound = 5.0 * strikeInterval;
+        List<Double> nearATMIVs = new ArrayList<>();
+        for (Map.Entry<Double, Double> entry : computedIVs.entrySet()) {
+            if (Math.abs(entry.getKey() - approximateATM) <= nearATMBound) {
+                double iv = entry.getValue();
+                if (iv > 0.01 && iv < 3.0) {
+                    nearATMIVs.add(iv);
+                }
+            }
+        }
+
+        if (nearATMIVs.isEmpty()) {
+            // Fall back to all available IVs
+            for (Double iv : computedIVs.values()) {
+                if (iv > 0.01 && iv < 3.0) {
+                    nearATMIVs.add(iv);
+                }
+            }
+        }
+
+        if (nearATMIVs.isEmpty()) {
+            log.info("No valid IVs found for fallback; using default IV=0.15");
+            return 0.15;
+        }
+
+        // Return median IV for robustness
+        Collections.sort(nearATMIVs);
+        int size = nearATMIVs.size();
+        double medianIV = size % 2 == 1
+                ? nearATMIVs.get(size / 2)
+                : (nearATMIVs.get(size / 2 - 1) + nearATMIVs.get(size / 2)) / 2.0;
+
+        log.info("Fallback IV estimated from {} near-ATM strikes: median IV={}", size, String.format("%.4f", medianIV));
+        return medianIV;
+    }
+
+    /**
+     * Result of delta computation containing both deltas and the per-strike IVs used.
+     * Thread-safe: each call produces its own result instance (no shared mutable state).
+     */
+    protected record DeltaComputationResult(Map<Double, Double> deltas, Map<Double, Double> computedIVs) {}
+
+    protected DeltaComputationResult computeCallDeltasWithIVs(String instrumentType, Date expiry, double spotPrice, Set<Double> strikes, double timeToExpiry) {
         // HFT: Use indexed iteration instead of stream for mid price fetching
         Map<Double, MidPrices> midPriceMap = new HashMap<>(strikes.size());
         for (Double strike : strikes) {
@@ -292,25 +446,29 @@ public abstract class BaseStrategy implements TradingStrategy {
         double forwardPrice = calculateImpliedForwardPrice(spotPrice, midPriceMap, timeToExpiry);
         log.info("Using implied forward price: {}", String.format("%.2f", forwardPrice));
 
-        // 3. Compute delta for each strike
+        // 3. Compute delta for each strike, tracking IVs for fallback
         Map<Double, Double> deltas = new HashMap<>();
+        Map<Double, Double> computedIVs = new HashMap<>();
+        int skippedNoPrices = 0;
+        int skippedInvalidIV = 0;
+
         for (double strike : strikes) {
             MidPrices prices = midPriceMap.get(strike);
-            if (prices == null) {
-                log.warn("Skipping strike {} as no mid prices were found.", strike);
-                continue;
-            }
-            if (!prices.valid()) {
-                log.warn("Skipping strike {} due to invalid mid prices (CE: {}, PE: {})", strike, prices.callMid, prices.putMid);
+            if (prices == null || !prices.valid()) {
+                skippedNoPrices++;
                 continue;
             }
 
             // Calculate strike-specific IV
             double iv = solveIVForwardPerStrike(prices.callMid, forwardPrice, strike, timeToExpiry);
             if (Double.isNaN(iv) || iv <= 1e-4 || iv > 3.0) {
-                log.warn("Unreliable IV ({}) calculated for strike {}. Skipping.", String.format("%.4f", iv), strike);
+                skippedInvalidIV++;
+                log.debug("Unreliable IV ({}) for strike {}. Skipping.", String.format("%.4f", iv), strike);
                 continue;
             }
+
+            // Track IV for fallback estimation
+            computedIVs.put(strike, iv);
 
             // Calculate delta using the forward model: Delta = N(d1)
             double d1 = (Math.log(forwardPrice / strike) + 0.5 * iv * iv * timeToExpiry) / (iv * Math.sqrt(timeToExpiry));
@@ -322,7 +480,20 @@ public abstract class BaseStrategy implements TradingStrategy {
 
             log.debug("Strike: {}, IV: {}, d1: {}, Delta: {}, Rounded Delta: {}",strike, iv, d1, delta, roundedDelta);
         }
-        return deltas;
+
+        if (skippedNoPrices > 0 || skippedInvalidIV > 0) {
+            log.info("Delta computation: {} strikes computed, {} skipped (no prices), {} skipped (invalid IV)",
+                    deltas.size(), skippedNoPrices, skippedInvalidIV);
+        }
+
+        return new DeltaComputationResult(deltas, computedIVs);
+    }
+
+    /**
+     * Backward-compatible wrapper that returns only deltas (used by getATMStrikeByDeltaSynchronous).
+     */
+    protected Map<Double, Double> computeCallDeltas(String instrumentType, Date expiry, double spotPrice, Set<Double> strikes, double timeToExpiry) {
+        return computeCallDeltasWithIVs(instrumentType, expiry, spotPrice, strikes, timeToExpiry).deltas();
     }
 
     private double calculateImpliedForwardPrice(double spotPrice, Map<Double, MidPrices> midPriceMap, double timeToExpiry) {
