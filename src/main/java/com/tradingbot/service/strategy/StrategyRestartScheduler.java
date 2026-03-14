@@ -8,18 +8,17 @@ import com.tradingbot.model.StrategyStatus;
 import com.tradingbot.model.StrategyType;
 import com.tradingbot.service.BotStatusService;
 import com.tradingbot.service.StrategyService;
-import com.tradingbot.util.CandleUtils;
 import com.tradingbot.util.CurrentUserContext;
 import com.tradingbot.util.StrategyConstants;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -28,14 +27,25 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Schedules auto-restart of strategies at the start of the next 5-minute candle
- * when the current strategy closes due to target/stoploss being hit.
- * Listens to StrategyCompletionEvent and uses execution's stored trading mode.
+ * Schedules auto-restart of strategies based on neutral market detection.
+ *
+ * <p>When a strategy completes (target/SL hit), instead of scheduling at the next 5-minute
+ * candle boundary, this scheduler starts an asynchronous polling loop that:
+ * <ol>
+ *   <li>Checks {@code NeutralMarketDetectorService.isMarketNeutral()} every 30 seconds</li>
+ *   <li>When neutral conditions are detected, waits a 1-minute buffer</li>
+ *   <li>Then places a new ATM straddle</li>
+ * </ol>
+ *
+ * <p>Listens to {@link StrategyService.StrategyCompletionEvent} and uses the execution's
+ * stored trading mode.
+ *
+ * @since 4.2
  */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class StrategyRestartScheduler {
 
@@ -49,9 +59,37 @@ public class StrategyRestartScheduler {
     private final TaskScheduler taskScheduler;
     private final DailyPnlGateService dailyPnlGateService;
     private final BotStatusService botStatusService;
+    private final NeutralMarketDetectorService neutralMarketDetectorService;
 
-    // Track scheduled restarts to avoid duplicates per executionId
+    /** Clock for obtaining current time — overridable in tests. */
+    private Clock clock = Clock.system(MARKET_ZONE);
+
+    /** Track active polling loops to avoid duplicates per executionId. */
     private final Map<String, ScheduledFuture<?>> scheduledRestarts = new ConcurrentHashMap<>();
+
+    /** Guard against multiple simultaneous strategy executions from the scheduler. */
+    private final AtomicBoolean executionInProgress = new AtomicBoolean(false);
+
+    public StrategyRestartScheduler(StrategyConfig strategyConfig,
+                                    @Lazy StrategyService strategyService,
+                                    TaskScheduler taskScheduler,
+                                    DailyPnlGateService dailyPnlGateService,
+                                    BotStatusService botStatusService,
+                                    NeutralMarketDetectorService neutralMarketDetectorService) {
+        this.strategyConfig = strategyConfig;
+        this.strategyService = strategyService;
+        this.taskScheduler = taskScheduler;
+        this.dailyPnlGateService = dailyPnlGateService;
+        this.botStatusService = botStatusService;
+        this.neutralMarketDetectorService = neutralMarketDetectorService;
+    }
+
+    /**
+     * Override the clock used for market-hours checks (package-private for testing).
+     */
+    void setClock(Clock clock) {
+        this.clock = clock;
+    }
 
     /**
      * Listen to strategy completion events and schedule restart if conditions are met.
@@ -68,9 +106,6 @@ public class StrategyRestartScheduler {
 
     /**
      * Check if the given time is within market trading hours (9:15 AM - 3:10 PM IST).
-     *
-     * @param dateTime the timestamp to check
-     * @return true if within market hours, false otherwise
      */
     private boolean isWithinMarketHours(ZonedDateTime dateTime) {
         LocalTime time = dateTime.toLocalTime();
@@ -79,7 +114,8 @@ public class StrategyRestartScheduler {
 
     /**
      * Schedule an auto-restart for the given execution if conditions are met.
-     * Uses execution's stored tradingMode to determine paper vs live behavior.
+     * Instead of waiting for the next 5-minute candle, starts a neutral market
+     * polling loop that checks conditions every 30 seconds.
      */
     public void scheduleRestart(StrategyExecution execution) {
         if (execution == null) {
@@ -122,9 +158,6 @@ public class StrategyRestartScheduler {
         }
 
         // ==================== DAILY P&L GATE CHECK (SELL_ATM_STRADDLE only) ====================
-        // After a strategy node completes, check if cumulative daily P&L has breached
-        // the configured max profit or max loss threshold. If breached, block the restart
-        // and stop the bot.
         if (execution.getStrategyType() == StrategyType.SELL_ATM_STRADDLE) {
             java.util.Optional<StrategyCompletionReason> breachReason =
                     dailyPnlGateService.getBreachReason(execution.getUserId());
@@ -134,12 +167,8 @@ public class StrategyRestartScheduler {
                          "Auto-restart BLOCKED. Stopping bot.",
                          execution.getUserId(), breachReason.get(), cumulativePnl, execution.getExecutionId());
 
-                // Stop the bot
                 botStatusService.markStopped();
-
-                // Cancel any other scheduled restarts for this user
                 cancelScheduledRestartsForUser(execution.getUserId());
-
                 return;
             }
         }
@@ -150,7 +179,7 @@ public class StrategyRestartScheduler {
             return;
         }
 
-        ZonedDateTime now = ZonedDateTime.now(MARKET_ZONE);
+        ZonedDateTime now = ZonedDateTime.now(clock);
 
         // Check if current time is within market hours
         if (!isWithinMarketHours(now)) {
@@ -159,90 +188,178 @@ public class StrategyRestartScheduler {
             return;
         }
 
-        Duration delay = CandleUtils.durationUntilNextFiveMinuteCandle(now);
-        ZonedDateTime nextCandle = now.plus(delay);
+        log.info("Trade closed. Waiting for neutral market condition. [{}] execution={} (user={}), reason={}, " +
+                 "strategyType={}, instrument={}, expiry={}",
+                 tradingMode, executionId, execution.getUserId(), reason,
+                 execution.getStrategyType(), execution.getInstrumentType(), execution.getExpiry());
 
-        // Validate that the next candle time is also within market hours
-        if (!isWithinMarketHours(nextCandle)) {
-            log.info("Next candle {} is outside market hours ({} - {}), skipping auto-restart for execution {}",
-                    nextCandle.toLocalTime(), MARKET_OPEN, MARKET_CLOSE, executionId);
-            return;
-        }
-
-        log.info("[{} MODE] Scheduling auto-restart for execution {} (user={}) at next 5m candle {} (delay={}s), reason={}, strategyType={}, instrument={}, expiry={}",
-                 tradingMode,
-                 executionId,
-                 execution.getUserId(),
-                 nextCandle,
-                 delay.toSeconds(),
-                 reason,
-                 execution.getStrategyType(),
-                 execution.getInstrumentType(),
-                 execution.getExpiry());
-
-        // Build a StrategyRequest skeleton from the previous execution info
+        // Build a StrategyRequest from the previous execution for the restart
         StrategyRequest request = buildRestartRequestFromExecution(execution);
 
-        Runnable task = () -> {
-            ScheduledFuture<?> future = scheduledRestarts.remove(executionId);
-            if (future != null) {
-                future.cancel(false);
-            }
+        // Start the neutral market polling loop
+        startNeutralMarketPolling(execution, request);
+    }
 
-            // Defensive check: verify market hours at execution time
-            ZonedDateTime executeTime = ZonedDateTime.now(MARKET_ZONE);
-            if (!isWithinMarketHours(executeTime)) {
-                log.warn("Auto-restart triggered outside market hours ({} - {}) at {}, skipping execution {}",
-                        MARKET_OPEN, MARKET_CLOSE, executeTime.toLocalTime(), executionId);
-                return;
-            }
+    /**
+     * Start an async polling loop that checks neutral market conditions every
+     * {@code strategy.neutral-market-poll-interval-ms} (default 30s).
+     * When neutral is detected, waits {@code strategy.neutral-market-buffer-ms} (default 1 min)
+     * then places a new ATM straddle.
+     */
+    private void startNeutralMarketPolling(StrategyExecution execution, StrategyRequest request) {
+        String executionId = execution.getExecutionId();
+        String tradingMode = execution.getTradingMode();
+        String instrumentType = execution.getInstrumentType();
+        long pollIntervalMs = strategyConfig.getNeutralMarketPollIntervalMs();
 
-            // Preserve and propagate user context into the scheduler thread
-            String previousUserId = CurrentUserContext.getUserId();
-            try {
-                if (execution.getUserId() != null && !execution.getUserId().isBlank()) {
-                    CurrentUserContext.setUserId(execution.getUserId());
-                }
+        // Schedule first poll after the poll interval
+        Instant firstPollTime = clock.instant().plusMillis(pollIntervalMs);
 
+        Runnable pollTask = new Runnable() {
+            @Override
+            public void run() {
                 try {
-                    String newExecutionId = UUID.randomUUID().toString();
-                    log.info("[{} MODE] Triggering auto-restart for execution {} (user={}) on candle {} with strategyType={}, instrument={}, expiry={}. New executionId={}",
-                             tradingMode,
-                             executionId,
-                             execution.getUserId(),
-                             ZonedDateTime.now(MARKET_ZONE),
-                             execution.getStrategyType(),
-                             execution.getInstrumentType(),
-                             execution.getExpiry(),
-                             newExecutionId);
+                    // Check if market hours are still valid
+                    ZonedDateTime now = ZonedDateTime.now(clock);
+                    if (!isWithinMarketHours(now)) {
+                        log.info("Market hours ended ({}) during neutral market polling for execution {}. Stopping poll.",
+                                now.toLocalTime(), executionId);
+                        scheduledRestarts.remove(executionId);
+                        return;
+                    }
 
-                    // Execute strategy as usual under the correct user context
-                    strategyService.executeStrategy(request);
+                    // Check neutral market condition (uses internal cache — max 4 API calls per 30s)
+                    boolean isNeutral = neutralMarketDetectorService.isMarketNeutral(instrumentType);
 
-                    execution.setAutoRestartCount(execution.getAutoRestartCount() + 1);
-                } catch (KiteException | java.io.IOException e) {
-                    log.error("Failed to auto-restart strategy for execution {}: {}", executionId, e.getMessage(), e);
+                    if (isNeutral) {
+                        log.info("Neutral market detected. Buffer timer started. [{}] execution={}, instrument={}",
+                                tradingMode, executionId, instrumentType);
+
+                        // Remove the polling entry — we're moving to the buffer phase
+                        scheduledRestarts.remove(executionId);
+
+                        // Schedule the actual execution after the buffer period
+                        scheduleBufferedExecution(execution, request);
+                    } else {
+                        log.debug("[{}] Market not neutral for {} — continuing poll. execution={}",
+                                tradingMode, instrumentType, executionId);
+
+                        // Re-schedule the next poll
+                        rescheduleNextPoll(executionId, this);
+                    }
                 } catch (Exception e) {
-                    log.error("Unexpected error while auto-restarting strategy for execution {}: {}", executionId, e.getMessage(), e);
-                }
-            } finally {
-                // Restore previous user context on this thread
-                if (previousUserId == null || previousUserId.isBlank()) {
-                    CurrentUserContext.clear();
-                } else {
-                    CurrentUserContext.setUserId(previousUserId);
+                    log.error("Error during neutral market poll for execution {}: {}",
+                            executionId, e.getMessage(), e);
+                    // Re-schedule despite error to avoid silently stopping the loop
+                    rescheduleNextPoll(executionId, this);
                 }
             }
         };
 
-        ScheduledFuture<?> future = taskScheduler.schedule(task, nextCandle.toInstant());
+        ScheduledFuture<?> future = taskScheduler.schedule(pollTask, firstPollTime);
         scheduledRestarts.put(executionId, future);
     }
 
     /**
-     * Listener method that can be wired to application events if StrategyService publishes them in future.
-     * For now, this overload allows external callers to pass only an executionId and have the scheduler
-     * look up the StrategyExecution via StrategyService.
+     * Reschedule the next neutral market poll after the configured interval.
+     */
+    private void rescheduleNextPoll(String executionId, Runnable pollTask) {
+        // Only reschedule if the executionId is still tracked (not cancelled externally)
+        if (!scheduledRestarts.containsKey(executionId)) {
+            log.debug("Polling for execution {} was cancelled externally, not rescheduling", executionId);
+            return;
+        }
+
+        long pollIntervalMs = strategyConfig.getNeutralMarketPollIntervalMs();
+        Instant nextPollTime = clock.instant().plusMillis(pollIntervalMs);
+
+        ScheduledFuture<?> future = taskScheduler.schedule(pollTask, nextPollTime);
+        scheduledRestarts.put(executionId, future);
+    }
+
+    /**
+     * After neutral market is confirmed, wait a configurable buffer period
+     * then execute the strategy restart.
+     */
+    private void scheduleBufferedExecution(StrategyExecution execution, StrategyRequest request) {
+        String executionId = execution.getExecutionId();
+        String tradingMode = execution.getTradingMode();
+        long bufferMs = strategyConfig.getNeutralMarketBufferMs();
+
+        Instant executeTime = clock.instant().plusMillis(bufferMs);
+
+        log.info("[{}] Neutral market buffer: waiting {}ms before placing ATM straddle for execution {}",
+                tradingMode, bufferMs, executionId);
+
+        Runnable executeTask = () -> {
+            // Guard against multiple simultaneous executions
+            if (!executionInProgress.compareAndSet(false, true)) {
+                log.warn("Another strategy execution is already in progress. " +
+                         "Skipping restart for execution {}", executionId);
+                return;
+            }
+
+            try {
+                // Defensive check: verify market hours at execution time
+                ZonedDateTime now = ZonedDateTime.now(clock);
+                if (!isWithinMarketHours(now)) {
+                    log.warn("Auto-restart triggered outside market hours ({} - {}) at {}, skipping execution {}",
+                            MARKET_OPEN, MARKET_CLOSE, now.toLocalTime(), executionId);
+                    return;
+                }
+
+                // Re-check that market is still neutral after the buffer
+                boolean stillNeutral = neutralMarketDetectorService.isMarketNeutral(
+                        execution.getInstrumentType());
+                if (!stillNeutral) {
+                    log.info("[{}] Market no longer neutral after buffer period for execution {}. " +
+                             "Restarting polling loop.", tradingMode, executionId);
+                    // Go back to polling
+                    startNeutralMarketPolling(execution, request);
+                    return;
+                }
+
+                // Preserve and propagate user context into the scheduler thread
+                String previousUserId = CurrentUserContext.getUserId();
+                try {
+                    if (execution.getUserId() != null && !execution.getUserId().isBlank()) {
+                        CurrentUserContext.setUserId(execution.getUserId());
+                    }
+
+                    String newExecutionId = UUID.randomUUID().toString();
+                    log.info("Executing next ATM straddle after neutral condition confirmation. " +
+                             "[{} MODE] execution={} (user={}), strategyType={}, instrument={}, expiry={}. New executionId={}",
+                             tradingMode, executionId, execution.getUserId(),
+                             execution.getStrategyType(), execution.getInstrumentType(),
+                             execution.getExpiry(), newExecutionId);
+
+                    strategyService.executeStrategy(request);
+
+                    execution.setAutoRestartCount(execution.getAutoRestartCount() + 1);
+
+                } catch (KiteException | java.io.IOException e) {
+                    log.error("Failed to auto-restart strategy for execution {}: {}", executionId, e.getMessage(), e);
+                } catch (Exception e) {
+                    log.error("Unexpected error while auto-restarting strategy for execution {}: {}", executionId, e.getMessage(), e);
+                } finally {
+                    // Restore previous user context on this thread
+                    if (previousUserId == null || previousUserId.isBlank()) {
+                        CurrentUserContext.clear();
+                    } else {
+                        CurrentUserContext.setUserId(previousUserId);
+                    }
+                }
+            } finally {
+                executionInProgress.set(false);
+            }
+        };
+
+        ScheduledFuture<?> future = taskScheduler.schedule(executeTask, executeTime);
+        scheduledRestarts.put(executionId, future);
+    }
+
+    /**
+     * Listener method that allows external callers to pass only an executionId.
      */
     public void scheduleRestart(String executionId) {
         StrategyExecution execution = strategyService.getStrategy(executionId);
@@ -251,7 +368,6 @@ public class StrategyRestartScheduler {
 
     private StrategyRequest buildRestartRequestFromExecution(StrategyExecution execution) {
         StrategyRequest request = new StrategyRequest();
-        // Always restart as ATM_STRADDLE as per new requirement, regardless of original type
         request.setStrategyType(execution.getStrategyType());
         request.setInstrumentType(execution.getInstrumentType());
         request.setExpiry(execution.getExpiry());
@@ -262,7 +378,6 @@ public class StrategyRestartScheduler {
         // Preserve premium-based exit parameters from original execution
         request.setTargetDecayPct(execution.getTargetDecayPct());
         request.setStopLossExpansionPct(execution.getStopLossExpansionPct());
-        // Other fields (like quantity, SL/target) will rely on defaults or client-provided values or config defaults
         return request;
     }
 
@@ -284,14 +399,9 @@ public class StrategyRestartScheduler {
 
     /**
      * Cancel all scheduled restarts for a specific user.
-     * This is useful when stopping all strategies for a user or during logout.
-     *
-     * <p><b>Note:</b> This method does NOT require user context to be set. It directly
-     * iterates through all scheduled restarts and matches by userId from the execution.
      *
      * @param userId The user ID whose scheduled restarts should be cancelled
      * @return count of cancelled restarts
-     * @since 4.2 - Fixed to not rely on current user context
      */
     public int cancelScheduledRestartsForUser(String userId) {
         if (userId == null || userId.isBlank()) {
@@ -301,8 +411,6 @@ public class StrategyRestartScheduler {
 
         int cancelledCount = 0;
 
-        // Iterate through ALL scheduled restarts and match by userId
-        // Use getStrategyByIdInternal to bypass user context validation
         for (String executionId : List.copyOf(scheduledRestarts.keySet())) {
             StrategyExecution execution = strategyService.getStrategyByIdInternal(executionId);
             if (execution != null && userId.equals(execution.getUserId())) {

@@ -80,7 +80,9 @@ import org.eclipse.collections.impl.map.mutable.primitive.SynchronizedLongObject
  *
  * @see LegMonitor
  * @see PositionDirection
+ * @deprecated Use {@link PositionMonitorV2} instead. This class is retained for reference only and will be removed in a future release.
  */
+@Deprecated(forRemoval = true)
 @Slf4j
 public class PositionMonitor {
 

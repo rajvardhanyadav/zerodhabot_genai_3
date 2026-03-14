@@ -6,6 +6,8 @@ import com.tradingbot.paper.PaperAccount;
 import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.util.CurrentUserContext;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +35,10 @@ public class PaperTradingController {
     @GetMapping("/status")
     @Operation(summary = "Check if paper trading is enabled",
                description = "Returns whether the application is running in paper trading mode or live mode")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Trading mode status returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<Map<String, Object>>> getStatus() {
         boolean isPaperMode = unifiedTradingService.isPaperTradingEnabled();
         Map<String, Object> status = Map.of(
@@ -49,6 +55,11 @@ public class PaperTradingController {
     @GetMapping("/account")
     @Operation(summary = "Get paper trading account details",
                description = "Returns account balance, P&L, and trading statistics (only available in paper mode)")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Paper account details returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Paper trading is not enabled or account not found"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<PaperAccount>> getAccount() {
         if (!unifiedTradingService.isPaperTradingEnabled()) {
             return ResponseEntity.badRequest()
@@ -67,6 +78,11 @@ public class PaperTradingController {
     @PostMapping("/account/reset")
     @Operation(summary = "Reset paper trading account",
                description = "Resets the paper trading account to initial state (only available in paper mode)")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Paper account reset successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Paper trading is not enabled"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<String>> resetAccount() {
         if (!unifiedTradingService.isPaperTradingEnabled()) {
             return ResponseEntity.badRequest()
@@ -82,6 +98,11 @@ public class PaperTradingController {
     @GetMapping("/statistics")
     @Operation(summary = "Get trading statistics",
                description = "Returns detailed trading performance metrics (only available in paper mode)")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Trading statistics returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Paper trading is not enabled or account not found"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<Map<String, Object>>> getStatistics() {
         if (!unifiedTradingService.isPaperTradingEnabled()) {
             return ResponseEntity.badRequest()
@@ -101,6 +122,10 @@ public class PaperTradingController {
     @GetMapping("/info")
     @Operation(summary = "Get comprehensive paper trading information",
                description = "Returns all paper trading related information including mode, account, and configuration")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Paper trading information returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<Map<String, Object>>> getInfo() {
         boolean isPaperMode = unifiedTradingService.isPaperTradingEnabled();
         Map<String, Object> info = new HashMap<>();
@@ -124,7 +149,13 @@ public class PaperTradingController {
     @PostMapping("/mode")
     @Operation(summary = "Toggle paper/live trading mode",
                description = "Enable or disable paper trading mode. When disabled, the system uses live trading for eligible operations.")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> setTradingMode(@RequestParam("paperTradingEnabled") boolean paperTradingEnabled) {
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Trading mode updated or already at requested state"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
+    public ResponseEntity<ApiResponse<Map<String, Object>>> setTradingMode(
+            @Parameter(description = "Set to true for paper trading, false for live trading", required = true, example = "true")
+            @RequestParam("paperTradingEnabled") boolean paperTradingEnabled) {
         boolean current = unifiedTradingService.isPaperTradingEnabled();
         if (current == paperTradingEnabled) {
             Map<String, Object> status = Map.of(

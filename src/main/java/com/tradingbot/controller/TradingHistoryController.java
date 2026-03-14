@@ -8,6 +8,7 @@ import com.tradingbot.util.CurrentUserContext;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,10 +39,15 @@ public class TradingHistoryController {
     @GetMapping("/trades")
     @Operation(summary = "Get trade history",
                description = "Retrieve trade history for a date range")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Trade history returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header or invalid date range"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<TradeEntity>>> getTradeHistory(
-            @Parameter(description = "Start date (yyyy-MM-dd)")
+            @Parameter(description = "Start date (yyyy-MM-dd)", required = true, example = "2026-03-01")
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @Parameter(description = "End date (yyyy-MM-dd)")
+            @Parameter(description = "End date (yyyy-MM-dd)", required = true, example = "2026-03-14")
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
 
         String userId = CurrentUserContext.getUserId();
@@ -60,6 +66,11 @@ public class TradingHistoryController {
     @GetMapping("/trades/today")
     @Operation(summary = "Get today's trades",
                description = "Retrieve all trades executed today")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Today's trades returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<TradeEntity>>> getTodaysTrades() {
         String userId = CurrentUserContext.getUserId();
         if (userId == null) {
@@ -79,6 +90,11 @@ public class TradingHistoryController {
     @GetMapping("/strategies")
     @Operation(summary = "Get strategy execution history",
                description = "Retrieve all strategy executions for the user")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Strategy executions returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<StrategyExecutionEntity>>> getStrategyExecutions() {
         String userId = CurrentUserContext.getUserId();
         if (userId == null) {
@@ -98,10 +114,15 @@ public class TradingHistoryController {
     @GetMapping("/daily-summary")
     @Operation(summary = "Get daily P&L summaries",
                description = "Retrieve daily P&L summaries for a date range")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Daily summaries returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header or invalid date range"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<DailyPnLSummaryEntity>>> getDailySummaries(
-            @Parameter(description = "Start date (yyyy-MM-dd)")
+            @Parameter(description = "Start date (yyyy-MM-dd)", required = true, example = "2026-03-01")
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @Parameter(description = "End date (yyyy-MM-dd)")
+            @Parameter(description = "End date (yyyy-MM-dd)", required = true, example = "2026-03-14")
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
 
         String userId = CurrentUserContext.getUserId();
@@ -120,8 +141,13 @@ public class TradingHistoryController {
     @GetMapping("/daily-summary/today")
     @Operation(summary = "Get today's P&L summary",
                description = "Retrieve P&L summary for today")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Today's summary returned (null data if no activity)"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<DailyPnLSummaryEntity>> getTodaysSummary(
-            @Parameter(description = "Trading mode (PAPER or LIVE)")
+            @Parameter(description = "Trading mode: PAPER or LIVE", example = "PAPER")
             @RequestParam(defaultValue = "PAPER") String tradingMode) {
 
         String userId = CurrentUserContext.getUserId();
@@ -141,6 +167,11 @@ public class TradingHistoryController {
     @PostMapping("/position-snapshot")
     @Operation(summary = "Persist position snapshot",
                description = "Manually trigger position snapshot persistence")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Position snapshot persisted"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Failed to persist position snapshot")
+    })
     public ResponseEntity<ApiResponse<String>> persistPositionSnapshot() {
         String userId = CurrentUserContext.getUserId();
         if (userId == null) {
@@ -164,6 +195,10 @@ public class TradingHistoryController {
     @GetMapping("/trading-mode")
     @Operation(summary = "Get current trading mode",
                description = "Get whether the system is in PAPER or LIVE trading mode")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Trading mode returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<String>> getTradingMode() {
         String mode = unifiedTradingService.getTradingMode();
         return ResponseEntity.ok(ApiResponse.success("Current trading mode", mode));
@@ -174,6 +209,11 @@ public class TradingHistoryController {
     @GetMapping("/alerts")
     @Operation(summary = "Get alert history",
                description = "Retrieve recent alerts")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Alerts returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<AlertHistoryEntity>>> getAlerts() {
         String userId = CurrentUserContext.getUserId();
         if (userId == null) {
@@ -189,7 +229,12 @@ public class TradingHistoryController {
     @GetMapping("/alerts/strategy/{strategyName}")
     @Operation(summary = "Get alerts by strategy",
                description = "Retrieve alerts for a specific strategy")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Strategy alerts returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<AlertHistoryEntity>>> getAlertsByStrategy(
+            @Parameter(description = "Strategy name to filter alerts", required = true, example = "SELL_ATM_STRADDLE")
             @PathVariable String strategyName) {
 
         List<AlertHistoryEntity> alerts = persistenceService.getAlertsByStrategy(strategyName);
@@ -202,8 +247,13 @@ public class TradingHistoryController {
     @GetMapping("/mtm")
     @Operation(summary = "Get MTM snapshots",
                description = "Retrieve MTM snapshots for today")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "MTM snapshots returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<MTMSnapshotEntity>>> getMTMSnapshots(
-            @Parameter(description = "Date (yyyy-MM-dd), defaults to today")
+            @Parameter(description = "Date (yyyy-MM-dd), defaults to today", example = "2026-03-14")
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
 
         String userId = CurrentUserContext.getUserId();
@@ -222,6 +272,11 @@ public class TradingHistoryController {
     @GetMapping("/mtm/latest")
     @Operation(summary = "Get latest MTM snapshot",
                description = "Retrieve the most recent MTM snapshot")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Latest MTM snapshot returned (null data if none found)"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<MTMSnapshotEntity>> getLatestMTMSnapshot() {
         String userId = CurrentUserContext.getUserId();
         if (userId == null) {
@@ -239,6 +294,11 @@ public class TradingHistoryController {
     @GetMapping("/config-history")
     @Operation(summary = "Get strategy config history",
                description = "Retrieve strategy configuration change history")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Config history returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<StrategyConfigHistoryEntity>>> getConfigHistory() {
         String userId = CurrentUserContext.getUserId();
         if (userId == null) {
@@ -254,7 +314,12 @@ public class TradingHistoryController {
     @GetMapping("/config-history/{strategyName}")
     @Operation(summary = "Get config history by strategy",
                description = "Retrieve configuration history for a specific strategy")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Strategy config history returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<StrategyConfigHistoryEntity>>> getConfigHistoryByStrategy(
+            @Parameter(description = "Strategy name to filter config history", required = true, example = "SELL_ATM_STRADDLE")
             @PathVariable String strategyName) {
 
         List<StrategyConfigHistoryEntity> history = persistenceService.getStrategyConfigHistory(strategyName);
@@ -267,6 +332,11 @@ public class TradingHistoryController {
     @GetMapping("/websocket-events")
     @Operation(summary = "Get WebSocket events",
                description = "Retrieve recent WebSocket connection events")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "WebSocket events returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<WebSocketEventEntity>>> getWebSocketEvents() {
         String userId = CurrentUserContext.getUserId();
         if (userId == null) {
@@ -284,6 +354,10 @@ public class TradingHistoryController {
     @GetMapping("/system-health")
     @Operation(summary = "Get system health snapshots",
                description = "Retrieve recent system health metrics")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Health snapshots returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<SystemHealthSnapshotEntity>>> getSystemHealth() {
         List<SystemHealthSnapshotEntity> snapshots = persistenceService.getRecentHealthSnapshots();
         return ResponseEntity.ok(ApiResponse.success(
@@ -293,6 +367,10 @@ public class TradingHistoryController {
     @GetMapping("/system-health/latest")
     @Operation(summary = "Get latest system health",
                description = "Retrieve the most recent system health snapshot")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Latest health snapshot returned (null data if none found)"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<SystemHealthSnapshotEntity>> getLatestSystemHealth() {
         return persistenceService.getLatestHealthSnapshot()
                 .map(snapshot -> ResponseEntity.ok(ApiResponse.success("Latest health snapshot", snapshot)))

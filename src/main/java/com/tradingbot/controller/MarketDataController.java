@@ -5,6 +5,8 @@ import com.tradingbot.service.TradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.*;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,8 +34,15 @@ public class MarketDataController {
     @GetMapping("/quote")
     @Operation(summary = "Get quote for instruments",
                description = "Fetch full market quote including bid/ask, volume, and other details. Provide either 'instruments' array param or 'symbols' comma-separated.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Quotes fetched successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing instruments/symbols parameter or invalid X-User-Id"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
+    })
     public ResponseEntity<ApiResponse<Map<String, Quote>>> getQuote(
+            @Parameter(description = "Array of instrument identifiers (e.g., NSE:NIFTY 50)", example = "NSE:NIFTY 50")
             @RequestParam(name = "instruments", required = false) String[] instruments,
+            @Parameter(description = "Comma-separated instrument symbols", example = "NSE:NIFTY 50,NSE:BANKNIFTY")
             @RequestParam(name = "symbols", required = false) String symbols)
             throws KiteException, IOException {
         String[] resolved = resolveSymbols(instruments, symbols);
@@ -48,8 +57,15 @@ public class MarketDataController {
     @GetMapping("/ohlc")
     @Operation(summary = "Get OHLC data for instruments",
                description = "Fetch Open, High, Low, Close data. Provide either 'instruments' array param or 'symbols' comma-separated.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "OHLC data fetched successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing instruments/symbols parameter"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
+    })
     public ResponseEntity<ApiResponse<Map<String, OHLCQuote>>> getOHLC(
+            @Parameter(description = "Array of instrument identifiers", example = "NSE:NIFTY 50")
             @RequestParam(name = "instruments", required = false) String[] instruments,
+            @Parameter(description = "Comma-separated instrument symbols", example = "NSE:NIFTY 50,NSE:BANKNIFTY")
             @RequestParam(name = "symbols", required = false) String symbols)
             throws KiteException, IOException {
         String[] resolved = resolveSymbols(instruments, symbols);
@@ -64,8 +80,15 @@ public class MarketDataController {
     @GetMapping("/ltp")
     @Operation(summary = "Get Last Traded Price (LTP) for instruments",
                description = "Fetch current last traded price. Provide either 'instruments' array param or 'symbols' comma-separated.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "LTP data fetched successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing instruments/symbols parameter"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
+    })
     public ResponseEntity<ApiResponse<Map<String, LTPQuote>>> getLTP(
+            @Parameter(description = "Array of instrument identifiers", example = "NSE:NIFTY 50")
             @RequestParam(name = "instruments", required = false) String[] instruments,
+            @Parameter(description = "Comma-separated instrument symbols", example = "NSE:NIFTY 50,NSE:BANKNIFTY")
             @RequestParam(name = "symbols", required = false) String symbols)
             throws KiteException, IOException {
         String[] resolved = resolveSymbols(instruments, symbols);
@@ -80,12 +103,23 @@ public class MarketDataController {
     @GetMapping("/historical")
     @Operation(summary = "Get historical data for an instrument",
                description = "Fetch historical candle data for specified date range and interval")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Historical data fetched successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Invalid date format or missing parameters"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
+    })
     public ResponseEntity<ApiResponse<HistoricalData>> getHistoricalData(
+            @Parameter(description = "Instrument token identifier", required = true, example = "256265")
             @RequestParam String instrumentToken,
+            @Parameter(description = "Start date (yyyy-MM-dd)", required = true, example = "2026-03-01")
             @RequestParam String from,
+            @Parameter(description = "End date (yyyy-MM-dd)", required = true, example = "2026-03-14")
             @RequestParam String to,
+            @Parameter(description = "Candle interval: minute, 3minute, 5minute, 15minute, 30minute, 60minute, day", required = true, example = "minute")
             @RequestParam String interval,
+            @Parameter(description = "Whether to fetch continuous data for futures", example = "false")
             @RequestParam(defaultValue = "false") boolean continuous,
+            @Parameter(description = "Whether to include Open Interest data", example = "false")
             @RequestParam(defaultValue = "false") boolean oi)
             throws KiteException, IOException, DateTimeParseException {
 
@@ -100,6 +134,10 @@ public class MarketDataController {
     @GetMapping("/instruments")
     @Operation(summary = "Get all instruments",
                description = "Fetch complete list of available instruments across all exchanges")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Instruments fetched successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
+    })
     public ResponseEntity<ApiResponse<List<Instrument>>> getInstruments() throws KiteException, IOException {
         List<Instrument> instruments = tradingService.getInstruments();
         return ResponseEntity.ok(ApiResponse.success(instruments));
@@ -108,7 +146,14 @@ public class MarketDataController {
     @GetMapping("/instruments/{exchange}")
     @Operation(summary = "Get instruments for a specific exchange",
                description = "Fetch instruments for specified exchange (e.g., NSE, NFO, BSE)")
-    public ResponseEntity<ApiResponse<List<Instrument>>> getInstrumentsByExchange(@PathVariable String exchange)
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Instruments fetched successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Invalid exchange"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
+    })
+    public ResponseEntity<ApiResponse<List<Instrument>>> getInstrumentsByExchange(
+            @Parameter(description = "Exchange segment: NSE, NFO, BSE, BFO, MCX, CDS", required = true, example = "NFO")
+            @PathVariable String exchange)
             throws KiteException, IOException {
         List<Instrument> instruments = tradingService.getInstruments(exchange);
         return ResponseEntity.ok(ApiResponse.success(instruments));

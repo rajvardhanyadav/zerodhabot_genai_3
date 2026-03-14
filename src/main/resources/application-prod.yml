@@ -79,6 +79,12 @@ historical:
   replay:
     sleep-millis-per-second: 0
 
+# Neutral Market Detection Engine (disabled for safe prod rollout)
+neutral-market:
+  enabled: true
+  minimum-score: 7
+  allow-on-data-unavailable: true
+
 # Persistence Configuration
 persistence:
   enabled: true
@@ -105,6 +111,9 @@ management:
 logging:
   level:
     com.tradingbot: INFO
+    # Neutral market detector: INFO shows signal pass/fail and decisions.
+    # Set to DEBUG for calculation internals (candle counts, ADX series, volume details).
+    com.tradingbot.service.strategy.NeutralMarketDetectorService: INFO
     org.hibernate.SQL: WARN
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

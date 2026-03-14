@@ -8,6 +8,8 @@ import com.tradingbot.service.persistence.PersistenceBufferService;
 import com.tradingbot.service.persistence.SystemHealthMonitorService;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +38,11 @@ public class MonitoringController {
     @GetMapping("/status")
     @Operation(summary = "Get WebSocket connection status",
                description = "Check if WebSocket is connected and number of active monitors (for current user)")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Status returned successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<Map<String, Object>>> getStatus() {
         Map<String, Object> status = Map.of(
             "connected", webSocketService.isWebSocketConnected(),
@@ -47,6 +54,11 @@ public class MonitoringController {
     @PostMapping("/connect")
     @Operation(summary = "Connect WebSocket for real-time monitoring",
                description = "Establish a per-user WebSocket connection to receive real-time market ticks")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "WebSocket connection initiated"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Access token is missing or invalid"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "WebSocket connection failed")
+    })
     public ResponseEntity<ApiResponse<String>> connect() {
         if (!webSocketService.isAccessTokenValid()) {
             String msg = "Access token is missing or invalid for this user. Please authenticate via /api/auth/session before connecting WebSocket.";
@@ -59,6 +71,10 @@ public class MonitoringController {
     @PostMapping("/disconnect")
     @Operation(summary = "Disconnect WebSocket",
                description = "Close current user's WebSocket connection and stop receiving market ticks")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "WebSocket disconnected successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<String>> disconnect() {
         webSocketService.disconnect();
         return ResponseEntity.ok(ApiResponse.success("WebSocket disconnected for current user"));
@@ -67,7 +83,14 @@ public class MonitoringController {
     @DeleteMapping("/{executionId}")
     @Operation(summary = "Stop monitoring a specific execution",
                description = "Stop monitoring a strategy execution without closing positions (current user)")
-    public ResponseEntity<ApiResponse<String>> stopMonitoring(@PathVariable String executionId) {
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Monitoring stopped successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Execution not found"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
+    public ResponseEntity<ApiResponse<String>> stopMonitoring(
+            @Parameter(description = "Strategy execution ID to stop monitoring", required = true, example = "exec-a1b2c3d4")
+            @PathVariable String executionId) {
         webSocketService.stopMonitoring(executionId);
         return ResponseEntity.ok(ApiResponse.success("Monitoring stopped for execution: " + executionId));
     }
@@ -76,6 +99,10 @@ public class MonitoringController {
     @Operation(summary = "Get Delta Cache Status",
                description = "Returns statistics about the pre-computed delta cache used for HFT optimization. " +
                            "Shows cache size, freshness, and cached ATM strikes for each instrument/expiry pair.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Delta cache statistics returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<Map<String, Object>>> getDeltaCacheStatus() {
         Map<String, Object> stats = deltaCacheService.getCacheStats();
         return ResponseEntity.ok(ApiResponse.success(stats));
@@ -85,6 +112,10 @@ public class MonitoringController {
     @Operation(summary = "Force Delta Cache Refresh",
                description = "Manually trigger a refresh of the delta cache for all supported instruments. " +
                            "Useful before placing orders when cache is stale.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Delta cache refresh triggered"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Cache refresh failed")
+    })
     public ResponseEntity<ApiResponse<String>> refreshDeltaCache() {
         deltaCacheService.refreshDeltaCache();
         return ResponseEntity.ok(ApiResponse.success("Delta cache refresh triggered for all instruments"));
@@ -95,6 +126,10 @@ public class MonitoringController {
                description = "Returns statistics about API rate limiting. Shows current request counts per API type " +
                            "and global request counts within the sliding window. " +
                            "Kite API limits: 3 req/sec per API, 10 req/sec overall.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Rate limiter statistics returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<Map<String, Object>>> getRateLimiterStatus() {
         Map<String, Object> stats = rateLimiterService.getStatistics();
         return ResponseEntity.ok(ApiResponse.success(stats));
@@ -105,6 +140,10 @@ public class MonitoringController {
                description = "Returns statistics about the instrument cache. Shows cached exchanges, " +
                            "instrument counts, and cache freshness. Instruments are cached for 5 minutes " +
                            "to reduce API calls.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Instrument cache statistics returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<Map<String, Object>>> getInstrumentCacheStatus() {
         Map<String, Object> stats = instrumentCacheService.getCacheStats();
         return ResponseEntity.ok(ApiResponse.success(stats));
@@ -115,6 +154,10 @@ public class MonitoringController {
                description = "Returns metrics about the write-behind persistence buffer. " +
                            "Shows queue sizes, buffer/flush counts, and circuit breaker status. " +
                            "Important for HFT monitoring - ensures persistence doesn't block trading.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Persistence buffer metrics returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<PersistenceBufferService.BufferMetrics>> getPersistenceBufferStatus() {
         PersistenceBufferService.BufferMetrics metrics = persistenceBufferService.getMetrics();
         return ResponseEntity.ok(ApiResponse.success(metrics));
@@ -124,6 +167,10 @@ public class MonitoringController {
     @Operation(summary = "Force Flush Persistence Buffer",
                description = "Manually trigger immediate flush of all persistence buffers. " +
                            "Useful before shutdown or when you need data to be immediately persisted.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Persistence buffer flush completed"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Flush operation failed")
+    })
     public ResponseEntity<ApiResponse<String>> flushPersistenceBuffer() {
         persistenceBufferService.forceFlush();
         return ResponseEntity.ok(ApiResponse.success("Persistence buffer flush completed"));
@@ -133,6 +180,10 @@ public class MonitoringController {
     @Operation(summary = "Get Current System Health Metrics",
                description = "Returns real-time system health metrics without waiting for scheduled snapshot. " +
                            "Shows heap memory, threads, ticks, and orders processed.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Current system health metrics returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Failed to collect health metrics")
+    })
     public ResponseEntity<ApiResponse<SystemHealthMonitorService.HealthMetrics>> getCurrentHealth() {
         SystemHealthMonitorService.HealthMetrics metrics = systemHealthMonitorService.getCurrentMetrics();
         return ResponseEntity.ok(ApiResponse.success(metrics));

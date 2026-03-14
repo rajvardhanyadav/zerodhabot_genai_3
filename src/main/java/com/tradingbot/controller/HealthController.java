@@ -3,6 +3,7 @@ package com.tradingbot.controller;
 import com.tradingbot.service.session.UserSessionManager;
 import com.tradingbot.util.CurrentUserContext;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,7 +24,12 @@ public class HealthController {
     private final UserSessionManager sessionManager;
 
     @GetMapping("/health")
-    @Operation(summary = "Get application health status")
+    @Operation(summary = "Get application health status",
+               description = "Returns basic application health information including status, version, and environment")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Application is healthy"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Application health check failed")
+    })
     public Map<String, Object> health() {
         return Map.of(
             "status", "UP",
@@ -44,6 +50,10 @@ public class HealthController {
     @Operation(summary = "Get session diagnostics (Cloud Run debug)",
                description = "Returns session statistics useful for debugging Cloud Run multi-instance issues. " +
                            "Shows in-memory session count, database session count, and instance information.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Session diagnostics returned successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Failed to retrieve session diagnostics")
+    })
     public Map<String, Object> sessionDiagnostics() {
         Map<String, Object> diagnostics = new LinkedHashMap<>();
 

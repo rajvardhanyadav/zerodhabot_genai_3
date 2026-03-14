@@ -68,6 +68,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     private final StraddleExitHandler exitHandler;
     private final LegReplacementHandler legReplacementHandler;
     private final MonitoringSetupHelper monitoringSetupHelper;
+    private final NeutralMarketDetectorService neutralMarketDetectorService;
 
     // ==================== HFT Thread Pool Configuration ====================
     private static final int HFT_THREAD_POOL_SIZE = 8;
@@ -117,7 +118,8 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                    VolatilityConfig volatilityConfig,
                                    StraddleExitHandler exitHandler,
                                    LegReplacementHandler legReplacementHandler,
-                                   MonitoringSetupHelper monitoringSetupHelper) {
+                                   MonitoringSetupHelper monitoringSetupHelper,
+                                   NeutralMarketDetectorService neutralMarketDetectorService) {
         super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService);
         this.webSocketService = webSocketService;
         this.strategyConfig = strategyConfig;
@@ -127,6 +129,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         this.exitHandler = exitHandler;
         this.legReplacementHandler = legReplacementHandler;
         this.monitoringSetupHelper = monitoringSetupHelper;
+        this.neutralMarketDetectorService = neutralMarketDetectorService;
     }
 
     @Override
@@ -151,6 +154,36 @@ public class SellATMStraddleStrategy extends BaseStrategy {
             log.info("[{}] Hedge legs ENABLED with delta={}", tradingMode, hedgeDelta);
         }
 
+        // ==================== NEUTRAL MARKET FILTER ====================
+        log.info("[{}] Evaluating ATM straddle entry for {}. Checking neutral market conditions...",
+                tradingMode, instrumentType);
+
+        NeutralMarketDetectorService.NeutralMarketResult neutralResult =
+                neutralMarketDetectorService.evaluate(instrumentType);
+        log.info("[{}] Neutral market check: instrument={}, score={}/{}, minimumRequired={}, neutral={}, signals=[{}]",
+                tradingMode, instrumentType, neutralResult.totalScore(), neutralResult.maxScore(),
+                neutralResult.minimumRequired(), neutralResult.neutral(), neutralResult.summary());
+
+        if (!neutralResult.neutral()) {
+            String failedSignals = neutralResult.signals().isEmpty()
+                    ? neutralResult.summary()
+                    : neutralResult.signals().stream()
+                            .filter(s -> !s.passed())
+                            .map(s -> s.name() + "=" + s.detail())
+                            .reduce((a, b) -> a + " | " + b)
+                            .orElse("none");
+            log.info("[{}] Skipping straddle entry because market conditions are not neutral. " +
+                            "score={}/{} (minimum={}). Failed signals: {}",
+                    tradingMode, neutralResult.totalScore(), neutralResult.maxScore(),
+                    neutralResult.minimumRequired(), failedSignals);
+            throw new RuntimeException("Neutral market filter BLOCKED entry: score="
+                    + neutralResult.totalScore() + "/" + neutralResult.maxScore()
+                    + " (minimum=" + neutralResult.minimumRequired() + "). " + neutralResult.summary());
+        }
+
+        log.info("[{}] Neutral market confirmed for {}. Proceeding with ATM straddle placement.",
+                tradingMode, instrumentType);
+
         // Get spot price and instruments
         final double spotPrice = getCurrentSpotPrice(instrumentType);
         log.info("Current spot price: {}", spotPrice);
@@ -164,6 +197,8 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 ? getATMStrikeByDelta(spotPrice, instrumentType, expiryDate)
                 : getATMStrike(spotPrice, instrumentType);
         log.info("ATM Strike (Delta-based): {}", atmStrike);
+        log.info("[{}] Neutral market confirmed. Placing ATM straddle at strike={}, price={}, instrument={}",
+                tradingMode, atmStrike, spotPrice, instrumentType);
 
         // Build instrument index and find ATM options
         buildInstrumentIndex(instruments);

@@ -15,14 +15,18 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.scheduling.TaskScheduler;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.Optional;
+import java.util.concurrent.ScheduledFuture;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 /**
  * Test that StrategyRestartScheduler correctly schedules restarts for paper and live modes
- * based on the execution's stored trading mode.
+ * based on the execution's stored trading mode and neutral market detection.
  */
 class StrategyRestartSchedulerTest {
 
@@ -41,16 +45,29 @@ class StrategyRestartSchedulerTest {
     @Mock
     private BotStatusService botStatusService;
 
+    @Mock
+    private NeutralMarketDetectorService neutralMarketDetectorService;
+
     private StrategyRestartScheduler scheduler;
 
     @BeforeEach
     void setUp() {
         try (AutoCloseable mocks = MockitoAnnotations.openMocks(this)) {
             scheduler = new StrategyRestartScheduler(strategyConfig, strategyService, taskScheduler,
-                    dailyPnlGateService, botStatusService);
+                    dailyPnlGateService, botStatusService, neutralMarketDetectorService);
+            // Pin clock to 10:00 AM IST (within market hours 09:15 - 15:10)
+            // 2026-03-14T10:00:00+05:30 = 2026-03-14T04:30:00Z
+            Instant marketHoursInstant = Instant.parse("2026-03-14T04:30:00Z");
+            scheduler.setClock(Clock.fixed(marketHoursInstant, ZoneId.of("Asia/Kolkata")));
             // Default: no daily P&L gate breach
             when(dailyPnlGateService.getBreachReason(any())).thenReturn(Optional.empty());
             when(dailyPnlGateService.getDailyPnl(any())).thenReturn(BigDecimal.ZERO);
+            // Default neutral market poll config
+            when(strategyConfig.getNeutralMarketPollIntervalMs()).thenReturn(30000L);
+            when(strategyConfig.getNeutralMarketBufferMs()).thenReturn(60000L);
+            // Mock taskScheduler.schedule() to return a non-null ScheduledFuture
+            ScheduledFuture<?> mockFuture = mock(ScheduledFuture.class);
+            doReturn(mockFuture).when(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
         } catch (Exception e) {
             throw new RuntimeException("Failed to initialize mocks", e);
         }
@@ -72,7 +89,7 @@ class StrategyRestartSchedulerTest {
         StrategyService.StrategyCompletionEvent event = new StrategyService.StrategyCompletionEvent(this, execution);
         scheduler.onStrategyCompletion(event);
 
-        // Then: Scheduler should schedule a task
+        // Then: Scheduler should schedule a neutral market polling task
         verify(taskScheduler, times(1)).schedule(any(Runnable.class), any(java.time.Instant.class));
     }
 
@@ -111,7 +128,7 @@ class StrategyRestartSchedulerTest {
         StrategyService.StrategyCompletionEvent event = new StrategyService.StrategyCompletionEvent(this, execution);
         scheduler.onStrategyCompletion(event);
 
-        // Then: Scheduler should schedule a task
+        // Then: Scheduler should schedule a neutral market polling task
         verify(taskScheduler, times(1)).schedule(any(Runnable.class), any(java.time.Instant.class));
     }
 
@@ -199,7 +216,6 @@ class StrategyRestartSchedulerTest {
         scheduler.onStrategyCompletion(new StrategyService.StrategyCompletionEvent(this, execution));
 
         // Then: Gate should NOT block ATM_STRADDLE — bot should NOT be stopped.
-        // (Whether schedule() is actually called depends on market hours, which is not the concern of this test.)
         verify(botStatusService, never()).markStopped();
     }
 
@@ -247,7 +263,6 @@ class StrategyRestartSchedulerTest {
         scheduler.onStrategyCompletion(new StrategyService.StrategyCompletionEvent(this, execution));
 
         // Then: Gate should NOT block — bot should NOT be stopped.
-        // (Whether schedule() is actually called depends on market hours, which is not the concern of this test.)
         verify(botStatusService, never()).markStopped();
     }
 

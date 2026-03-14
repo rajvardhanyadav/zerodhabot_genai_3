@@ -1,5 +1,6 @@
 package com.tradingbot.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -14,16 +15,13 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@Schema(description = "Request to place multiple orders as a single basket")
 public class BasketOrderRequest {
 
-    /**
-     * List of individual order items in the basket
-     */
+    @Schema(description = "List of individual order items in the basket")
     private List<BasketOrderItem> orders;
 
-    /**
-     * Optional tag to identify this basket (for tracking purposes)
-     */
+    @Schema(description = "Optional tag to identify this basket for tracking", example = "straddle-entry")
     private String tag;
 
     /**
@@ -33,26 +31,42 @@ public class BasketOrderRequest {
     @NoArgsConstructor
     @AllArgsConstructor
     @Builder
+    @Schema(description = "Individual order item within a basket order")
     public static class BasketOrderItem {
+        @Schema(description = "Trading symbol of the instrument", example = "NIFTY2430621000CE")
         private String tradingSymbol;
+
+        @Schema(description = "Exchange segment", example = "NFO")
         private String exchange;
-        private String transactionType; // BUY or SELL
+
+        @Schema(description = "Transaction type: BUY or SELL", example = "SELL")
+        private String transactionType;
+
+        @Schema(description = "Order quantity", example = "50")
         private Integer quantity;
-        private String product; // CNC, MIS, NRML
-        private String orderType; // MARKET, LIMIT, SL, SL-M
+
+        @Schema(description = "Product type: CNC, MIS, NRML", example = "NRML")
+        private String product;
+
+        @Schema(description = "Order type: MARKET, LIMIT, SL, SL-M", example = "MARKET")
+        private String orderType;
+
+        @Schema(description = "Limit price (required for LIMIT and SL orders)", example = "150.50")
         private Double price;
+
+        @Schema(description = "Trigger price (required for SL and SL-M orders)", example = "148.00")
         private Double triggerPrice;
-        private String validity; // DAY, IOC
+
+        @Schema(description = "Order validity: DAY or IOC", example = "DAY")
+        private String validity;
+
+        @Schema(description = "Quantity to disclose publicly", example = "0")
         private Integer disclosedQuantity;
 
-        /**
-         * Optional leg identifier (e.g., "CALL", "PUT")
-         */
+        @Schema(description = "Leg identifier (e.g., CALL, PUT)", example = "CALL")
         private String legType;
 
-        /**
-         * Instrument token for WebSocket monitoring
-         */
+        @Schema(description = "Instrument token for WebSocket monitoring", example = "12345678")
         private Long instrumentToken;
 
         /**

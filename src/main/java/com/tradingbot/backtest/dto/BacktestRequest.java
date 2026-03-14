@@ -1,6 +1,7 @@
 package com.tradingbot.backtest.dto;
 
 import com.tradingbot.model.StrategyType;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PastOrPresent;
 import lombok.AllArgsConstructor;
@@ -18,84 +19,85 @@ import java.time.LocalDate;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@Schema(description = "Request to run a single-day strategy backtest against historical market data")
 public class BacktestRequest {
 
-    /** The specific trading day to backtest (must not be in the future). */
     @NotNull(message = "Backtest date is required")
     @PastOrPresent(message = "Backtest date must not be in the future")
+    @Schema(description = "The specific trading day to backtest (must not be in the future)", example = "2026-03-10", requiredMode = Schema.RequiredMode.REQUIRED)
     private LocalDate backtestDate;
 
-    /** Strategy type to simulate. */
     @NotNull(message = "Strategy type is required")
+    @Schema(description = "Strategy type to simulate", example = "SELL_ATM_STRADDLE", requiredMode = Schema.RequiredMode.REQUIRED)
     private StrategyType strategyType;
 
-    /** Underlying index: NIFTY or BANKNIFTY. */
     @NotNull(message = "Instrument type is required")
+    @Schema(description = "Underlying index: NIFTY or BANKNIFTY", example = "NIFTY", requiredMode = Schema.RequiredMode.REQUIRED)
     private String instrumentType;
 
-    /** Expiry date for options contracts (format: yyyy-MM-dd). */
     @NotNull(message = "Expiry date is required")
+    @Schema(description = "Expiry date for options contracts (yyyy-MM-dd)", example = "2026-03-19", requiredMode = Schema.RequiredMode.REQUIRED)
     private String expiryDate;
 
-    /** Number of lots to simulate (default: 1). */
     @Builder.Default
+    @Schema(description = "Number of lots to simulate (default: 1)", example = "1")
     private int lots = 1;
 
     // ==================== SL/TARGET CONFIGURATION ====================
 
-    /** Exit mode: "points" or "premium". */
+    @Schema(description = "Exit mode: 'points' or 'premium'", example = "points")
     private String slTargetMode;
 
-    /** Stop loss in points (when mode = points). */
+    @Schema(description = "Stop loss in points (when mode = points)", example = "50.0")
     private Double stopLossPoints;
 
-    /** Target in points (when mode = points). */
+    @Schema(description = "Target in points (when mode = points)", example = "50.0")
     private Double targetPoints;
 
-    /** Target decay % for premium-based exit. */
+    @Schema(description = "Target decay % for premium-based exit", example = "5.0")
     private Double targetDecayPct;
 
-    /** Stop loss expansion % for premium-based exit. */
+    @Schema(description = "Stop loss expansion % for premium-based exit", example = "10.0")
     private Double stopLossExpansionPct;
 
     // ==================== TIME CONFIGURATION ====================
 
-    /** Backtest start time in HH:mm (default: 09:20 — first 5-min candle). */
     @Builder.Default
+    @Schema(description = "Backtest start time in HH:mm (default: 09:20)", example = "09:20")
     private String startTime = "09:20";
 
-    /** Backtest end time in HH:mm (default: 15:30 — market close). */
     @Builder.Default
+    @Schema(description = "Backtest end time in HH:mm (default: 15:30)", example = "15:30")
     private String endTime = "15:30";
 
-    /** Auto square-off time in HH:mm (default: 15:10). */
     @Builder.Default
+    @Schema(description = "Auto square-off time in HH:mm (default: 15:10)", example = "15:10")
     private String autoSquareOffTime = "15:10";
 
     // ==================== CANDLE & RESTART CONFIGURATION ====================
 
-    /** Candle interval for historical data (default: "minute" — smallest available). */
     @Builder.Default
+    @Schema(description = "Candle interval for historical data (default: minute)", example = "minute")
     private String candleInterval = "minute";
 
-    /** Enable auto-restart at next 5-min candle after SL/target hit. */
     @Builder.Default
+    @Schema(description = "Enable auto-restart at next 5-min candle after SL/target hit", example = "true")
     private boolean autoRestartEnabled = true;
 
-    /** Max auto-restarts per day (0 = unlimited). */
     @Builder.Default
+    @Schema(description = "Max auto-restarts per day (0 = unlimited)", example = "0")
     private int maxAutoRestarts = 0;
 
     // ==================== TRAILING STOP CONFIGURATION ====================
 
-    /** Enable trailing stop loss. */
     @Builder.Default
+    @Schema(description = "Enable trailing stop loss", example = "false")
     private boolean trailingStopEnabled = false;
 
-    /** Trailing stop activation threshold in points. */
+    @Schema(description = "Trailing stop activation threshold in points", example = "30.0")
     private Double trailingActivationPoints;
 
-    /** Trailing stop distance in points. */
+    @Schema(description = "Trailing stop distance in points", example = "15.0")
     private Double trailingDistancePoints;
 }
 

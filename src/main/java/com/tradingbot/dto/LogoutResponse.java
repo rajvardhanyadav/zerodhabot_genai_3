@@ -1,5 +1,6 @@
 package com.tradingbot.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -26,42 +27,28 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@Schema(description = "Logout operation result with cleanup statistics")
 public class LogoutResponse {
 
-    /**
-     * The user ID that was logged out.
-     * May be null if no active session was found.
-     */
+    @Schema(description = "The user ID that was logged out (null if no active session)", example = "AB1234")
     private String userId;
 
-    /**
-     * Number of active strategies that were stopped during logout.
-     */
+    @Schema(description = "Number of active strategies that were stopped during logout", example = "2")
     private int strategiesStopped;
 
-    /**
-     * Number of scheduled strategy auto-restarts that were cancelled.
-     */
+    @Schema(description = "Number of scheduled strategy auto-restarts that were cancelled", example = "1")
     private int scheduledRestartsCancelled;
 
-    /**
-     * Whether the WebSocket connection was disconnected.
-     */
+    @Schema(description = "Whether the WebSocket connection was disconnected", example = "true")
     private boolean webSocketDisconnected;
 
-    /**
-     * Whether paper trading state was reset (orders, positions, accounts).
-     */
+    @Schema(description = "Whether paper trading state was reset (orders, positions, accounts)", example = "true")
     private boolean paperTradingReset;
 
-    /**
-     * Whether the Kite session was invalidated.
-     */
+    @Schema(description = "Whether the Kite session was invalidated", example = "true")
     private boolean sessionInvalidated;
 
-    /**
-     * Total duration of the logout operation in milliseconds.
-     */
+    @Schema(description = "Total duration of the logout operation in milliseconds", example = "245")
     private long durationMs;
 }
 

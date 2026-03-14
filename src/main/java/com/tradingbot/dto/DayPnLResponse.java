@@ -1,5 +1,6 @@
 package com.tradingbot.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -10,35 +11,24 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+@Schema(description = "Day profit and loss summary across all positions")
 public class DayPnLResponse {
 
-    /**
-     * Total realized P&L for the day (from closed positions)
-     */
+    @Schema(description = "Total realized P&L for the day (from closed positions)", example = "1250.75")
     private Double totalRealised;
 
-    /**
-     * Total unrealized P&L for the day (from open positions)
-     */
+    @Schema(description = "Total unrealized P&L for the day (from open positions)", example = "-320.50")
     private Double totalUnrealised;
 
-    /**
-     * Total M2M (Mark to Market) P&L
-     */
+    @Schema(description = "Total Mark-to-Market P&L", example = "930.25")
     private Double totalM2M;
 
-    /**
-     * Total day P&L (realized + unrealized)
-     */
+    @Schema(description = "Total day P&L (realized + unrealized)", example = "930.25")
     private Double totalDayPnL;
 
-    /**
-     * Number of positions
-     */
+    @Schema(description = "Number of open/closed positions", example = "4")
     private Integer positionCount;
 
-    /**
-     * Trading mode (PAPER or LIVE)
-     */
+    @Schema(description = "Trading mode: PAPER or LIVE", example = "PAPER")
     private String tradingMode;
 }

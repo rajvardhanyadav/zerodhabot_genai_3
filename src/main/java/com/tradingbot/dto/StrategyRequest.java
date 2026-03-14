@@ -1,6 +1,7 @@
 package com.tradingbot.dto;
 
 import com.tradingbot.model.StrategyType;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -9,78 +10,45 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+@Schema(description = "Request to execute an automated trading strategy")
 public class StrategyRequest {
 
     @NotNull(message = "Strategy type is required")
+    @Schema(description = "Type of strategy to execute", example = "SELL_ATM_STRADDLE", requiredMode = Schema.RequiredMode.REQUIRED)
     private StrategyType strategyType;
 
     @NotNull(message = "Instrument type is required")
-    private String instrumentType; // NIFTY, BANKNIFTY
+    @Schema(description = "Underlying index instrument", example = "NIFTY", requiredMode = Schema.RequiredMode.REQUIRED)
+    private String instrumentType;
 
     @NotNull(message = "Expiry is required")
-    private String expiry; // Format: yyyy-MM-dd or WEEKLY/MONTHLY
+    @Schema(description = "Expiry date for options contracts (yyyy-MM-dd or WEEKLY/MONTHLY)", example = "2026-03-19", requiredMode = Schema.RequiredMode.REQUIRED)
+    private String expiry;
 
-    private Integer lots; // Number of lots to trade (default: 1 lot). Will be multiplied by instrument lot size
+    @Schema(description = "Number of lots to trade (multiplied by instrument lot size, default: 1)", example = "1")
+    private Integer lots;
 
-    private String orderType; // MARKET or LIMIT (default: MARKET)
+    @Schema(description = "Order type: MARKET or LIMIT (default: MARKET)", example = "MARKET")
+    private String orderType;
 
+    @Schema(description = "Enable auto square-off at 3:15 PM", example = "true")
+    private Boolean autoSquareOff;
 
-    private Boolean autoSquareOff; // Auto square off at 3:15 PM (default: false)
+    @Schema(description = "Stop loss in absolute points (used when slTargetMode=points)", example = "50.0")
+    private Double stopLossPoints;
 
-    private Double stopLossPoints; // Stop loss in points (optional, uses default from config if not provided)
+    @Schema(description = "Target in absolute points (used when slTargetMode=points)", example = "50.0")
+    private Double targetPoints;
 
-    private Double targetPoints; // Target in points (optional, uses default from config if not provided)
-
-    // ==================== PREMIUM-BASED EXIT PARAMETERS ====================
-    // These fields enable dynamic premium-based exits when provided.
-    // If not provided (null), falls back to values from strategy configuration defaults.
-
-    /**
-     * Target decay percentage for premium-based exit.
-     * Exit (profit) when combined LTP <= entryPremium * (1 - targetDecayPct).
-     * <p>
-     * Accepts both formats:
-     * <ul>
-     *   <li>Whole percentages (1-100): e.g., 5 for 5%</li>
-     *   <li>Decimal fractions (0.01-1.0): e.g., 0.05 for 5%</li>
-     * </ul>
-     * If null, uses value from StrategyConfig.targetDecayPct.
-     */
+    @Schema(description = "Target decay percentage for premium-based exit. Exit when combined LTP <= entryPremium × (1 - targetDecayPct). Accepts 1-100 or 0.01-1.0", example = "5.0")
     private Double targetDecayPct;
 
-    /**
-     * Stop loss expansion percentage for premium-based exit.
-     * Exit (loss) when combined LTP >= entryPremium * (1 + stopLossExpansionPct).
-     * <p>
-     * Accepts both formats:
-     * <ul>
-     *   <li>Whole percentages (1-100): e.g., 10 for 10%</li>
-     *   <li>Decimal fractions (0.01-1.0): e.g., 0.10 for 10%</li>
-     * </ul>
-     * If null, uses value from StrategyConfig.stopLossExpansionPct.
-     */
+    @Schema(description = "Stop loss expansion percentage for premium-based exit. Exit when combined LTP >= entryPremium × (1 + stopLossExpansionPct). Accepts 1-100 or 0.01-1.0", example = "10.0")
     private Double stopLossExpansionPct;
 
-    // ==================== SL/TARGET MODE CONFIGURATION ====================
-
-    /**
-     * Stop-loss and target calculation mode (from frontend).
-     * <p>
-     * Accepted values:
-     * <ul>
-     *   <li><b>"points"</b>: Fixed point-based exits. Uses stopLossPoints/targetPoints.</li>
-     *   <li><b>"percentage"</b>: Percentage-based on combined entry premium. Uses targetDecayPct/stopLossExpansionPct.</li>
-     * </ul>
-     * If null or empty, defaults to "points" mode (or "percentage" if premiumBasedExitEnabled is true in config).
-     */
+    @Schema(description = "SL/Target calculation mode: 'points' for fixed-point exits, 'percentage' for premium-based exits", example = "points")
     private String slTargetMode;
 
-    // ==================== HEDGE CONFIGURATION ====================
-
-    /**
-     * Enable hedge legs for sell strategies (e.g., Sell ATM Straddle).
-     * When true, 0.1 delta OTM CE + PE are bought as protective hedges to reduce margin.
-     * If null, falls back to StrategyConfig.sellStraddleHedgeEnabled.
-     */
+    @Schema(description = "Enable hedge legs for sell strategies (buys 0.1 delta OTM CE+PE as protection)", example = "false")
     private Boolean hedgeEnabled;
 }

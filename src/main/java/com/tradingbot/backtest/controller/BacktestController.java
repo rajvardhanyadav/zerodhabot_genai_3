@@ -6,6 +6,8 @@ import com.tradingbot.backtest.engine.BacktestException;
 import com.tradingbot.backtest.service.BacktestService;
 import com.tradingbot.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -38,7 +40,13 @@ public class BacktestController {
     @PostMapping("/run")
     @Operation(summary = "Run single-day backtest",
                description = "Execute a strategy backtest for a specific day using historical 1-minute candle data from Kite API")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Backtest completed (check status field for COMPLETED/FAILED)"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Invalid request parameters or backtest error"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<BacktestResult>> runBacktest(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Backtest configuration including date, strategy, instrument, and exit parameters", required = true)
             @Valid @RequestBody BacktestRequest request) {
 
         log.info("Backtest request: date={}, strategy={}, instrument={}",
@@ -58,9 +66,17 @@ public class BacktestController {
     @PostMapping("/batch")
     @Operation(summary = "Run batch backtest over date range",
                description = "Execute backtests for each trading day in a date range (weekends are skipped)")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Batch backtest completed"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Invalid request parameters"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<BacktestResult>>> runBatchBacktest(
+            @Parameter(description = "Start date of the backtest range (yyyy-MM-dd)", required = true, example = "2026-03-01")
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
+            @Parameter(description = "End date of the backtest range (yyyy-MM-dd)", required = true, example = "2026-03-14")
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Backtest configuration (backtestDate field is ignored for batch)", required = true)
             @Valid @RequestBody BacktestRequest request) {
 
         log.info("Batch backtest request: from={}, to={}, strategy={}", fromDate, toDate, request.getStrategyType());
@@ -80,7 +96,13 @@ public class BacktestController {
     @PostMapping("/run-async")
     @Operation(summary = "Run backtest asynchronously",
                description = "Start a backtest in the background. Poll /api/backtest/result/{id} for results.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Backtest started, returns backtest ID for polling"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Invalid request parameters"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<String>> runAsyncBacktest(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Backtest configuration", required = true)
             @Valid @RequestBody BacktestRequest request) {
 
         log.info("Async backtest request: date={}, strategy={}", request.getBacktestDate(), request.getStrategyType());
@@ -96,7 +118,14 @@ public class BacktestController {
     @GetMapping("/result/{backtestId}")
     @Operation(summary = "Get backtest result by ID",
                description = "Retrieve a completed or in-progress backtest result from cache")
-    public ResponseEntity<ApiResponse<BacktestResult>> getResult(@PathVariable String backtestId) {
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Backtest result returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Backtest result not found in cache"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
+    public ResponseEntity<ApiResponse<BacktestResult>> getResult(
+            @Parameter(description = "Backtest execution ID", required = true, example = "bt-a1b2c3d4")
+            @PathVariable String backtestId) {
         BacktestResult result = backtestService.getResult(backtestId);
         if (result == null) {
             return ResponseEntity.notFound().build();
@@ -107,6 +136,10 @@ public class BacktestController {
     @GetMapping("/results")
     @Operation(summary = "Get all cached backtest results",
                description = "Retrieve all backtest results currently in the in-memory cache")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "All cached backtest results returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<Collection<BacktestResult>>> getAllResults() {
         Collection<BacktestResult> results = backtestService.getAllResults();
         return ResponseEntity.ok(ApiResponse.success(results));
@@ -117,6 +150,10 @@ public class BacktestController {
     @GetMapping("/strategies")
     @Operation(summary = "Get supported backtest strategies",
                description = "List all strategy types available for backtesting")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Supported strategies returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getSupportedStrategies() {
         List<Map<String, Object>> strategies = List.of(
                 Map.of("name", "SELL_ATM_STRADDLE",
@@ -137,6 +174,10 @@ public class BacktestController {
     @DeleteMapping("/cache")
     @Operation(summary = "Clear backtest result cache",
                description = "Remove all cached backtest results from memory")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Cache cleared successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<Void>> clearCache() {
         backtestService.clearCache();
         return ResponseEntity.ok(ApiResponse.success("Cache cleared successfully", null));

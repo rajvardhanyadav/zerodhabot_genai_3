@@ -8,6 +8,8 @@ import com.tradingbot.service.UnifiedTradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Order;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -30,7 +32,14 @@ public class OrderController {
     @PostMapping
     @Operation(summary = "Place a new order",
                description = "Place order in Paper Trading or Live Trading mode based on configuration")
-    public ResponseEntity<ApiResponse<OrderResponse>> placeOrder(@Valid @RequestBody OrderRequest orderRequest)
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Order placed successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Invalid order parameters or missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error or order placement failed")
+    })
+    public ResponseEntity<ApiResponse<OrderResponse>> placeOrder(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Order parameters including symbol, quantity, type, and price", required = true)
+            @Valid @RequestBody OrderRequest orderRequest)
             throws KiteException, IOException {
         log.info("API Request - Place order: {} {} {} @ {}",
             orderRequest.getTransactionType(), orderRequest.getQuantity(),
@@ -43,8 +52,16 @@ public class OrderController {
     @PutMapping("/{orderId}")
     @Operation(summary = "Modify an existing order",
                description = "Modify order parameters like price, quantity, or order type")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Order modified successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Invalid parameters"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Order not found"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
+    })
     public ResponseEntity<ApiResponse<OrderResponse>> modifyOrder(
+            @Parameter(description = "Order ID to modify", required = true, example = "220303000845481")
             @PathVariable String orderId,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Updated order parameters", required = true)
             @Valid @RequestBody OrderRequest orderRequest) throws KiteException, IOException {
         log.info("API Request - Modify order: {}", orderId);
         OrderResponse response = unifiedTradingService.modifyOrder(orderId, orderRequest);
@@ -55,7 +72,14 @@ public class OrderController {
     @DeleteMapping("/{orderId}")
     @Operation(summary = "Cancel an order",
                description = "Cancel a pending order by order ID")
-    public ResponseEntity<ApiResponse<OrderResponse>> cancelOrder(@PathVariable String orderId)
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Order cancelled successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Order not found"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
+    })
+    public ResponseEntity<ApiResponse<OrderResponse>> cancelOrder(
+            @Parameter(description = "Order ID to cancel", required = true, example = "220303000845481")
+            @PathVariable String orderId)
             throws KiteException, IOException {
         log.info("API Request - Cancel order: {}", orderId);
         OrderResponse response = unifiedTradingService.cancelOrder(orderId);
@@ -66,6 +90,11 @@ public class OrderController {
     @GetMapping
     @Operation(summary = "Get all orders for the day",
                description = "Fetch all orders placed today across all instruments")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Orders fetched successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
+    })
     public ResponseEntity<ApiResponse<List<Order>>> getOrders() throws KiteException, IOException {
         log.debug("API Request - Get all orders");
         List<Order> orders = unifiedTradingService.getOrders();
@@ -76,7 +105,14 @@ public class OrderController {
     @GetMapping("/{orderId}/history")
     @Operation(summary = "Get order history",
                description = "Fetch complete history of order state changes")
-    public ResponseEntity<ApiResponse<List<Order>>> getOrderHistory(@PathVariable String orderId)
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Order history fetched successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Order not found"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
+    })
+    public ResponseEntity<ApiResponse<List<Order>>> getOrderHistory(
+            @Parameter(description = "Order ID to retrieve history for", required = true, example = "220303000845481")
+            @PathVariable String orderId)
             throws KiteException, IOException {
         log.debug("API Request - Get order history for: {}", orderId);
         List<Order> orderHistory = unifiedTradingService.getOrderHistory(orderId);
@@ -88,6 +124,11 @@ public class OrderController {
     @Operation(summary = "Get charges for all executed orders today",
                description = "Fetches detailed charge breakdown from Kite API for all completed orders placed today. " +
                            "Includes brokerage, STT, exchange charges, GST, SEBI charges, and stamp duty.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Order charges fetched successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
+    })
     public ResponseEntity<ApiResponse<List<OrderChargesResponse>>> getOrderCharges() throws KiteException, IOException {
         log.info("API Request - Get order charges");
         List<OrderChargesResponse> charges = unifiedTradingService.getOrderCharges();

@@ -151,6 +151,12 @@ volatility:
   auto-restart-enabled: true
   auto-restart-paper-enabled: true
 
+  # ==================== NEUTRAL MARKET RESTART CONFIGURATION ====================
+  # After a trade exits (target/SL hit), the system polls for neutral market conditions
+  # before placing the next ATM straddle. No dependency on 5-minute candle boundaries.
+  neutral-market-poll-interval-ms: 30000   # Check every 30 seconds (default)
+  neutral-market-buffer-ms: 60000          # Wait 1 minute after neutral detected (default)
+
   # ==================== DAILY P&L THRESHOLD CONFIGURATION ====================
   # Maximum cumulative daily profit (in INR) before auto-restart is halted and bot is stopped.
   # Set to 0 to disable. Example: 5000 = stop after ₹5,000 daily profit.
@@ -180,6 +186,43 @@ volatility:
   #   - Decimal fractions (0.01-1.0): e.g., 0.10 for 10%
   # Example: 10 or 0.10 = 10% expansion = exit when premium rises 10% from entry
   stop-loss-expansion-pct: 10
+
+
+# Neutral Market Detection Engine Configuration
+neutral-market:
+  # Master switch: enable neutral market filter before ATM straddle entry
+  enabled: true
+
+  # Minimum score (0-10) to allow trade. Each signal contributes +2.
+  minimum-score: 7
+
+  # Signal 1: VWAP Deviation
+  vwap-deviation-threshold: 0.0015   # 0.15% max deviation
+  vwap-candle-count: 15              # 1-minute candles for VWAP
+
+  # Signal 2: ADX Trend Strength
+  adx-threshold: 18.0                # ADX below this = range-bound
+  adx-period: 14                     # Wilder smoothing period
+  adx-candle-interval: "3minute"     # 3-min candles for stable ADX
+  adx-candle-count: 50               # ~2.5 hours of data
+  adx-falling-check-enabled: false   # Optional: require ADX falling
+
+  # Signal 3: Gamma Pin (Max OI Strike)
+  gamma-pin-threshold: 0.002         # 0.2% max distance from max-OI strike
+  strikes-around-atm: 10             # +/-10 strikes to scan
+
+  # Signal 4: Range Compression
+  range-compression-threshold: 0.0025 # 0.25% max range
+  range-compression-candles: 5        # Last 5 one-minute candles
+
+  # Signal 5: Dual Premium Decay
+  # NOTE: Must be LESS than cache-ttl-ms to avoid timing race where
+  # cache expiry and snapshot interval align, causing perpetual skips.
+  premium-snapshot-min-interval-ms: 25000  # 25s between snapshots (cache is 30s)
+
+  # Caching
+  cache-ttl-ms: 30000                # Cache result for 30 seconds
+  allow-on-data-unavailable: true    # Fail-safe: allow trade if data fails
 
 
 # Historical Replay Configuration
@@ -235,6 +278,9 @@ management:
 logging:
   level:
     com.tradingbot: DEBUG
+    # Neutral market detector: DEBUG shows all calculation internals.
+    # Includes candle counts, volume availability, ADX series lengths, OI aggregation.
+    com.tradingbot.service.strategy.NeutralMarketDetectorService: DEBUG
     # Suppress Hibernate JTA platform warning (not needed for local transactions)
     org.hibernate.engine.transaction.jta.platform.internal: ERROR
   pattern:

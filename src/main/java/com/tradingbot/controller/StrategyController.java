@@ -11,6 +11,8 @@ import com.tradingbot.service.StrategyService;
 import com.tradingbot.util.ApiConstants;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -36,8 +38,14 @@ public class StrategyController {
 
     @PostMapping("/execute")
     @Operation(summary = "Execute a trading strategy",
-               description = "Execute a configured trading strategy (ATM Straddle, Sell ATM Straddle)")
+               description = "Execute a configured trading strategy (ATM Straddle, Sell ATM Straddle, Short Strangle)")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Strategy executed successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Invalid strategy parameters or missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Strategy execution failed or Kite API error")
+    })
     public ResponseEntity<ApiResponse<StrategyExecutionResponse>> executeStrategy(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Strategy execution parameters including type, instrument, expiry, and exit conditions", required = true)
             @Valid @RequestBody StrategyRequest request) throws KiteException, IOException {
         // Default to ATM_STRADDLE when strategyType is not provided by frontend
         if (request.getStrategyType() == null) {
@@ -53,6 +61,11 @@ public class StrategyController {
     @GetMapping("/active")
     @Operation(summary = "Get all active strategies",
                description = "Fetch all currently active strategy executions being monitored")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Active strategies returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Missing X-User-Id header"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<StrategyExecution>>> getActiveStrategies() {
         log.debug(ApiConstants.LOG_GET_ACTIVE_STRATEGIES_REQUEST);
         List<StrategyExecution> strategies = strategyService.getActiveStrategies();
@@ -63,7 +76,14 @@ public class StrategyController {
     @GetMapping("/{executionId}")
     @Operation(summary = "Get strategy execution details by ID",
                description = "Fetch specific strategy execution details including current P&L and status")
-    public ResponseEntity<ApiResponse<StrategyExecution>> getStrategy(@PathVariable String executionId) {
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Strategy execution details returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Strategy execution not found"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
+    public ResponseEntity<ApiResponse<StrategyExecution>> getStrategy(
+            @Parameter(description = "Strategy execution ID", required = true, example = "exec-a1b2c3d4")
+            @PathVariable String executionId) {
         log.debug(ApiConstants.LOG_GET_STRATEGY_REQUEST, executionId);
         StrategyExecution strategy = strategyService.getStrategy(executionId);
         if (strategy == null) {
@@ -77,6 +97,10 @@ public class StrategyController {
     @GetMapping("/types")
     @Operation(summary = "Get available strategy types",
                description = "List all supported strategy types with their implementation status")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Strategy types returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<List<StrategyTypeInfo>>> getStrategyTypes() {
         log.debug(ApiConstants.LOG_GET_STRATEGY_TYPES_REQUEST);
         List<StrategyTypeInfo> types = Arrays.stream(StrategyType.values())
@@ -94,6 +118,10 @@ public class StrategyController {
     @GetMapping("/instruments")
     @Operation(summary = "Get available instruments",
                description = "Fetch available instruments with their lot sizes and strike intervals")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Instruments returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
+    })
     public ResponseEntity<ApiResponse<List<InstrumentInfo>>> getInstruments() {
         log.debug(ApiConstants.LOG_GET_INSTRUMENTS_REQUEST);
         List<StrategyService.InstrumentDetail> instrumentDetails = null;
@@ -132,7 +160,14 @@ public class StrategyController {
     @GetMapping("/expiries/{instrumentType}")
     @Operation(summary = "Get available expiry dates for an instrument",
                description = "Fetch weekly and monthly expiry dates for specified instrument")
-    public ResponseEntity<ApiResponse<List<String>>> getExpiries(@PathVariable String instrumentType)
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Expiry dates returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Invalid instrument type"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
+    })
+    public ResponseEntity<ApiResponse<List<String>>> getExpiries(
+            @Parameter(description = "Instrument type: NIFTY or BANKNIFTY", required = true, example = "NIFTY")
+            @PathVariable String instrumentType)
             throws KiteException, IOException {
         log.debug("API Request - Get expiries for instrument: {}", instrumentType);
         List<String> expiries = strategyService.getAvailableExpiries(instrumentType);
@@ -142,7 +177,14 @@ public class StrategyController {
     @PostMapping("/stop/{executionId}")
     @Operation(summary = "Stop a running strategy",
                description = "Stop a running strategy by closing all its open positions")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> stopStrategy(@PathVariable String executionId) throws KiteException {
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Strategy stopped successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Strategy execution not found"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Failed to stop strategy or Kite API error")
+    })
+    public ResponseEntity<ApiResponse<Map<String, Object>>> stopStrategy(
+            @Parameter(description = "Strategy execution ID to stop", required = true, example = "exec-a1b2c3d4")
+            @PathVariable String executionId) throws KiteException {
         Map<String, Object> result = strategyService.stopStrategy(executionId);
         return ResponseEntity.ok(ApiResponse.success("Strategy stopped successfully", result));
     }
@@ -150,6 +192,10 @@ public class StrategyController {
     @DeleteMapping("/stop-all")
     @Operation(summary = "Stop all active strategies",
                description = "Stop all active strategies by closing all open positions")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "All strategies stopped successfully"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Failed to stop strategies")
+    })
     public ResponseEntity<ApiResponse<Map<String, Object>>> stopAllStrategies() throws KiteException {
         Map<String, Object> result = strategyService.stopAllActiveStrategies();
         botStatusService.markStopped();
@@ -159,6 +205,10 @@ public class StrategyController {
     @GetMapping("/bot-status")
     @Operation(summary = "Get bot status",
                description = "Returns current bot status based on execute/stop-all lifecycle")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Bot status returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
+    })
     public ResponseEntity<ApiResponse<com.tradingbot.dto.BotStatusResponse>> getBotStatus() {
         log.debug(ApiConstants.LOG_GET_BOT_STATUS_REQUEST);
         var status = botStatusService.getStatus();

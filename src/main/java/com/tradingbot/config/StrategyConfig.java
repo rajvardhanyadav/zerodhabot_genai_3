@@ -131,6 +131,27 @@ public class StrategyConfig {
      */
     private double dailyMaxLoss = 0;
 
+    // ==================== NEUTRAL MARKET RESTART CONFIGURATION ====================
+
+    /**
+     * Polling interval (in milliseconds) for checking neutral market conditions
+     * after a strategy trade exits. The scheduler will evaluate
+     * {@code NeutralMarketDetectorService.isMarketNeutral()} at this frequency
+     * until the market becomes neutral or market hours end.
+     * <p>
+     * Default: 30000 (30 seconds)
+     */
+    private long neutralMarketPollIntervalMs = 30_000;
+
+    /**
+     * Buffer duration (in milliseconds) to wait after neutral market is first detected
+     * before placing the next ATM straddle. This avoids entering on a brief neutral
+     * blip that may immediately reverse.
+     * <p>
+     * Default: 60000 (1 minute)
+     */
+    private long neutralMarketBufferMs = 60_000;
+
     // ==================== SELL STRADDLE HEDGE CONFIGURATION ====================
 
     /**

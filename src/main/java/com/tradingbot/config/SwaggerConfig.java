@@ -43,7 +43,7 @@ public class SwaggerConfig {
                         • Paper Trading Mode for risk-free testing
                         • GTT (Good Till Triggered) Orders
                         """)
-                .version("2.0.0")
+                .version("4.2")
                 .contact(new Contact()
                         .name("Trading Bot Support")
                         .email("support@tradingbot.com")
@@ -67,25 +67,29 @@ public class SwaggerConfig {
     private List<Tag> buildApiTags() {
         return List.of(
                 new Tag().name("Authentication")
-                        .description("Kite Connect OAuth authentication"),
+                        .description("Kite Connect OAuth authentication and session management"),
                 new Tag().name("Orders")
-                        .description("Order management operations"),
+                        .description("Order management — automatically routes to Paper or Live trading"),
                 new Tag().name("Portfolio")
-                        .description("Portfolio, positions, and holdings"),
+                        .description("Portfolio, positions, holdings, and day P&L"),
                 new Tag().name("Market Data")
-                        .description("Real-time and historical market data"),
+                        .description("Real-time quotes, OHLC, LTP, historical candles, and instruments"),
                 new Tag().name("Account")
-                        .description("Account information and margins"),
+                        .description("Account information and margin details"),
                 new Tag().name("GTT Orders")
-                        .description("Good Till Triggered orders"),
+                        .description("Good Till Triggered (GTT) order management"),
                 new Tag().name("Trading Strategies")
-                        .description("Automated trading strategies with real-time monitoring"),
+                        .description("Automated trading strategy execution and monitoring"),
                 new Tag().name("Position Monitoring")
-                        .description("Real-time position monitoring with WebSocket"),
+                        .description("Real-time position monitoring, WebSocket, delta cache, rate limiter, and system health"),
                 new Tag().name("Paper Trading")
-                        .description("Paper trading account management"),
+                        .description("Paper trading account management and statistics"),
+                new Tag().name("Trading History")
+                        .description("Historical trading data, daily P&L summaries, alerts, MTM snapshots, and config history"),
+                new Tag().name("Backtesting")
+                        .description("Strategy backtesting against historical market data"),
                 new Tag().name("Health")
-                        .description("Application health checks")
+                        .description("Application health checks and session diagnostics")
         );
     }
 }
