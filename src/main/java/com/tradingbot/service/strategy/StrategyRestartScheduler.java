@@ -2,6 +2,7 @@ package com.tradingbot.service.strategy;
 
 import com.tradingbot.config.StrategyConfig;
 import com.tradingbot.dto.StrategyRequest;
+import com.tradingbot.model.MarketStateEvent;
 import com.tradingbot.model.StrategyCompletionReason;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyStatus;
@@ -32,18 +33,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Schedules auto-restart of strategies based on neutral market detection.
  *
- * <p>When a strategy completes (target/SL hit), instead of scheduling at the next 5-minute
- * candle boundary, this scheduler starts an asynchronous polling loop that:
- * <ol>
- *   <li>Checks {@code NeutralMarketDetectorService.isMarketNeutral()} every 30 seconds</li>
- *   <li>When neutral conditions are detected, waits a 1-minute buffer</li>
- *   <li>Then places a new ATM straddle</li>
- * </ol>
+ * <p>When a strategy completes (target/SL hit), the execution is registered as a
+ * pending restart. A separate {@link MarketStateUpdater} evaluates market neutrality
+ * every 30 seconds and publishes {@link MarketStateEvent}s. This scheduler listens
+ * for those events and triggers a buffered execution when the market is neutral.</p>
+ *
+ * <p>This event-driven design eliminates per-execution polling loops, reducing
+ * thread blocking and redundant API calls when multiple executions await restart.</p>
  *
  * <p>Listens to {@link StrategyService.StrategyCompletionEvent} and uses the execution's
  * stored trading mode.
  *
  * @since 4.2
+ * @see MarketStateUpdater
+ * @see MarketStateEvent
  */
 @Component
 @Slf4j
@@ -64,11 +67,25 @@ public class StrategyRestartScheduler {
     /** Clock for obtaining current time — overridable in tests. */
     private Clock clock = Clock.system(MARKET_ZONE);
 
-    /** Track active polling loops to avoid duplicates per executionId. */
+    /**
+     * Pending restart registrations keyed by executionId.
+     * Populated when a strategy completes; consumed when a NEUTRAL {@link MarketStateEvent} arrives.
+     */
+    private final Map<String, PendingRestart> pendingRestarts = new ConcurrentHashMap<>();
+
+    /**
+     * Track buffered execution futures so they can be cancelled externally.
+     * Keyed by executionId.
+     */
     private final Map<String, ScheduledFuture<?>> scheduledRestarts = new ConcurrentHashMap<>();
 
     /** Guard against multiple simultaneous strategy executions from the scheduler. */
     private final AtomicBoolean executionInProgress = new AtomicBoolean(false);
+
+    /**
+     * Holds the execution and its derived restart request while awaiting a neutral market event.
+     */
+    record PendingRestart(StrategyExecution execution, StrategyRequest request) {}
 
     public StrategyRestartScheduler(StrategyConfig strategyConfig,
                                     @Lazy StrategyService strategyService,
@@ -113,9 +130,9 @@ public class StrategyRestartScheduler {
     }
 
     /**
-     * Schedule an auto-restart for the given execution if conditions are met.
-     * Instead of waiting for the next 5-minute candle, starts a neutral market
-     * polling loop that checks conditions every 30 seconds.
+     * Register an auto-restart for the given execution if conditions are met.
+     * The execution is added to the pending restarts map and will be triggered
+     * when a neutral {@link MarketStateEvent} arrives for the matching instrument.
      */
     public void scheduleRestart(StrategyExecution execution) {
         if (execution == null) {
@@ -174,8 +191,8 @@ public class StrategyRestartScheduler {
         }
 
         String executionId = execution.getExecutionId();
-        if (scheduledRestarts.containsKey(executionId)) {
-            log.info("Auto-restart already scheduled for execution {}, ignoring duplicate request", executionId);
+        if (pendingRestarts.containsKey(executionId) || scheduledRestarts.containsKey(executionId)) {
+            log.info("Auto-restart already pending/scheduled for execution {}, ignoring duplicate request", executionId);
             return;
         }
 
@@ -188,7 +205,7 @@ public class StrategyRestartScheduler {
             return;
         }
 
-        log.info("Trade closed. Waiting for neutral market condition. [{}] execution={} (user={}), reason={}, " +
+        log.info("Trade closed. Waiting for neutral market event. [{}] execution={} (user={}), reason={}, " +
                  "strategyType={}, instrument={}, expiry={}",
                  tradingMode, executionId, execution.getUserId(), reason,
                  execution.getStrategyType(), execution.getInstrumentType(), execution.getExpiry());
@@ -196,85 +213,53 @@ public class StrategyRestartScheduler {
         // Build a StrategyRequest from the previous execution for the restart
         StrategyRequest request = buildRestartRequestFromExecution(execution);
 
-        // Start the neutral market polling loop
-        startNeutralMarketPolling(execution, request);
+        // Register as pending — MarketStateUpdater will publish events that we listen to
+        pendingRestarts.put(executionId, new PendingRestart(execution, request));
     }
 
     /**
-     * Start an async polling loop that checks neutral market conditions every
-     * {@code strategy.neutral-market-poll-interval-ms} (default 30s).
-     * When neutral is detected, waits {@code strategy.neutral-market-buffer-ms} (default 1 min)
-     * then places a new ATM straddle.
+     * React to market state events published by {@link MarketStateUpdater}.
+     * When a NEUTRAL event arrives for an instrument that has pending restarts,
+     * transitions those executions into the buffered execution phase.
      */
-    private void startNeutralMarketPolling(StrategyExecution execution, StrategyRequest request) {
-        String executionId = execution.getExecutionId();
-        String tradingMode = execution.getTradingMode();
-        String instrumentType = execution.getInstrumentType();
-        long pollIntervalMs = strategyConfig.getNeutralMarketPollIntervalMs();
-
-        // Schedule first poll after the poll interval
-        Instant firstPollTime = clock.instant().plusMillis(pollIntervalMs);
-
-        Runnable pollTask = new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    // Check if market hours are still valid
-                    ZonedDateTime now = ZonedDateTime.now(clock);
-                    if (!isWithinMarketHours(now)) {
-                        log.info("Market hours ended ({}) during neutral market polling for execution {}. Stopping poll.",
-                                now.toLocalTime(), executionId);
-                        scheduledRestarts.remove(executionId);
-                        return;
-                    }
-
-                    // Check neutral market condition (uses internal cache — max 4 API calls per 30s)
-                    boolean isNeutral = neutralMarketDetectorService.isMarketNeutral(instrumentType);
-
-                    if (isNeutral) {
-                        log.info("Neutral market detected. Buffer timer started. [{}] execution={}, instrument={}",
-                                tradingMode, executionId, instrumentType);
-
-                        // Remove the polling entry — we're moving to the buffer phase
-                        scheduledRestarts.remove(executionId);
-
-                        // Schedule the actual execution after the buffer period
-                        scheduleBufferedExecution(execution, request);
-                    } else {
-                        log.debug("[{}] Market not neutral for {} — continuing poll. execution={}",
-                                tradingMode, instrumentType, executionId);
-
-                        // Re-schedule the next poll
-                        rescheduleNextPoll(executionId, this);
-                    }
-                } catch (Exception e) {
-                    log.error("Error during neutral market poll for execution {}: {}",
-                            executionId, e.getMessage(), e);
-                    // Re-schedule despite error to avoid silently stopping the loop
-                    rescheduleNextPoll(executionId, this);
-                }
-            }
-        };
-
-        ScheduledFuture<?> future = taskScheduler.schedule(pollTask, firstPollTime);
-        scheduledRestarts.put(executionId, future);
-    }
-
-    /**
-     * Reschedule the next neutral market poll after the configured interval.
-     */
-    private void rescheduleNextPoll(String executionId, Runnable pollTask) {
-        // Only reschedule if the executionId is still tracked (not cancelled externally)
-        if (!scheduledRestarts.containsKey(executionId)) {
-            log.debug("Polling for execution {} was cancelled externally, not rescheduling", executionId);
+    @EventListener
+    public void onMarketStateEvent(MarketStateEvent event) {
+        if (!event.neutral()) {
+            log.debug("Market not neutral for {} (score={}/{}), {} pending restart(s) waiting",
+                    event.instrumentType(), event.score(), event.maxScore(), pendingRestarts.size());
             return;
         }
 
-        long pollIntervalMs = strategyConfig.getNeutralMarketPollIntervalMs();
-        Instant nextPollTime = clock.instant().plusMillis(pollIntervalMs);
+        // Check market hours at event time
+        ZonedDateTime now = ZonedDateTime.now(clock);
+        if (!isWithinMarketHours(now)) {
+            log.info("MarketStateEvent received outside market hours ({}), ignoring", now.toLocalTime());
+            return;
+        }
 
-        ScheduledFuture<?> future = taskScheduler.schedule(pollTask, nextPollTime);
-        scheduledRestarts.put(executionId, future);
+        // Find pending restarts matching this instrument (snapshot keys to avoid concurrent modification)
+        for (String executionId : List.copyOf(pendingRestarts.keySet())) {
+            PendingRestart pending = pendingRestarts.get(executionId);
+            if (pending == null) {
+                continue; // already consumed by another thread
+            }
+            StrategyExecution execution = pending.execution();
+
+            if (!event.instrumentType().equalsIgnoreCase(execution.getInstrumentType())) {
+                continue;
+            }
+
+            // Transition from pending → buffered execution
+            if (pendingRestarts.remove(executionId) == null) {
+                continue; // another thread already consumed this entry
+            }
+
+            log.info("Neutral market detected via event. Buffer timer started. [{}] execution={}, instrument={}, score={}/{}",
+                    execution.getTradingMode(), executionId, event.instrumentType(),
+                    event.score(), event.maxScore());
+
+            scheduleBufferedExecution(execution, pending.request());
+        }
     }
 
     /**
@@ -313,9 +298,10 @@ public class StrategyRestartScheduler {
                         execution.getInstrumentType());
                 if (!stillNeutral) {
                     log.info("[{}] Market no longer neutral after buffer period for execution {}. " +
-                             "Restarting polling loop.", tradingMode, executionId);
-                    // Go back to polling
-                    startNeutralMarketPolling(execution, request);
+                             "Re-registering as pending restart.", tradingMode, executionId);
+                    // Go back to waiting for the next neutral event
+                    scheduledRestarts.remove(executionId);
+                    pendingRestarts.put(executionId, new PendingRestart(execution, request));
                     return;
                 }
 
@@ -388,13 +374,17 @@ public class StrategyRestartScheduler {
      * @return true if a restart was cancelled, false if no restart was scheduled
      */
     public boolean cancelScheduledRestart(String executionId) {
+        boolean removed = pendingRestarts.remove(executionId) != null;
         ScheduledFuture<?> future = scheduledRestarts.remove(executionId);
         if (future != null) {
             boolean cancelled = future.cancel(false);
             log.info("Cancelled scheduled auto-restart for execution {}: {}", executionId, cancelled);
             return cancelled;
         }
-        return false;
+        if (removed) {
+            log.info("Removed pending auto-restart for execution {}", executionId);
+        }
+        return removed;
     }
 
     /**
@@ -411,6 +401,17 @@ public class StrategyRestartScheduler {
 
         int cancelledCount = 0;
 
+        // Cancel pending restarts (awaiting neutral event)
+        for (String executionId : List.copyOf(pendingRestarts.keySet())) {
+            PendingRestart pending = pendingRestarts.get(executionId);
+            if (pending != null && userId.equals(pending.execution().getUserId())) {
+                pendingRestarts.remove(executionId);
+                cancelledCount++;
+                log.debug("Removed pending restart for execution {} (user={})", executionId, userId);
+            }
+        }
+
+        // Cancel scheduled (buffered) restarts
         for (String executionId : List.copyOf(scheduledRestarts.keySet())) {
             StrategyExecution execution = strategyService.getStrategyByIdInternal(executionId);
             if (execution != null && userId.equals(execution.getUserId())) {
@@ -426,7 +427,7 @@ public class StrategyRestartScheduler {
         }
 
         if (cancelledCount > 0) {
-            log.info("Cancelled {} scheduled auto-restarts for user {}", cancelledCount, userId);
+            log.info("Cancelled {} auto-restarts (pending + scheduled) for user {}", cancelledCount, userId);
         }
 
         return cancelledCount;
@@ -438,7 +439,9 @@ public class StrategyRestartScheduler {
      * @return count of cancelled restarts
      */
     public int cancelAllScheduledRestarts() {
-        int cancelledCount = 0;
+        int cancelledCount = pendingRestarts.size();
+        pendingRestarts.clear();
+
         for (Map.Entry<String, ScheduledFuture<?>> entry : scheduledRestarts.entrySet()) {
             if (entry.getValue().cancel(false)) {
                 cancelledCount++;
@@ -448,26 +451,26 @@ public class StrategyRestartScheduler {
         scheduledRestarts.clear();
 
         if (cancelledCount > 0) {
-            log.info("Cancelled {} scheduled auto-restarts (all users)", cancelledCount);
+            log.info("Cancelled {} auto-restarts (pending + scheduled, all users)", cancelledCount);
         }
 
         return cancelledCount;
     }
 
     /**
-     * Get count of currently scheduled restarts.
+     * Get count of currently pending + scheduled restarts.
      *
-     * @return number of scheduled restarts
+     * @return number of pending and scheduled restarts
      */
     public int getScheduledRestartsCount() {
-        return scheduledRestarts.size();
+        return pendingRestarts.size() + scheduledRestarts.size();
     }
 
     /**
-     * Get count of scheduled restarts for a specific user.
+     * Get count of pending + scheduled restarts for a specific user.
      *
      * @param userId The user ID to check
-     * @return number of scheduled restarts for this user
+     * @return number of pending and scheduled restarts for this user
      */
     public int getScheduledRestartsCountForUser(String userId) {
         if (userId == null || userId.isBlank()) {
@@ -475,6 +478,15 @@ public class StrategyRestartScheduler {
         }
 
         int count = 0;
+
+        // Count pending restarts
+        for (PendingRestart pending : pendingRestarts.values()) {
+            if (userId.equals(pending.execution().getUserId())) {
+                count++;
+            }
+        }
+
+        // Count scheduled (buffered) restarts
         for (String executionId : scheduledRestarts.keySet()) {
             StrategyExecution execution = strategyService.getStrategy(executionId);
             if (execution != null && userId.equals(execution.getUserId())) {

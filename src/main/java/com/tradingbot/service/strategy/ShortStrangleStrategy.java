@@ -9,6 +9,7 @@ import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.SlTargetMode;
+import com.tradingbot.service.MarketDataEngine;
 import com.tradingbot.service.StrategyService;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
@@ -116,8 +117,9 @@ public class ShortStrangleStrategy extends BaseStrategy {
                                   VolatilityFilterService volatilityFilterService,
                                   VolatilityConfig volatilityConfig,
                                   StraddleExitHandler exitHandler,
-                                  MonitoringSetupHelper monitoringSetupHelper) {
-        super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService);
+                                  MonitoringSetupHelper monitoringSetupHelper,
+                                  MarketDataEngine marketDataEngine) {
+        super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService, marketDataEngine);
         this.webSocketService = webSocketService;
         this.strategyConfig = strategyConfig;
         this.strategyService = strategyService;

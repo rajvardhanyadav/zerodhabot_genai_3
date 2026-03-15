@@ -6,6 +6,7 @@ import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.StrategyCompletionReason;
+import com.tradingbot.service.MarketDataEngine;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.service.greeks.DeltaCacheService;
@@ -70,8 +71,9 @@ public class ATMStraddleStrategy extends BaseStrategy {
                                Map<String, Integer> lotSizeCache,
                                WebSocketService webSocketService,
                                StrategyConfig strategyConfig,
-                               DeltaCacheService deltaCacheService) {
-        super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService);
+                               DeltaCacheService deltaCacheService,
+                               MarketDataEngine marketDataEngine) {
+        super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService, marketDataEngine);
         this.webSocketService = webSocketService;
         this.strategyConfig = strategyConfig;
     }

@@ -1,6 +1,7 @@
 package com.tradingbot.service.strategy;
 
 import com.tradingbot.config.StrategyConfig;
+import com.tradingbot.model.MarketStateEvent;
 import com.tradingbot.model.StrategyCompletionReason;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyStatus;
@@ -21,12 +22,13 @@ import java.time.ZoneId;
 import java.util.Optional;
 import java.util.concurrent.ScheduledFuture;
 
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 /**
- * Test that StrategyRestartScheduler correctly schedules restarts for paper and live modes
- * based on the execution's stored trading mode and neutral market detection.
+ * Test that StrategyRestartScheduler correctly registers pending restarts and
+ * reacts to MarketStateEvents for the event-driven neutral market detection.
  */
 class StrategyRestartSchedulerTest {
 
@@ -73,8 +75,10 @@ class StrategyRestartSchedulerTest {
         }
     }
 
+    // ==================== PENDING RESTART REGISTRATION TESTS ====================
+
     @Test
-    void testPaperModeCompletionSchedulesRestartWhenEnabled() {
+    void testPaperModeCompletionRegistersPendingRestartWhenEnabled() {
         // Given: Auto-restart enabled globally and for paper mode
         when(strategyConfig.isAutoRestartEnabled()).thenReturn(true);
         when(strategyConfig.isAutoRestartPaperEnabled()).thenReturn(true);
@@ -85,16 +89,17 @@ class StrategyRestartSchedulerTest {
         execution.setStatus(StrategyStatus.COMPLETED);
         execution.setCompletionReason(StrategyCompletionReason.TARGET_HIT);
 
-        // When: Event listener is invoked
+        // When: Completion event arrives
         StrategyService.StrategyCompletionEvent event = new StrategyService.StrategyCompletionEvent(this, execution);
         scheduler.onStrategyCompletion(event);
 
-        // Then: Scheduler should schedule a neutral market polling task
-        verify(taskScheduler, times(1)).schedule(any(Runnable.class), any(java.time.Instant.class));
+        // Then: Execution should be registered as pending (no polling task scheduled)
+        assertEquals(1, scheduler.getScheduledRestartsCount());
+        verify(taskScheduler, never()).schedule(any(Runnable.class), any(Instant.class));
     }
 
     @Test
-    void testPaperModeCompletionDoesNotScheduleWhenDisabled() {
+    void testPaperModeCompletionDoesNotRegisterWhenDisabled() {
         // Given: Auto-restart enabled globally but disabled for paper mode
         when(strategyConfig.isAutoRestartEnabled()).thenReturn(true);
         when(strategyConfig.isAutoRestartPaperEnabled()).thenReturn(false);
@@ -104,16 +109,16 @@ class StrategyRestartSchedulerTest {
         execution.setStatus(StrategyStatus.COMPLETED);
         execution.setCompletionReason(StrategyCompletionReason.STOPLOSS_HIT);
 
-        // When: Event listener is invoked
+        // When: Completion event arrives
         StrategyService.StrategyCompletionEvent event = new StrategyService.StrategyCompletionEvent(this, execution);
         scheduler.onStrategyCompletion(event);
 
-        // Then: Scheduler should NOT schedule a task
-        verify(taskScheduler, never()).schedule(any(Runnable.class), any(java.time.Instant.class));
+        // Then: Nothing registered
+        assertEquals(0, scheduler.getScheduledRestartsCount());
     }
 
     @Test
-    void testLiveModeCompletionSchedulesRestartWhenEnabled() {
+    void testLiveModeCompletionRegistersPendingRestartWhenEnabled() {
         // Given: Auto-restart enabled globally and for live mode
         when(strategyConfig.isAutoRestartEnabled()).thenReturn(true);
         when(strategyConfig.isAutoRestartLiveEnabled()).thenReturn(true);
@@ -124,16 +129,16 @@ class StrategyRestartSchedulerTest {
         execution.setStatus(StrategyStatus.COMPLETED);
         execution.setCompletionReason(StrategyCompletionReason.TARGET_HIT);
 
-        // When: Event listener is invoked
+        // When: Completion event arrives
         StrategyService.StrategyCompletionEvent event = new StrategyService.StrategyCompletionEvent(this, execution);
         scheduler.onStrategyCompletion(event);
 
-        // Then: Scheduler should schedule a neutral market polling task
-        verify(taskScheduler, times(1)).schedule(any(Runnable.class), any(java.time.Instant.class));
+        // Then: Execution should be registered as pending
+        assertEquals(1, scheduler.getScheduledRestartsCount());
     }
 
     @Test
-    void testManualStopDoesNotScheduleRestart() {
+    void testManualStopDoesNotRegisterRestart() {
         // Given: Auto-restart enabled for paper
         when(strategyConfig.isAutoRestartEnabled()).thenReturn(true);
         when(strategyConfig.isAutoRestartPaperEnabled()).thenReturn(true);
@@ -143,16 +148,16 @@ class StrategyRestartSchedulerTest {
         execution.setStatus(StrategyStatus.COMPLETED);
         execution.setCompletionReason(StrategyCompletionReason.MANUAL_STOP);
 
-        // When: Event listener is invoked
+        // When: Completion event arrives
         StrategyService.StrategyCompletionEvent event = new StrategyService.StrategyCompletionEvent(this, execution);
         scheduler.onStrategyCompletion(event);
 
-        // Then: Scheduler should NOT schedule (manual stop not eligible)
-        verify(taskScheduler, never()).schedule(any(Runnable.class), any(java.time.Instant.class));
+        // Then: Nothing registered (manual stop not eligible)
+        assertEquals(0, scheduler.getScheduledRestartsCount());
     }
 
     @Test
-    void testMaxRestartLimitPreventsScheduling() {
+    void testMaxRestartLimitPreventsRegistration() {
         // Given: Max restarts = 2, execution already restarted 2 times
         when(strategyConfig.isAutoRestartEnabled()).thenReturn(true);
         when(strategyConfig.isAutoRestartPaperEnabled()).thenReturn(true);
@@ -163,13 +168,15 @@ class StrategyRestartSchedulerTest {
         execution.setCompletionReason(StrategyCompletionReason.TARGET_HIT);
         execution.setAutoRestartCount(2); // Already at limit
 
-        // When: Event listener is invoked
+        // When: Completion event arrives
         StrategyService.StrategyCompletionEvent event = new StrategyService.StrategyCompletionEvent(this, execution);
         scheduler.onStrategyCompletion(event);
 
-        // Then: Scheduler should NOT schedule (limit reached)
-        verify(taskScheduler, never()).schedule(any(Runnable.class), any(java.time.Instant.class));
+        // Then: Nothing registered (limit reached)
+        assertEquals(0, scheduler.getScheduledRestartsCount());
     }
+
+    // ==================== DAILY P&L GATE TESTS ====================
 
     @Test
     void testDailyPnlGateBlocksRestartForSellATMStraddle() {
@@ -191,8 +198,8 @@ class StrategyRestartSchedulerTest {
         // When
         scheduler.onStrategyCompletion(new StrategyService.StrategyCompletionEvent(this, execution));
 
-        // Then: Restart should NOT be scheduled and bot should be stopped
-        verify(taskScheduler, never()).schedule(any(Runnable.class), any(java.time.Instant.class));
+        // Then: Restart should NOT be registered and bot should be stopped
+        assertEquals(0, scheduler.getScheduledRestartsCount());
         verify(botStatusService, times(1)).markStopped();
     }
 
@@ -240,7 +247,7 @@ class StrategyRestartSchedulerTest {
         scheduler.onStrategyCompletion(new StrategyService.StrategyCompletionEvent(this, execution));
 
         // Then: Restart blocked, bot stopped
-        verify(taskScheduler, never()).schedule(any(Runnable.class), any(java.time.Instant.class));
+        assertEquals(0, scheduler.getScheduledRestartsCount());
         verify(botStatusService, times(1)).markStopped();
     }
 
@@ -262,8 +269,132 @@ class StrategyRestartSchedulerTest {
         // When
         scheduler.onStrategyCompletion(new StrategyService.StrategyCompletionEvent(this, execution));
 
-        // Then: Gate should NOT block — bot should NOT be stopped.
+        // Then: Gate should NOT block — bot should NOT be stopped. Restart is registered.
         verify(botStatusService, never()).markStopped();
+        assertEquals(1, scheduler.getScheduledRestartsCount());
+    }
+
+    // ==================== MARKET STATE EVENT TESTS ====================
+
+    @Test
+    void testNeutralMarketEventTriggersBufferedExecution() {
+        // Given: A pending restart is registered
+        when(strategyConfig.isAutoRestartEnabled()).thenReturn(true);
+        when(strategyConfig.isAutoRestartPaperEnabled()).thenReturn(true);
+        when(strategyConfig.getMaxAutoRestarts()).thenReturn(0);
+
+        StrategyExecution execution = createExecution("exec-10", "user-10", StrategyConstants.TRADING_MODE_PAPER);
+        execution.setStatus(StrategyStatus.COMPLETED);
+        execution.setCompletionReason(StrategyCompletionReason.TARGET_HIT);
+
+        scheduler.onStrategyCompletion(new StrategyService.StrategyCompletionEvent(this, execution));
+        assertEquals(1, scheduler.getScheduledRestartsCount());
+
+        // When: A neutral market event is published for the matching instrument
+        MarketStateEvent neutralEvent = new MarketStateEvent(
+                "NIFTY", true, 8, 10, null, Instant.now());
+        scheduler.onMarketStateEvent(neutralEvent);
+
+        // Then: Pending restart consumed, buffered execution scheduled via taskScheduler
+        verify(taskScheduler, times(1)).schedule(any(Runnable.class), any(Instant.class));
+    }
+
+    @Test
+    void testNonNeutralMarketEventDoesNotTriggerExecution() {
+        // Given: A pending restart is registered
+        when(strategyConfig.isAutoRestartEnabled()).thenReturn(true);
+        when(strategyConfig.isAutoRestartPaperEnabled()).thenReturn(true);
+        when(strategyConfig.getMaxAutoRestarts()).thenReturn(0);
+
+        StrategyExecution execution = createExecution("exec-11", "user-11", StrategyConstants.TRADING_MODE_PAPER);
+        execution.setStatus(StrategyStatus.COMPLETED);
+        execution.setCompletionReason(StrategyCompletionReason.TARGET_HIT);
+
+        scheduler.onStrategyCompletion(new StrategyService.StrategyCompletionEvent(this, execution));
+        assertEquals(1, scheduler.getScheduledRestartsCount());
+
+        // When: A non-neutral market event is published
+        MarketStateEvent nonNeutralEvent = new MarketStateEvent(
+                "NIFTY", false, 4, 10, null, Instant.now());
+        scheduler.onMarketStateEvent(nonNeutralEvent);
+
+        // Then: No task scheduled, pending restart still waiting
+        verify(taskScheduler, never()).schedule(any(Runnable.class), any(Instant.class));
+        assertEquals(1, scheduler.getScheduledRestartsCount());
+    }
+
+    @Test
+    void testNeutralEventForDifferentInstrumentDoesNotTrigger() {
+        // Given: A pending restart for NIFTY
+        when(strategyConfig.isAutoRestartEnabled()).thenReturn(true);
+        when(strategyConfig.isAutoRestartPaperEnabled()).thenReturn(true);
+        when(strategyConfig.getMaxAutoRestarts()).thenReturn(0);
+
+        StrategyExecution execution = createExecution("exec-12", "user-12", StrategyConstants.TRADING_MODE_PAPER);
+        execution.setInstrumentType("NIFTY");
+        execution.setStatus(StrategyStatus.COMPLETED);
+        execution.setCompletionReason(StrategyCompletionReason.TARGET_HIT);
+
+        scheduler.onStrategyCompletion(new StrategyService.StrategyCompletionEvent(this, execution));
+        assertEquals(1, scheduler.getScheduledRestartsCount());
+
+        // When: A neutral event for BANKNIFTY (different instrument)
+        MarketStateEvent bankNiftyEvent = new MarketStateEvent(
+                "BANKNIFTY", true, 8, 10, null, Instant.now());
+        scheduler.onMarketStateEvent(bankNiftyEvent);
+
+        // Then: NIFTY pending restart not consumed
+        verify(taskScheduler, never()).schedule(any(Runnable.class), any(Instant.class));
+        assertEquals(1, scheduler.getScheduledRestartsCount());
+    }
+
+    @Test
+    void testCancelScheduledRestartRemovesPending() {
+        // Given: A pending restart is registered
+        when(strategyConfig.isAutoRestartEnabled()).thenReturn(true);
+        when(strategyConfig.isAutoRestartPaperEnabled()).thenReturn(true);
+        when(strategyConfig.getMaxAutoRestarts()).thenReturn(0);
+
+        StrategyExecution execution = createExecution("exec-13", "user-13", StrategyConstants.TRADING_MODE_PAPER);
+        execution.setStatus(StrategyStatus.COMPLETED);
+        execution.setCompletionReason(StrategyCompletionReason.TARGET_HIT);
+
+        scheduler.onStrategyCompletion(new StrategyService.StrategyCompletionEvent(this, execution));
+        assertEquals(1, scheduler.getScheduledRestartsCount());
+
+        // When: Cancel the pending restart
+        boolean cancelled = scheduler.cancelScheduledRestart("exec-13");
+
+        // Then: Pending restart removed
+        assertTrue(cancelled);
+        assertEquals(0, scheduler.getScheduledRestartsCount());
+    }
+
+    @Test
+    void testCancelAllClearsPendingAndScheduled() {
+        // Given: Two pending restarts registered
+        when(strategyConfig.isAutoRestartEnabled()).thenReturn(true);
+        when(strategyConfig.isAutoRestartPaperEnabled()).thenReturn(true);
+        when(strategyConfig.getMaxAutoRestarts()).thenReturn(0);
+
+        StrategyExecution exec1 = createExecution("exec-14", "user-14", StrategyConstants.TRADING_MODE_PAPER);
+        exec1.setStatus(StrategyStatus.COMPLETED);
+        exec1.setCompletionReason(StrategyCompletionReason.TARGET_HIT);
+
+        StrategyExecution exec2 = createExecution("exec-15", "user-15", StrategyConstants.TRADING_MODE_PAPER);
+        exec2.setStatus(StrategyStatus.COMPLETED);
+        exec2.setCompletionReason(StrategyCompletionReason.STOPLOSS_HIT);
+
+        scheduler.onStrategyCompletion(new StrategyService.StrategyCompletionEvent(this, exec1));
+        scheduler.onStrategyCompletion(new StrategyService.StrategyCompletionEvent(this, exec2));
+        assertEquals(2, scheduler.getScheduledRestartsCount());
+
+        // When: Cancel all
+        int cancelledCount = scheduler.cancelAllScheduledRestarts();
+
+        // Then: All cleared
+        assertEquals(2, cancelledCount);
+        assertEquals(0, scheduler.getScheduledRestartsCount());
     }
 
     private StrategyExecution createExecution(String executionId, String userId, String tradingMode) {

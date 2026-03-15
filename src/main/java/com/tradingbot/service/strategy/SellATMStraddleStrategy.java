@@ -10,6 +10,7 @@ import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.SlTargetMode;
 import com.tradingbot.model.StrategyExecution;
+import com.tradingbot.service.MarketDataEngine;
 import com.tradingbot.service.StrategyService;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
@@ -119,8 +120,9 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                    StraddleExitHandler exitHandler,
                                    LegReplacementHandler legReplacementHandler,
                                    MonitoringSetupHelper monitoringSetupHelper,
-                                   NeutralMarketDetectorService neutralMarketDetectorService) {
-        super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService);
+                                   NeutralMarketDetectorService neutralMarketDetectorService,
+                                   MarketDataEngine marketDataEngine) {
+        super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService, marketDataEngine);
         this.webSocketService = webSocketService;
         this.strategyConfig = strategyConfig;
         this.strategyService = strategyService;

@@ -2,6 +2,7 @@ package com.tradingbot.service.strategy;
 
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.StrategyRequest;
+import com.tradingbot.service.MarketDataEngine;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
 import com.tradingbot.service.greeks.DeltaCacheService;
@@ -15,9 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 import static com.tradingbot.service.TradingConstants.*;
 
@@ -35,6 +34,7 @@ public abstract class BaseStrategy implements TradingStrategy {
     protected final UnifiedTradingService unifiedTradingService;
     protected final Map<String, Integer> lotSizeCache;
     protected final DeltaCacheService deltaCacheService;
+    protected final MarketDataEngine marketDataEngine;
     private final Map<String, List<Instrument>> instrumentCache = new HashMap<>();
 
     // HFT: Flag to enable/disable cache usage (default: enabled)
@@ -66,20 +66,33 @@ public abstract class BaseStrategy implements TradingStrategy {
     private static final ThreadLocal<Calendar> CALENDAR_DEFAULT = ThreadLocal.withInitial(Calendar::getInstance);
 
     /**
-     * Constructor for BaseStrategy
+     * Full constructor with MarketDataEngine support.
      * @param tradingService Core trading service for API calls
      * @param unifiedTradingService Unified service for paper/live trading
      * @param lotSizeCache Cache for lot sizes
      * @param deltaCacheService Service for pre-computed delta values (can be null for backward compatibility)
+     * @param marketDataEngine Centralized market data engine (can be null for backward compatibility)
+     */
+    protected BaseStrategy(TradingService tradingService,
+                          UnifiedTradingService unifiedTradingService,
+                          Map<String, Integer> lotSizeCache,
+                          DeltaCacheService deltaCacheService,
+                          MarketDataEngine marketDataEngine) {
+        this.tradingService = tradingService;
+        this.unifiedTradingService = unifiedTradingService;
+        this.lotSizeCache = lotSizeCache;
+        this.deltaCacheService = deltaCacheService;
+        this.marketDataEngine = marketDataEngine;
+    }
+
+    /**
+     * Constructor with DeltaCacheService but no MarketDataEngine (backward compatible).
      */
     protected BaseStrategy(TradingService tradingService,
                           UnifiedTradingService unifiedTradingService,
                           Map<String, Integer> lotSizeCache,
                           DeltaCacheService deltaCacheService) {
-        this.tradingService = tradingService;
-        this.unifiedTradingService = unifiedTradingService;
-        this.lotSizeCache = lotSizeCache;
-        this.deltaCacheService = deltaCacheService;
+        this(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService, null);
     }
 
     /**
@@ -88,13 +101,27 @@ public abstract class BaseStrategy implements TradingStrategy {
     protected BaseStrategy(TradingService tradingService,
                           UnifiedTradingService unifiedTradingService,
                           Map<String, Integer> lotSizeCache) {
-        this(tradingService, unifiedTradingService, lotSizeCache, null);
+        this(tradingService, unifiedTradingService, lotSizeCache, null, null);
     }
 
     /**
-     * Get current spot price for the instrument
+     * Get current spot price for the instrument.
+     *
+     * HFT OPTIMIZATION: Reads from MarketDataEngine cache first (O(1), sub-microsecond).
+     * Falls back to live API call only if engine is disabled or cache is stale.
      */
     protected double getCurrentSpotPrice(String instrumentType) throws KiteException, IOException {
+        // Try MarketDataEngine cache first — zero-latency path
+        if (marketDataEngine != null && marketDataEngine.isWarmedUp()) {
+            Optional<Double> cached = marketDataEngine.getIndexPrice(instrumentType);
+            if (cached.isPresent()) {
+                log.debug("Spot price from MarketDataEngine cache: {} = {}", instrumentType, cached.get());
+                return cached.get();
+            }
+            log.debug("MarketDataEngine cache miss for spot price {}, falling back to API", instrumentType);
+        }
+
+        // Legacy fallback: live API call
         String symbol = switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> "NSE:NIFTY 50";
             case "BANKNIFTY" -> "NSE:NIFTY BANK";
@@ -137,11 +164,21 @@ public abstract class BaseStrategy implements TradingStrategy {
         double strikeInterval = getStrikeInterval(instrumentType);
         double approximateATM = Math.round(spotPrice / strikeInterval) * strikeInterval;
 
-        // HFT OPTIMIZATION: Try cache first for instant response
+        // ==================== TIER 1: MarketDataEngine (pre-computed, sub-microsecond) ====================
+        if (marketDataEngine != null && marketDataEngine.isWarmedUp()) {
+            Optional<Double> engineStrike = marketDataEngine.getPrecomputedATMStrike(instrumentType);
+            if (engineStrike.isPresent()) {
+                log.debug("Using MarketDataEngine ATM strike: {} (approximate ATM: {})", engineStrike.get(), approximateATM);
+                return engineStrike.get();
+            }
+            log.debug("MarketDataEngine ATM strike miss for {}, trying DeltaCacheService", instrumentType);
+        }
+
+        // ==================== TIER 2: DeltaCacheService (30s refresh cycle, <10ms) ====================
         if (USE_DELTA_CACHE && deltaCacheService != null) {
             Optional<Double> cachedStrike = deltaCacheService.getCachedATMStrike(instrumentType, expiry);
             if (cachedStrike.isPresent()) {
-                log.debug("Using cached ATM strike: {} (approximate ATM: {})", cachedStrike.get(), approximateATM);
+                log.debug("Using DeltaCacheService ATM strike: {} (approximate ATM: {})", cachedStrike.get(), approximateATM);
                 return cachedStrike.get();
             }
 
@@ -160,7 +197,7 @@ public abstract class BaseStrategy implements TradingStrategy {
             }
         }
 
-        // Fallback to synchronous calculation if cache service not available
+        // ==================== TIER 3: Synchronous fallback (legacy, ~3-4 seconds) ====================
         return getATMStrikeByDeltaSynchronous(spotPrice, instrumentType, expiry, approximateATM, strikeInterval);
     }
 
@@ -232,6 +269,19 @@ public abstract class BaseStrategy implements TradingStrategy {
                                        double targetDelta, String optionType) {
         double strikeInterval = getStrikeInterval(instrumentType);
         double approximateATM = Math.round(spotPrice / strikeInterval) * strikeInterval;
+
+        // ==================== TIER 1: MarketDataEngine (pre-computed, sub-microsecond) ====================
+        if (marketDataEngine != null && marketDataEngine.isWarmedUp()) {
+            Optional<Double> engineStrike = marketDataEngine.getPrecomputedStrikeByDelta(
+                    instrumentType, targetDelta, optionType);
+            if (engineStrike.isPresent()) {
+                log.debug("Using MarketDataEngine strike for {}Δ={}: {}", optionType, targetDelta, engineStrike.get());
+                return engineStrike.get();
+            }
+            log.debug("MarketDataEngine miss for {} Δ={} {}, falling back to computation", instrumentType, targetDelta, optionType);
+        }
+
+        // ==================== TIER 2: Synchronous delta computation (legacy) ====================
 
         // Dynamic range based on target delta — far OTM needs wider scan
         int strikeRange;
@@ -858,12 +908,25 @@ public abstract class BaseStrategy implements TradingStrategy {
     }
 
     /**
-     * Get option instruments for given index and expiry
-     * HFT OPTIMIZED: Uses indexed loop instead of streams to avoid iterator allocation
+     * Get option instruments for given index and expiry.
+     *
+     * HFT OPTIMIZATION: Reads from MarketDataEngine option chain cache first.
+     * Falls back to live API call only if engine is disabled or cache is stale.
      */
     protected List<Instrument> getOptionInstruments(String instrumentType, String expiry)
             throws KiteException, IOException {
 
+        // Try MarketDataEngine cache first — zero-latency path
+        if (marketDataEngine != null && marketDataEngine.isWarmedUp()) {
+            Optional<List<Instrument>> cached = marketDataEngine.getOptionChain(instrumentType, expiry);
+            if (cached.isPresent() && !cached.get().isEmpty()) {
+                log.debug("Option chain from MarketDataEngine cache: {} {} instruments={}", instrumentType, expiry, cached.get().size());
+                return cached.get();
+            }
+            log.debug("MarketDataEngine option chain miss for {} {}, falling back to API", instrumentType, expiry);
+        }
+
+        // Legacy fallback: live API call
         List<Instrument> allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
 
         final String namePrefix = switch (instrumentType.toUpperCase()) {

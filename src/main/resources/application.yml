@@ -152,9 +152,10 @@ volatility:
   auto-restart-paper-enabled: true
 
   # ==================== NEUTRAL MARKET RESTART CONFIGURATION ====================
-  # After a trade exits (target/SL hit), the system polls for neutral market conditions
-  # before placing the next ATM straddle. No dependency on 5-minute candle boundaries.
-  neutral-market-poll-interval-ms: 30000   # Check every 30 seconds (default)
+  # MarketStateUpdater evaluates neutral market conditions at this interval and
+  # publishes MarketStateEvent. StrategyRestartScheduler listens for neutral events
+  # to trigger buffered strategy re-entry. No per-execution polling loops.
+  neutral-market-poll-interval-ms: 30000   # Evaluation cycle every 30 seconds (default)
   neutral-market-buffer-ms: 60000          # Wait 1 minute after neutral detected (default)
 
   # ==================== DAILY P&L THRESHOLD CONFIGURATION ====================
@@ -223,6 +224,46 @@ neutral-market:
   # Caching
   cache-ttl-ms: 30000                # Cache result for 30 seconds
   allow-on-data-unavailable: true    # Fail-safe: allow trade if data fails
+
+# ==================== MARKET DATA ENGINE CONFIGURATION ====================
+# Centralized, high-performance background service that pre-computes and caches
+# all market data so strategy execution reads from cache only (zero-latency path).
+# When enabled, spot price fetch, delta calculation, and option chain lookups
+# are pre-computed on scheduled refresh cycles — eliminating the 10-15 second
+# inline computation bottleneck during strategy execution.
+market-data-engine:
+  # Master switch: enable/disable the engine (true = use engine, false = legacy inline API calls)
+  enabled: true
+
+  # Spot price refresh interval (ms). NIFTY/BANKNIFTY prices updated at this rate.
+  # Tighter = more accurate ATM strike, but costs more API calls.
+  spot-price-refresh-ms: 1000    # 1 second
+
+  # Option chain refresh interval (ms). Instruments are static intraday.
+  option-chain-refresh-ms: 60000  # 60 seconds
+
+  # Delta pre-computation refresh interval (ms). ATM strike + per-strike deltas.
+  # This is the key optimization: replaces the 10-15 second inline computation.
+  delta-refresh-ms: 5000          # 5 seconds
+
+  # VWAP refresh interval (ms).
+  vwap-refresh-ms: 5000           # 5 seconds
+
+  # Candle data refresh interval (ms).
+  candle-refresh-ms: 60000        # 60 seconds
+
+  # Cache TTLs — how long data is considered fresh for strategy consumption
+  spot-price-ttl-ms: 2000         # 2 seconds (tight for ATM accuracy)
+  option-chain-ttl-ms: 120000     # 2 minutes (instruments are static)
+  delta-ttl-ms: 10000             # 10 seconds (allows 2 missed refresh cycles)
+  vwap-ttl-ms: 10000              # 10 seconds
+  candle-ttl-ms: 120000           # 2 minutes
+
+  # Background thread pool size
+  thread-pool-size: 4
+
+  # Supported instruments (comma-separated)
+  supported-instruments: NIFTY,BANKNIFTY
 
 
 # Historical Replay Configuration

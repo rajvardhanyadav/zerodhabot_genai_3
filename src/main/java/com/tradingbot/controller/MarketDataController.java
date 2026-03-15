@@ -1,6 +1,7 @@
 package com.tradingbot.controller;
 
 import com.tradingbot.dto.ApiResponse;
+import com.tradingbot.service.MarketDataEngine;
 import com.tradingbot.service.TradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.*;
@@ -8,7 +9,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,12 +24,57 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/market")
-@RequiredArgsConstructor
 @Slf4j
 @Tag(name = "Market Data", description = "Market data and quotes endpoints")
 public class MarketDataController {
 
     private final TradingService tradingService;
+    private final MarketDataEngine marketDataEngine;
+
+    public MarketDataController(TradingService tradingService, MarketDataEngine marketDataEngine) {
+        this.tradingService = tradingService;
+        this.marketDataEngine = marketDataEngine;
+    }
+
+    // ==================== MARKET DATA ENGINE ENDPOINTS ====================
+
+    @GetMapping("/engine/status")
+    @Operation(summary = "Get MarketDataEngine status and cache statistics",
+               description = "Returns current engine state, cache hit/miss rates, per-instrument spot prices, " +
+                       "pre-computed ATM strikes, delta values, VWAP, and data freshness metrics.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Engine status fetched")
+    })
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getEngineStatus() {
+        Map<String, Object> stats = marketDataEngine.getCacheStats();
+        return ResponseEntity.ok(ApiResponse.success(stats));
+    }
+
+    @GetMapping("/engine/spot/{instrumentType}")
+    @Operation(summary = "Get cached spot price from MarketDataEngine",
+               description = "Returns the pre-computed spot price from the engine cache. " +
+                       "Returns 404 if cache is cold or stale.")
+    public ResponseEntity<ApiResponse<Double>> getCachedSpotPrice(
+            @PathVariable String instrumentType) {
+        return marketDataEngine.getIndexPrice(instrumentType)
+                .map(price -> ResponseEntity.ok(ApiResponse.success(price)))
+                .orElse(ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(ApiResponse.error("Spot price not in cache for: " + instrumentType)));
+    }
+
+    @GetMapping("/engine/atm-strike/{instrumentType}")
+    @Operation(summary = "Get pre-computed ATM strike from MarketDataEngine",
+               description = "Returns the pre-computed delta-based ATM strike. " +
+                       "This is the value strategy execution uses — zero latency.")
+    public ResponseEntity<ApiResponse<Double>> getCachedATMStrike(
+            @PathVariable String instrumentType) {
+        return marketDataEngine.getPrecomputedATMStrike(instrumentType)
+                .map(strike -> ResponseEntity.ok(ApiResponse.success(strike)))
+                .orElse(ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(ApiResponse.error("ATM strike not in cache for: " + instrumentType)));
+    }
+
+    // ==================== ORIGINAL ENDPOINTS ====================
 
     @GetMapping("/quote")
     @Operation(summary = "Get quote for instruments",
