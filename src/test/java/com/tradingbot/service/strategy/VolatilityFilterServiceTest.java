@@ -45,6 +45,8 @@ class VolatilityFilterServiceTest {
         volatilityConfig.setVixInstrumentToken(VIX_TOKEN);
         volatilityConfig.setAbsoluteThreshold(new BigDecimal("12.5"));
         volatilityConfig.setPercentageChangeThreshold(new BigDecimal("0.3"));
+        volatilityConfig.setSpikeThresholdPct(new BigDecimal("1.0"));
+        volatilityConfig.setMaxVixAbovePrevClosePct(new BigDecimal("5.0"));
         volatilityConfig.setBacktestEnabled(false);
         volatilityConfig.setAllowOnDataUnavailable(true);
         volatilityConfig.setCacheTtlMs(60000);
@@ -82,131 +84,113 @@ class VolatilityFilterServiceTest {
     }
 
     @Nested
-    @DisplayName("Rule 1: VIX Above Previous Close Tests")
-    class VixAbovePreviousCloseTests {
+    @DisplayName("AND-based Rules: All Must Pass for Seller")
+    class AndBasedRulesTests {
 
         @Test
-        @DisplayName("Should allow trade when current VIX > previous day close")
-        void shouldAllowWhenVixAbovePreviousClose() throws KiteException, IOException {
-            // Current VIX = 13.5, Previous close = 12.0
-            mockLTP(13.5);
-            mockPreviousDayClose(12.0);
-            mockFiveMinuteAgoVix(13.4); // Small increase, but below threshold
-
-            volatilityFilterService.clearCache();
-            VolatilityFilterService.VolatilityFilterResult result =
-                    volatilityFilterService.shouldAllowTrade(false);
-
-            assertTrue(result.allowed());
-            assertTrue(result.passedRules().stream()
-                    .anyMatch(r -> r.contains("VIX_ABOVE_PREV_CLOSE")));
-        }
-    }
-
-    @Nested
-    @DisplayName("Rule 2: VIX Above Absolute Threshold Tests")
-    class VixAboveThresholdTests {
-
-        @Test
-        @DisplayName("Should allow trade when current VIX > absolute threshold")
-        void shouldAllowWhenVixAboveThreshold() throws KiteException, IOException {
-            // Current VIX = 14.0, threshold = 12.5
+        @DisplayName("Should allow when VIX >= threshold, not spiking, not escalating (all rules pass)")
+        void shouldAllowWhenAllRulesPass() throws KiteException, IOException {
+            // VIX = 14.0 (above 12.5), prev close = 13.5 (VIX only ~3.7% above = below 5%)
+            // 5-min ago = 13.9 (change = ~0.7% = below 1.0%)
             mockLTP(14.0);
-            mockPreviousDayClose(15.0); // Higher than current (rule 1 fails)
-            mockFiveMinuteAgoVix(13.98); // Small change (rule 3 fails)
+            mockPreviousDayClose(13.5);
+            mockFiveMinuteAgoVix(13.9);
 
             volatilityFilterService.clearCache();
             VolatilityFilterService.VolatilityFilterResult result =
                     volatilityFilterService.shouldAllowTrade(false);
 
-            assertTrue(result.allowed());
-            assertTrue(result.passedRules().stream()
-                    .anyMatch(r -> r.contains("VIX_ABOVE_THRESHOLD")));
+            assertTrue(result.allowed(), "All rules pass: VIX above min, not spiking, not escalating");
+            assertTrue(result.failedRules().isEmpty());
         }
 
         @Test
-        @DisplayName("Should fail threshold rule when VIX <= threshold")
-        void shouldFailWhenVixBelowThreshold() throws KiteException, IOException {
-            // Current VIX = 11.0, threshold = 12.5
+        @DisplayName("Should block when VIX below minimum threshold (insufficient premium)")
+        void shouldBlockWhenVixBelowMinimum() throws KiteException, IOException {
+            // VIX = 11.0 (below 12.5)
             mockLTP(11.0);
-            mockPreviousDayClose(12.0); // Higher than current
-            mockFiveMinuteAgoVix(10.99); // Small change
+            mockPreviousDayClose(10.5);
+            mockFiveMinuteAgoVix(10.9);
 
             volatilityFilterService.clearCache();
             VolatilityFilterService.VolatilityFilterResult result =
                     volatilityFilterService.shouldAllowTrade(false);
 
-            // Should still pass because rule 1 might pass if current > prev close
-            // Let's verify the threshold rule specifically failed
+            assertFalse(result.allowed(), "VIX below minimum should block");
             assertTrue(result.failedRules().stream()
-                    .anyMatch(r -> r.contains("VIX_ABOVE_THRESHOLD: 11.00 <= 12.50")));
+                    .anyMatch(r -> r.contains("VIX_BELOW_MIN")));
         }
-    }
-
-    @Nested
-    @DisplayName("Rule 3: 5-Minute Percentage Change Tests")
-    class FiveMinuteChangeTests {
 
         @Test
-        @DisplayName("Should allow trade when 5-min change > threshold")
-        void shouldAllowWhenFiveMinChangeAboveThreshold() throws KiteException, IOException {
-            // Current VIX = 11.0, 5 min ago = 10.95 (change = 0.45%)
-            // Threshold = 0.3%
-            mockLTP(11.0);
-            mockPreviousDayClose(12.0); // Higher (rule 1 fails)
-            mockFiveMinuteAgoVix(10.95); // 0.45% increase
+        @DisplayName("Should block when VIX is spiking (5-min change > spike threshold)")
+        void shouldBlockWhenVixSpiking() throws KiteException, IOException {
+            // VIX = 15.0, 5-min ago = 14.0 (change = ~7.14% >> 1.0% spike threshold)
+            mockLTP(15.0);
+            mockPreviousDayClose(14.5);
+            mockFiveMinuteAgoVix(14.0);
 
             volatilityFilterService.clearCache();
             VolatilityFilterService.VolatilityFilterResult result =
                     volatilityFilterService.shouldAllowTrade(false);
 
-            assertTrue(result.allowed());
-            assertTrue(result.passedRules().stream()
-                    .anyMatch(r -> r.contains("VIX_5MIN_CHANGE")));
-        }
-
-        @Test
-        @DisplayName("Should fail when 5-min change <= threshold")
-        void shouldFailWhenFiveMinChangeBelowThreshold() throws KiteException, IOException {
-            // Current VIX = 11.0, 5 min ago = 10.98 (change = 0.18%)
-            // Threshold = 0.3%
-            mockLTP(11.0);
-            mockPreviousDayClose(12.0); // Higher (rule 1 fails)
-            mockFiveMinuteAgoVix(10.98); // Only 0.18% increase
-
-            volatilityFilterService.clearCache();
-            VolatilityFilterService.VolatilityFilterResult result =
-                    volatilityFilterService.shouldAllowTrade(false);
-
-            // VIX is below threshold (11.0 <= 12.5), so rule 2 also fails
-            // All rules fail if prev close is higher
+            assertFalse(result.allowed(), "VIX spiking should block");
             assertTrue(result.failedRules().stream()
-                    .anyMatch(r -> r.contains("VIX_5MIN_CHANGE")));
+                    .anyMatch(r -> r.contains("VIX_SPIKING")));
         }
-    }
-
-    @Nested
-    @DisplayName("All Rules Fail Tests")
-    class AllRulesFailTests {
 
         @Test
-        @DisplayName("Should block trade when all rules fail (VIX flat/falling)")
+        @DisplayName("Should block when VIX escalating above previous close (> max threshold)")
+        void shouldBlockWhenVixEscalating() throws KiteException, IOException {
+            // VIX = 15.0, prev close = 13.0 (15.38% above = exceeds 5%)
+            // 5-min ago = 14.9 (small change, not spiking)
+            mockLTP(15.0);
+            mockPreviousDayClose(13.0);
+            mockFiveMinuteAgoVix(14.9);
+
+            volatilityFilterService.clearCache();
+            VolatilityFilterService.VolatilityFilterResult result =
+                    volatilityFilterService.shouldAllowTrade(false);
+
+            assertFalse(result.allowed(), "VIX escalating above prev close should block");
+            assertTrue(result.failedRules().stream()
+                    .anyMatch(r -> r.contains("VIX_ESCALATING")));
+        }
+
+        @Test
+        @DisplayName("Should allow when 5-min data unavailable (fail-safe: pass)")
+        void shouldAllowWhenFiveMinDataUnavailable() throws KiteException, IOException {
+            // VIX = 14.0 (above threshold), prev close = 13.5 (within 5%)
+            // But no 5-min data available
+            mockLTP(14.0);
+            mockPreviousDayClose(13.5);
+            // Mock 5-minute to return empty data
+            HistoricalData emptyData = new HistoricalData();
+            emptyData.dataArrayList = new ArrayList<>();
+            when(tradingService.getHistoricalData(any(Date.class), any(Date.class), eq(VIX_TOKEN),
+                    eq("5minute"), eq(false), eq(false))).thenReturn(emptyData);
+
+            volatilityFilterService.clearCache();
+            VolatilityFilterService.VolatilityFilterResult result =
+                    volatilityFilterService.shouldAllowTrade(false);
+
+            assertTrue(result.allowed(), "Should allow when 5-min data unavailable (fail-safe)");
+        }
+
+        @Test
+        @DisplayName("Should block when ALL rules fail (VIX too low + spiking + escalating)")
         void shouldBlockWhenAllRulesFail() throws KiteException, IOException {
-            // Current VIX = 11.0 (below threshold 12.5)
-            // Previous close = 12.0 (higher than current)
-            // 5-min ago = 11.0 (no change)
+            // VIX = 11.0 (below 12.5), prev close = 9.0 (22% above), 5min ago = 10.0 (10% spike)
             mockLTP(11.0);
-            mockPreviousDayClose(12.0);
-            mockFiveMinuteAgoVix(11.0);
+            mockPreviousDayClose(9.0);
+            mockFiveMinuteAgoVix(10.0);
 
             volatilityFilterService.clearCache();
             VolatilityFilterService.VolatilityFilterResult result =
                     volatilityFilterService.shouldAllowTrade(false);
 
             assertFalse(result.allowed());
-            assertTrue(result.reason().contains("VIX flat or falling"));
-            assertEquals(0, result.passedRules().size());
-            assertEquals(3, result.failedRules().size());
+            assertTrue(result.reason().contains("unfavorable for selling"));
+            assertTrue(result.failedRules().size() >= 2); // At least VIX_BELOW_MIN + VIX_SPIKING
         }
     }
 

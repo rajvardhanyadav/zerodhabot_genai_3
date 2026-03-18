@@ -1,8 +1,11 @@
 package com.tradingbot.service.strategy;
 
+import com.tradingbot.config.MarketDataEngineConfig;
 import com.tradingbot.config.NeutralMarketConfig;
 import com.tradingbot.model.MarketStateEvent;
+import com.tradingbot.service.session.UserSessionManager;
 import com.tradingbot.service.strategy.NeutralMarketDetectorService.NeutralMarketResult;
+import com.tradingbot.util.CurrentUserContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -12,6 +15,7 @@ import java.time.Instant;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.Set;
 
 /**
  * Periodically evaluates market neutrality and publishes {@link MarketStateEvent}s.
@@ -23,7 +27,7 @@ import java.time.ZonedDateTime;
  *
  * <h2>API Call Budget</h2>
  * Per instrument per cycle: 4 API calls (VWAP candles, ADX candles, OI quotes, LTP).
- * With 2 instruments (NIFTY + BANKNIFTY): 8 API calls per 30 s, well within Kite limits.
+ * With 1 instrument (NIFTY): 4 API calls per 30 s, well within Kite limits.
  *
  * @since 4.2
  * @see MarketStateEvent
@@ -37,19 +41,22 @@ public class MarketStateUpdater {
     private static final LocalTime MARKET_OPEN = LocalTime.of(9, 15);
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 10);
 
-    /** Instruments to evaluate each cycle. */
-    private static final String[] INSTRUMENTS = {"NIFTY", "BANKNIFTY"};
-
     private final NeutralMarketDetectorService neutralMarketDetectorService;
     private final NeutralMarketConfig neutralMarketConfig;
+    private final MarketDataEngineConfig marketDataEngineConfig;
     private final ApplicationEventPublisher eventPublisher;
+    private final UserSessionManager userSessionManager;
 
     public MarketStateUpdater(NeutralMarketDetectorService neutralMarketDetectorService,
                               NeutralMarketConfig neutralMarketConfig,
-                              ApplicationEventPublisher eventPublisher) {
+                              MarketDataEngineConfig marketDataEngineConfig,
+                              ApplicationEventPublisher eventPublisher,
+                              UserSessionManager userSessionManager) {
         this.neutralMarketDetectorService = neutralMarketDetectorService;
         this.neutralMarketConfig = neutralMarketConfig;
+        this.marketDataEngineConfig = marketDataEngineConfig;
         this.eventPublisher = eventPublisher;
+        this.userSessionManager = userSessionManager;
     }
 
     /**
@@ -71,27 +78,54 @@ public class MarketStateUpdater {
             return;
         }
 
-        for (String instrument : INSTRUMENTS) {
-            try {
-                NeutralMarketResult result = neutralMarketDetectorService.evaluate(instrument);
-                Instant now = Instant.now();
+        // Scheduled tasks run without HTTP request context, so CurrentUserContext is empty.
+        // We must set it explicitly from an active session so that downstream TradingService
+        // calls (which resolve KiteConnect via getRequiredKiteForCurrentUser) find a valid session
+        // instead of falling back to PAPER_DEFAULT_USER.
+        Set<String> activeUserIds = userSessionManager.getActiveUserIds();
+        if (activeUserIds.isEmpty()) {
+            log.debug("MarketStateUpdater: no active user sessions, skipping evaluation cycle");
+            return;
+        }
 
-                MarketStateEvent event = new MarketStateEvent(
-                        instrument,
-                        result.neutral(),
-                        result.totalScore(),
-                        result.maxScore(),
-                        result,
-                        now
-                );
+        // Use the first active user's session for market data API calls.
+        // Neutral market evaluation is user-agnostic (same market data for all users),
+        // so any authenticated session suffices.
+        String userId = activeUserIds.iterator().next();
+        String previousUserId = CurrentUserContext.getUserId();
+        try {
+            CurrentUserContext.setUserId(userId);
+            log.debug("MarketStateUpdater: set user context to {} for scheduled evaluation", userId);
 
-                log.debug("MarketStateUpdater: publishing event for {}: neutral={}, score={}/{}",
-                        instrument, result.neutral(), result.totalScore(), result.maxScore());
+            for (String instrument : marketDataEngineConfig.getSupportedInstrumentsArray()) {
+                try {
+                    NeutralMarketResult result = neutralMarketDetectorService.evaluate(instrument);
+                    Instant now = Instant.now();
 
-                eventPublisher.publishEvent(event);
+                    MarketStateEvent event = new MarketStateEvent(
+                            instrument,
+                            result.neutral(),
+                            result.totalScore(),
+                            result.maxScore(),
+                            result,
+                            now
+                    );
 
-            } catch (Exception e) {
-                log.error("MarketStateUpdater: failed to evaluate {}: {}", instrument, e.getMessage(), e);
+                    log.debug("MarketStateUpdater: publishing event for {}: neutral={}, score={}/{}",
+                            instrument, result.neutral(), result.totalScore(), result.maxScore());
+
+                    eventPublisher.publishEvent(event);
+
+                } catch (Exception e) {
+                    log.error("MarketStateUpdater: failed to evaluate {}: {}", instrument, e.getMessage(), e);
+                }
+            }
+        } finally {
+            // Restore previous user context to avoid leaking into other scheduled tasks
+            if (previousUserId == null || previousUserId.isBlank()) {
+                CurrentUserContext.clear();
+            } else {
+                CurrentUserContext.setUserId(previousUserId);
             }
         }
     }
@@ -112,5 +146,3 @@ public class MarketStateUpdater {
         return !time.isBefore(MARKET_OPEN) && !time.isAfter(MARKET_CLOSE);
     }
 }
-
-

@@ -10,6 +10,7 @@ import com.tradingbot.service.BotStatusService;
 import com.tradingbot.service.StrategyService;
 import com.tradingbot.util.StrategyConstants;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -396,6 +397,45 @@ class StrategyRestartSchedulerTest {
         assertEquals(2, cancelledCount);
         assertEquals(0, scheduler.getScheduledRestartsCount());
     }
+
+    // ==================== SKIPPED EXECUTION RESTART TESTS ====================
+
+    @Test
+    @DisplayName("SKIPPED execution should register as pending restart for next neutral event")
+    void skippedExecution_shouldRegisterPendingRestart() {
+        // Arrange
+        when(strategyConfig.isAutoRestartEnabled()).thenReturn(true);
+        when(strategyConfig.isAutoRestartPaperEnabled()).thenReturn(true);
+        when(strategyConfig.getMaxAutoRestarts()).thenReturn(0);
+
+        StrategyExecution skipped = new StrategyExecution();
+        skipped.setExecutionId("skipped-exec-1");
+        skipped.setInstrumentType("NIFTY");
+        skipped.setUserId("test-user");
+        skipped.setTradingMode("PAPER");
+        skipped.setStatus(StrategyStatus.SKIPPED);
+        skipped.setStrategyType(StrategyType.SELL_ATM_STRADDLE);
+        skipped.setExpiry("WEEKLY");
+        skipped.setStopLossPoints(50.0);
+        skipped.setTargetPoints(50.0);
+        skipped.setAutoRestartCount(0);
+        skipped.setRootExecutionId("skipped-exec-1");
+
+        // Act — simulate what StrategyService now does after SKIPPED response
+        scheduler.scheduleRestart(skipped);
+
+        // Assert — should be registered as pending restart
+        assertEquals(1, scheduler.getScheduledRestartsCount());
+
+        // Act — fire a neutral market event
+        when(strategyConfig.getNeutralMarketBufferMs()).thenReturn(1000L);
+        MarketStateEvent event = new MarketStateEvent("NIFTY", true, 6, 10, null, Instant.now());
+        scheduler.onMarketStateEvent(event);
+
+        // Assert — taskScheduler.schedule() called once (buffer timer started)
+        verify(taskScheduler, times(1)).schedule(any(Runnable.class), any(Instant.class));
+    }
+
 
     private StrategyExecution createExecution(String executionId, String userId, String tradingMode) {
         StrategyExecution execution = new StrategyExecution();

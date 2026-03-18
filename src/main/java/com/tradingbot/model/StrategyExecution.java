@@ -81,6 +81,18 @@ public class StrategyExecution {
 
     private Integer lots;
 
+    /**
+     * Whether hedge legs are enabled for sell strategies.
+     * Stored from request to preserve during auto-restarts.
+     */
+    private Boolean hedgeEnabled;
+
+    /**
+     * Order type (MARKET or LIMIT).
+     * Stored from request to preserve during auto-restarts.
+     */
+    private String orderType;
+
     // Order tracking - initialized to empty list to avoid null checks
     @Builder.Default
     private List<OrderLeg> orderLegs = new ArrayList<>();

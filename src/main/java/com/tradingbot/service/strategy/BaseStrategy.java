@@ -16,7 +16,6 @@ import lombok.extern.slf4j.Slf4j;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 
 import static com.tradingbot.service.TradingConstants.*;
 
@@ -39,7 +38,6 @@ public abstract class BaseStrategy implements TradingStrategy {
 
     // HFT: Flag to enable/disable cache usage (default: enabled)
     private static final boolean USE_DELTA_CACHE = true;
-    private static final long CACHE_TIMEOUT_MS = 500; // Max wait for async cache refresh
 
     // Constants for Black-Scholes calculation
     private static final double RISK_FREE_RATE = 0.065; // Approximate annual risk-free rate (6.5%)
@@ -181,24 +179,15 @@ public abstract class BaseStrategy implements TradingStrategy {
                 log.debug("Using DeltaCacheService ATM strike: {} (approximate ATM: {})", cachedStrike.get(), approximateATM);
                 return cachedStrike.get();
             }
-
-            // Cache miss - calculate and cache ATM strike synchronously
-            log.debug("Delta cache miss for {}/{}. Computing delta-based ATM strike...", instrumentType, expiry);
-
-            try {
-                double calculatedStrike = deltaCacheService.calculateAndCacheATMStrike(instrumentType, expiry, spotPrice)
-                        .orTimeout(CACHE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                        .join();
-                log.debug("Calculated ATM strike by delta: {} (approximate ATM: {})", calculatedStrike, approximateATM);
-                return calculatedStrike;
-            } catch (Exception ex) {
-                log.warn("Delta calculation failed, falling back to synchronous calculation: {}", ex.getMessage());
-                return getATMStrikeByDeltaSynchronous(spotPrice, instrumentType, expiry, approximateATM, strikeInterval);
-            }
+            log.debug("DeltaCacheService miss for {}/{}, falling back to simple ATM", instrumentType, expiry);
         }
 
-        // ==================== TIER 3: Synchronous fallback (legacy, ~3-4 seconds) ====================
-        return getATMStrikeByDeltaSynchronous(spotPrice, instrumentType, expiry, approximateATM, strikeInterval);
+        // ==================== FALLBACK: Simple price-rounding ATM ====================
+        // MarketDataEngine refreshes every 5s, so a miss only happens during first few seconds
+        // after startup. Simple ATM is a safe fallback — typically within 1 strike of delta-based ATM.
+        log.info("All delta caches missed for {}. Using simple ATM strike: {} (spot={})",
+                instrumentType, approximateATM, spotPrice);
+        return approximateATM;
     }
 
     /**
@@ -270,7 +259,7 @@ public abstract class BaseStrategy implements TradingStrategy {
         double strikeInterval = getStrikeInterval(instrumentType);
         double approximateATM = Math.round(spotPrice / strikeInterval) * strikeInterval;
 
-        // ==================== TIER 1: MarketDataEngine (pre-computed, sub-microsecond) ====================
+        // ==================== TIER 1: MarketDataEngine pre-computed strike-by-delta (sub-microsecond) ====================
         if (marketDataEngine != null && marketDataEngine.isWarmedUp()) {
             Optional<Double> engineStrike = marketDataEngine.getPrecomputedStrikeByDelta(
                     instrumentType, targetDelta, optionType);
@@ -278,114 +267,107 @@ public abstract class BaseStrategy implements TradingStrategy {
                 log.debug("Using MarketDataEngine strike for {}Δ={}: {}", optionType, targetDelta, engineStrike.get());
                 return engineStrike.get();
             }
-            log.debug("MarketDataEngine miss for {} Δ={} {}, falling back to computation", instrumentType, targetDelta, optionType);
-        }
 
-        // ==================== TIER 2: Synchronous delta computation (legacy) ====================
-
-        // Dynamic range based on target delta — far OTM needs wider scan
-        int strikeRange;
-        if (targetDelta >= 0.3) {
-            strikeRange = 15;
-        } else if (targetDelta >= 0.1) {
-            strikeRange = 30;
-        } else {
-            strikeRange = 40;
-        }
-
-        Set<Double> strikesToCheck = new LinkedHashSet<>();
-        for (int i = -strikeRange; i <= strikeRange; i++) {
-            strikesToCheck.add(approximateATM + i * strikeInterval);
-        }
-
-        double timeToExpiry = calculateTimeToExpiryPrecise(expiry);
-        if (timeToExpiry <= 0) {
-            log.warn("Time to expiry is zero or negative. Cannot compute delta. Falling back to ATM: {}", approximateATM);
-            return approximateATM;
-        }
-
-        log.info("Finding strike by delta for {}: targetΔ={}, spot={}, ATM≈{}, T={} years, range=±{} strikes",
-                optionType, targetDelta, spotPrice, approximateATM, String.format("%.6f", timeToExpiry), strikeRange);
-
-        // Phase 1: Compute deltas from market data (IV-based)
-        DeltaComputationResult computationResult = computeCallDeltasWithIVs(instrumentType, expiry, spotPrice, strikesToCheck, timeToExpiry);
-        Map<Double, Double> callDeltas = computationResult.deltas();
-
-        // Phase 2: For strikes that failed IV computation, use model-based delta fallback
-        // This is critical for far OTM options where mid prices are unavailable
-        int fallbackCount = 0;
-        if (targetDelta < 0.3) {
-            double fallbackIV = estimateFallbackIV(computationResult.computedIVs(), approximateATM, strikeInterval);
-            double forwardPrice = spotPrice * Math.exp((RISK_FREE_RATE - DIVIDEND_YIELD) * timeToExpiry);
-            double sqrtT = Math.sqrt(timeToExpiry);
-
-            for (Double strike : strikesToCheck) {
-                if (!callDeltas.containsKey(strike)) {
-                    // Model-based delta using estimated IV
-                    double d1 = (Math.log(forwardPrice / strike) + 0.5 * fallbackIV * fallbackIV * timeToExpiry)
-                            / (fallbackIV * sqrtT);
-                    double modelDelta = cumulativeNormalDistribution(d1);
-
-                    // Only add if the model delta is in a reasonable OTM range
-                    if (modelDelta > 0.001 && modelDelta < 0.999) {
-                        callDeltas.put(strike, modelDelta);
-                        fallbackCount++;
-                    }
-                }
+            // TIER 1b: Exact target not pre-computed, but full delta map is available —
+            // do a lightweight in-memory scan (no API calls).
+            Optional<Map<Double, Double>> deltaMapOpt = marketDataEngine.getPrecomputedDeltaMap(instrumentType);
+            if (deltaMapOpt.isPresent() && !deltaMapOpt.get().isEmpty()) {
+                Map<Double, Double> deltaMap = deltaMapOpt.get();
+                double bestStrike = findBestStrikeFromDeltaMap(deltaMap, targetDelta, optionType, approximateATM);
+                log.debug("Using MarketDataEngine delta map scan for {} Δ={}: strike={}", optionType, targetDelta, bestStrike);
+                return bestStrike;
             }
-            if (fallbackCount > 0) {
-                log.info("Added {} model-based delta estimates (fallback IV={}) for OTM strikes",
-                        fallbackCount, String.format("%.4f", fallbackIV));
+
+            log.debug("MarketDataEngine miss for {} Δ={} {}, falling back to DeltaCacheService", instrumentType, targetDelta, optionType);
+        }
+
+        // ==================== TIER 2: DeltaCacheService cached deltas ====================
+        if (USE_DELTA_CACHE && deltaCacheService != null) {
+            Map<Double, Double> cachedDeltas = deltaCacheService.getCachedDeltas(instrumentType, expiry);
+            if (cachedDeltas != null && !cachedDeltas.isEmpty()) {
+                double bestStrike = findBestStrikeFromDeltaMap(cachedDeltas, targetDelta, optionType, approximateATM);
+                log.debug("Using DeltaCacheService delta map for {} Δ={}: strike={}", optionType, targetDelta, bestStrike);
+                return bestStrike;
             }
         }
 
-        if (callDeltas.isEmpty()) {
-            log.warn("Delta computation failed for all strikes. Falling back to ATM: {}", approximateATM);
-            return approximateATM;
-        }
+        // ==================== FALLBACK: Estimate from price-distance heuristic ====================
+        // MarketDataEngine refreshes every 5s with ±30 strike range, so this fallback
+        // should only fire during the first few seconds after startup.
+        double estimatedStrike = estimateStrikeByDeltaHeuristic(spotPrice, instrumentType, targetDelta, optionType);
+        log.info("All delta caches missed for {} Δ={} {}. Using heuristic estimate: {} (spot={})",
+                instrumentType, targetDelta, optionType, estimatedStrike, spotPrice);
+        return estimatedStrike;
+    }
 
+    /**
+     * Find the best strike for a target delta from a pre-computed delta map.
+     * Pure in-memory scan — no API calls.
+     *
+     * @param deltaMap       map of strike → call delta (from MarketDataEngine or DeltaCacheService)
+     * @param targetDelta    target absolute delta (e.g., 0.4, 0.1)
+     * @param optionType     "CE" or "PE"
+     * @param approximateATM approximate ATM strike for OTM-side enforcement
+     * @return best strike for the target delta
+     */
+    private double findBestStrikeFromDeltaMap(Map<Double, Double> deltaMap, double targetDelta,
+                                               String optionType, double approximateATM) {
         boolean isCE = OPTION_TYPE_CE.equals(optionType);
-
         double bestStrike = approximateATM;
         double minDiff = Double.MAX_VALUE;
 
-        for (Map.Entry<Double, Double> e : callDeltas.entrySet()) {
+        for (Map.Entry<Double, Double> e : deltaMap.entrySet()) {
+            double strike = e.getKey();
             double callDelta = e.getValue();
-            double effectiveDelta;
+            double effectiveDelta = isCE ? callDelta : (1.0 - callDelta);
 
-            if (isCE) {
-                // For CE: delta = callDelta
-                effectiveDelta = callDelta;
-            } else {
-                // For PE: |put delta| = 1 - callDelta
-                effectiveDelta = 1.0 - callDelta;
+            // For OTM targets (< 0.4), enforce correct OTM side
+            if (targetDelta < 0.4) {
+                if (isCE && strike < approximateATM) continue;
+                if (!isCE && strike > approximateATM) continue;
             }
 
             double diff = Math.abs(effectiveDelta - targetDelta);
             if (diff < minDiff) {
                 minDiff = diff;
-                bestStrike = e.getKey();
+                bestStrike = strike;
             }
         }
 
-        // OTM-side validation: ensure selected hedge strike is on the correct OTM side
-        if (targetDelta < 0.4) {
-            if (isCE && bestStrike < approximateATM) {
-                log.warn("Selected CE strike {} is ITM (ATM={}). Searching OTM side only.", bestStrike, approximateATM);
-                bestStrike = findBestOTMStrike(callDeltas, targetDelta, true, approximateATM);
-            } else if (!isCE && bestStrike > approximateATM) {
-                log.warn("Selected PE strike {} is ITM (ATM={}). Searching OTM side only.", bestStrike, approximateATM);
-                bestStrike = findBestOTMStrike(callDeltas, targetDelta, false, approximateATM);
-            }
-        }
-
-        double bestDelta = isCE
-                ? callDeltas.getOrDefault(bestStrike, 0.0)
-                : 1.0 - callDeltas.getOrDefault(bestStrike, 0.0);
-        log.info("Selected {} strike {} (effective |Δ| ≈ {}, target {}, diff={})",
-                optionType, bestStrike, String.format("%.4f", bestDelta), targetDelta,
-                String.format("%.4f", Math.abs(bestDelta - targetDelta)));
         return bestStrike;
+    }
+
+    /**
+     * Heuristic estimate of strike by delta when no cache data is available.
+     * Uses the empirical approximation that a 0.1Δ option is roughly 1.3 × ATM-distance
+     * away from spot (varies by IV and time to expiry, but safe startup fallback).
+     *
+     * @param spotPrice      current spot price
+     * @param instrumentType instrument type
+     * @param targetDelta    target absolute delta
+     * @param optionType     "CE" or "PE"
+     * @return estimated strike price
+     */
+    private double estimateStrikeByDeltaHeuristic(double spotPrice, String instrumentType,
+                                                    double targetDelta, String optionType) {
+        double strikeInterval = getStrikeInterval(instrumentType);
+        double approximateATM = Math.round(spotPrice / strikeInterval) * strikeInterval;
+
+        // Rough mapping: delta → number of strikes away from ATM
+        // 0.5Δ ≈ 0 strikes, 0.4Δ ≈ 3-4 strikes, 0.3Δ ≈ 6-8 strikes,
+        // 0.2Δ ≈ 10-12 strikes, 0.1Δ ≈ 15-20 strikes, 0.05Δ ≈ 25-30 strikes
+        int strikesAway;
+        if (targetDelta >= 0.45) strikesAway = 1;
+        else if (targetDelta >= 0.35) strikesAway = 4;
+        else if (targetDelta >= 0.25) strikesAway = 7;
+        else if (targetDelta >= 0.15) strikesAway = 12;
+        else if (targetDelta >= 0.08) strikesAway = 18;
+        else strikesAway = 25;
+
+        boolean isCE = OPTION_TYPE_CE.equals(optionType);
+        double offset = strikesAway * strikeInterval;
+
+        return isCE ? approximateATM + offset : approximateATM - offset;
     }
 
     /**

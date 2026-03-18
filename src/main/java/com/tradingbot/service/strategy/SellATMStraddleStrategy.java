@@ -10,6 +10,7 @@ import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.SlTargetMode;
 import com.tradingbot.model.StrategyExecution;
+import com.tradingbot.model.StrategyStatus;
 import com.tradingbot.service.MarketDataEngine;
 import com.tradingbot.service.StrategyService;
 import com.tradingbot.service.TradingService;
@@ -26,6 +27,8 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -72,6 +75,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     private final NeutralMarketDetectorService neutralMarketDetectorService;
 
     // ==================== HFT Thread Pool Configuration ====================
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
     private static final int HFT_THREAD_POOL_SIZE = 8;
     private static final AtomicInteger THREAD_COUNTER = new AtomicInteger(0);
     private static final ThreadFactory HFT_THREAD_FACTORY = r -> {
@@ -156,7 +160,30 @@ public class SellATMStraddleStrategy extends BaseStrategy {
             log.info("[{}] Hedge legs ENABLED with delta={}", tradingMode, hedgeDelta);
         }
 
-        // ==================== NEUTRAL MARKET FILTER ====================
+        // ==================== GATE 0: ENTRY TIME WINDOW ====================
+        LocalTime now = LocalTime.now(IST);
+        LocalTime entryStart = LocalTime.parse(strategyConfig.getEntryWindowStart());
+        LocalTime entryEnd = LocalTime.parse(strategyConfig.getEntryWindowEnd());
+        if (now.isBefore(entryStart) || now.isAfter(entryEnd)) {
+            String reason = String.format("Outside entry window: %s not in [%s, %s]", now, entryStart, entryEnd);
+            log.info("[{}] Skipping straddle entry: {}", tradingMode, reason);
+            return buildSkippedResponse(executionId, reason);
+        }
+
+        // ==================== GATE 1: VIX VOLATILITY FILTER ====================
+        VolatilityFilterService.VolatilityFilterResult vixResult =
+                volatilityFilterService.shouldAllowTrade(false);
+        log.info("[{}] VIX filter: allowed={}, reason={}, vix={}",
+                tradingMode, vixResult.allowed(), vixResult.reason(), vixResult.currentVix());
+
+        if (!vixResult.allowed()) {
+            String reason = "VIX filter blocked: " + vixResult.reason();
+            log.info("[{}] Skipping straddle entry: VIX conditions not favourable. Reason: {}",
+                    tradingMode, vixResult.reason());
+            return buildSkippedResponse(executionId, reason);
+        }
+
+        // ==================== GATE 2: NEUTRAL MARKET FILTER ====================
         log.info("[{}] Evaluating ATM straddle entry for {}. Checking neutral market conditions...",
                 tradingMode, instrumentType);
 
@@ -178,9 +205,10 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                             "score={}/{} (minimum={}). Failed signals: {}",
                     tradingMode, neutralResult.totalScore(), neutralResult.maxScore(),
                     neutralResult.minimumRequired(), failedSignals);
-            throw new RuntimeException("Neutral market filter BLOCKED entry: score="
-                    + neutralResult.totalScore() + "/" + neutralResult.maxScore()
-                    + " (minimum=" + neutralResult.minimumRequired() + "). " + neutralResult.summary());
+            return buildSkippedResponse(executionId,
+                    "Neutral market filter BLOCKED: score=" + neutralResult.totalScore()
+                    + "/" + neutralResult.maxScore() + " (minimum=" + neutralResult.minimumRequired()
+                    + "). " + neutralResult.summary());
         }
 
         log.info("[{}] Neutral market confirmed for {}. Proceeding with ATM straddle placement.",
@@ -195,6 +223,26 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
         // Calculate ATM strike using delta-based selection
         final Date expiryDate = !instruments.isEmpty() ? instruments.get(0).expiry : null;
+
+        // ==================== GATE 3: EXPIRY DAY AWARENESS ====================
+        boolean isExpiryDay = expiryDate != null && isSameDay(expiryDate, new Date());
+        if (isExpiryDay) {
+            log.info("[{}] EXPIRY DAY detected — applying tighter thresholds", tradingMode);
+
+            if (!strategyConfig.isExpiryDayEnabled()) {
+                return buildSkippedResponse(executionId, "Expiry day trading is disabled");
+            }
+
+            // Enforce tighter entry end time on expiry day
+            LocalTime expiryEntryEnd = LocalTime.parse(strategyConfig.getExpiryDayEntryEndTime());
+            LocalTime currentTime = LocalTime.now(IST);
+            if (currentTime.isAfter(expiryEntryEnd)) {
+                String reason = String.format("Expiry day: past entry cutoff %s (current=%s)", expiryEntryEnd, currentTime);
+                log.info("[{}] Skipping straddle entry on expiry day: {}", tradingMode, reason);
+                return buildSkippedResponse(executionId, reason);
+            }
+        }
+
         final double atmStrike = expiryDate != null
                 ? getATMStrikeByDelta(spotPrice, instrumentType, expiryDate)
                 : getATMStrike(spotPrice, instrumentType);
@@ -912,6 +960,31 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
         log.info(StrategyConstants.LOG_STRATEGY_EXECUTED, tradingMode, totalPremium);
         return response;
+    }
+
+    /**
+     * Build a SKIPPED response when a pre-flight gate blocks entry.
+     * Returns a proper response (not an exception) so StrategyService marks it as SKIPPED,
+     * and StrategyRestartScheduler can re-register the execution for later retry.
+     */
+    private StrategyExecutionResponse buildSkippedResponse(String executionId, String reason) {
+        StrategyExecutionResponse response = new StrategyExecutionResponse();
+        response.setExecutionId(executionId);
+        response.setStatus(StrategyStatus.SKIPPED.name());
+        response.setMessage(reason);
+        return response;
+    }
+
+    /**
+     * Fast same-day check without Calendar allocation.
+     * Converts both dates to IST day-epoch for O(1) comparison.
+     */
+    private boolean isSameDay(Date d1, Date d2) {
+        long IST_OFFSET_MS = 19800000L;
+        long MS_PER_DAY = 86400000L;
+        long day1 = (d1.getTime() + IST_OFFSET_MS) / MS_PER_DAY;
+        long day2 = (d2.getTime() + IST_OFFSET_MS) / MS_PER_DAY;
+        return day1 == day2;
     }
 
     // ==================== Configuration Resolvers ====================

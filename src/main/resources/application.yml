@@ -105,6 +105,19 @@ strategy:
   # Target delta for hedge (buy) legs in sell ATM straddle
   sell-straddle-hedge-delta: 0.1
 
+  # Entry Time Window Configuration (IST)
+  # No entries before this time (avoid opening noise and gaps)
+  entry-window-start: "10:00"
+  # No entries after this time (insufficient theta remaining)
+  entry-window-end: "15:00"
+
+  # Expiry Day Configuration
+  # Whether to allow trading on expiry day (true = allow with tighter thresholds)
+  expiry-day-enabled: true
+  # Tighter entry end time on expiry day (gamma acceleration)
+  expiry-day-entry-end-time: "13:00"
+
+
   # Trailing Stop Loss Configuration
   # When enabled, stop loss trails up as position becomes profitable
   trailing-stop-enabled: false
@@ -123,11 +136,17 @@ volatility:
   # Instrument token for India VIX (for historical data API)
   vix-instrument-token: "264969"
 
-  # Absolute VIX threshold - allow trade if VIX > this value
+  # Absolute VIX threshold - allow trade if VIX >= this value (adequate premium)
   absolute-threshold: 12.5
 
-  # 5-minute percentage change threshold - allow trade if VIX change > this %
+  # 5-minute percentage change threshold (legacy — kept for reference)
   percentage-change-threshold: 0.3
+
+  # Spike threshold: block trade if VIX 5-min change > this % (danger signal for seller)
+  spike-threshold-pct: 1.0
+
+  # Block if VIX > this % above previous day close (escalating vol = risky for seller)
+  max-vix-above-prev-close-pct: 5.0
 
   # Enable volatility filter during backtesting (false = preserve existing backtest behavior)
   backtest-enabled: false
@@ -195,31 +214,37 @@ neutral-market:
   enabled: true
 
   # Minimum score (0-10) to allow trade. Each signal contributes +2.
-  minimum-score: 7
+  minimum-score: 6
 
-  # Signal 1: VWAP Deviation
-  vwap-deviation-threshold: 0.0015   # 0.15% max deviation
+  # Tighter minimum score on expiry day (elevated gamma risk)
+  expiry-day-minimum-score: 8
+
+  # Signal 1: VWAP Deviation (SMA proxy for index — volume unavailable)
+  vwap-deviation-threshold: 0.002    # Widened from 0.0015 (SMA proxy, not true VWAP)
   vwap-candle-count: 15              # 1-minute candles for VWAP
 
   # Signal 2: ADX Trend Strength
-  adx-threshold: 18.0                # ADX below this = range-bound
-  adx-period: 14                     # Wilder smoothing period
-  adx-candle-interval: "3minute"     # 3-min candles for stable ADX
-  adx-candle-count: 50               # ~2.5 hours of data
+  adx-threshold: 20.0                # Standard ranging boundary (was 18)
+  adx-period: 7                      # Short-term intraday period (was 14)
+  adx-candle-interval: "minute"      # 1-min candles for faster reaction (was 3minute)
+  adx-candle-count: 30               # 30 candles warmup — available by 9:45 IST (was 50)
   adx-falling-check-enabled: false   # Optional: require ADX falling
 
   # Signal 3: Gamma Pin (Max OI Strike)
   gamma-pin-threshold: 0.002         # 0.2% max distance from max-OI strike
-  strikes-around-atm: 10             # +/-10 strikes to scan
+  strikes-around-atm: 5              # Reduced from 10 (OI concentrated within ±3 strikes)
 
   # Signal 4: Range Compression
-  range-compression-threshold: 0.0025 # 0.25% max range
-  range-compression-candles: 5        # Last 5 one-minute candles
+  range-compression-threshold: 0.0035   # Widened from 0.0025; 0.35% = ~84pts at 24000
+  range-compression-candles: 10         # Last 10 one-minute candles
+  expiry-day-range-threshold: 0.002     # Tighter on expiry day (0.2% = ~48pts at 24000)
 
   # Signal 5: Dual Premium Decay
   # NOTE: Must be LESS than cache-ttl-ms to avoid timing race where
   # cache expiry and snapshot interval align, causing perpetual skips.
-  premium-snapshot-min-interval-ms: 25000  # 25s between snapshots (cache is 30s)
+  premium-snapshot-min-interval-ms: 20000  # Slightly faster (was 25000)
+  premium-min-decay-pct: 0.5               # Both CE/PE must decay >= 0.5% to pass
+  premium-max-snapshot-age-ms: 120000      # Discard snapshots older than 2 minutes
 
   # Caching
   cache-ttl-ms: 30000                # Cache result for 30 seconds
@@ -263,7 +288,18 @@ market-data-engine:
   thread-pool-size: 4
 
   # Supported instruments (comma-separated)
-  supported-instruments: NIFTY,BANKNIFTY
+  supported-instruments: NIFTY
+
+  # Delta pre-computation: target deltas to pre-compute strikes for (comma-separated)
+  # Must cover all strategy requirements: ATM (0.5), strangle sell (0.4), hedges (0.1), etc.
+  delta-targets: "0.05,0.1,0.15,0.2,0.25,0.3,0.35,0.4,0.45,0.5"
+
+  # Strike scan range: number of strikes on each side of ATM for near-ATM targets (Δ ≥ 0.3)
+  delta-strike-range-near-atm: 10
+
+  # Strike scan range: number of strikes on each side of ATM for far OTM targets (Δ < 0.3)
+  # Must be wide enough for 0.1Δ and 0.05Δ hedge legs (typically 15-30 strikes from ATM)
+  delta-strike-range-far-otm: 30
 
 
 # Historical Replay Configuration

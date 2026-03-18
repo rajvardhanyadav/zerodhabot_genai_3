@@ -157,15 +157,23 @@ public class StrategyRestartScheduler {
             return;
         }
 
-        if (execution.getStatus() != StrategyStatus.COMPLETED) {
-            log.debug("Execution {} not COMPLETED (status={}), skipping auto-restart", execution.getExecutionId(), execution.getStatus());
+        if (execution.getStatus() != StrategyStatus.COMPLETED && execution.getStatus() != StrategyStatus.SKIPPED) {
+            log.debug("Execution {} not COMPLETED or SKIPPED (status={}), skipping auto-restart", execution.getExecutionId(), execution.getStatus());
             return;
         }
 
-        StrategyCompletionReason reason = execution.getCompletionReason();
-        if (reason != StrategyCompletionReason.TARGET_HIT && reason != StrategyCompletionReason.STOPLOSS_HIT) {
-            log.debug("Execution {} completion reason {} not eligible for auto-restart", execution.getExecutionId(), reason);
-            return;
+        // For SKIPPED executions (gate blocked), allow immediate restart registration
+        // without requiring specific completion reasons (no positions were ever opened)
+        if (execution.getStatus() == StrategyStatus.SKIPPED) {
+            log.info("Execution {} was SKIPPED (gate blocked), registering for restart on next neutral market event",
+                    execution.getExecutionId());
+        } else {
+            // For COMPLETED executions, only restart on TARGET or STOPLOSS
+            StrategyCompletionReason reason = execution.getCompletionReason();
+            if (reason != StrategyCompletionReason.TARGET_HIT && reason != StrategyCompletionReason.STOPLOSS_HIT) {
+                log.debug("Execution {} completion reason {} not eligible for auto-restart", execution.getExecutionId(), reason);
+                return;
+            }
         }
 
         int maxAutoRestarts = strategyConfig.getMaxAutoRestarts();
@@ -205,9 +213,10 @@ public class StrategyRestartScheduler {
             return;
         }
 
-        log.info("Trade closed. Waiting for neutral market event. [{}] execution={} (user={}), reason={}, " +
+        log.info("Trade closed. Waiting for neutral market event. [{}] execution={} (user={}), status={}, reason={}, " +
                  "strategyType={}, instrument={}, expiry={}",
-                 tradingMode, executionId, execution.getUserId(), reason,
+                 tradingMode, executionId, execution.getUserId(),
+                 execution.getStatus(), execution.getCompletionReason(),
                  execution.getStrategyType(), execution.getInstrumentType(), execution.getExpiry());
 
         // Build a StrategyRequest from the previous execution for the restart
@@ -237,6 +246,7 @@ public class StrategyRestartScheduler {
             return;
         }
 
+
         // Find pending restarts matching this instrument (snapshot keys to avoid concurrent modification)
         for (String executionId : List.copyOf(pendingRestarts.keySet())) {
             PendingRestart pending = pendingRestarts.get(executionId);
@@ -261,6 +271,7 @@ public class StrategyRestartScheduler {
             scheduleBufferedExecution(execution, pending.request());
         }
     }
+
 
     /**
      * After neutral market is confirmed, wait a configurable buffer period
@@ -319,9 +330,18 @@ public class StrategyRestartScheduler {
                              execution.getStrategyType(), execution.getInstrumentType(),
                              execution.getExpiry(), newExecutionId);
 
-                    strategyService.executeStrategy(request);
+                    var response = strategyService.executeStrategy(request);
 
-                    execution.setAutoRestartCount(execution.getAutoRestartCount() + 1);
+                    // If the response was SKIPPED (gate blocked), re-register for next neutral event
+                    if (response != null && StrategyStatus.SKIPPED.name().equalsIgnoreCase(response.getStatus())) {
+                        log.info("[{}] Strategy restart resulted in SKIPPED for execution {}. " +
+                                 "Reason: {}. Re-registering as pending restart.",
+                                 tradingMode, executionId, response.getMessage());
+                        scheduledRestarts.remove(executionId);
+                        pendingRestarts.put(executionId, new PendingRestart(execution, request));
+                    } else {
+                        execution.setAutoRestartCount(execution.getAutoRestartCount() + 1);
+                    }
 
                 } catch (KiteException | java.io.IOException e) {
                     log.error("Failed to auto-restart strategy for execution {}: {}", executionId, e.getMessage(), e);
@@ -364,6 +384,9 @@ public class StrategyRestartScheduler {
         // Preserve premium-based exit parameters from original execution
         request.setTargetDecayPct(execution.getTargetDecayPct());
         request.setStopLossExpansionPct(execution.getStopLossExpansionPct());
+        // Preserve hedge and order type from original execution
+        request.setHedgeEnabled(execution.getHedgeEnabled());
+        request.setOrderType(execution.getOrderType());
         return request;
     }
 

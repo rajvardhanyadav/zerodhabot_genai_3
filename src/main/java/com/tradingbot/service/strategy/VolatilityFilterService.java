@@ -143,8 +143,13 @@ public class VolatilityFilterService {
     }
 
     /**
-     * Evaluate all volatility rules against the current VIX snapshot.
-     * Trade is allowed if ANY rule passes (OR logic).
+     * Evaluate volatility rules for a straddle SELLER.
+     * Uses AND logic — ALL conditions must pass (protective approach):
+     * 1. VIX >= absolute threshold (ensure adequate premium to collect)
+     * 2. VIX NOT spiking (5-min change <= spike threshold)
+     * 3. VIX NOT escalating significantly above previous close
+     *
+     * Trade is allowed only when ALL rules pass (AND logic).
      */
     private VolatilityFilterResult evaluateRules(VixDataSnapshot snapshot) {
         List<String> passedRules = new ArrayList<>();
@@ -154,54 +159,61 @@ public class VolatilityFilterService {
         BigDecimal previousClose = snapshot.previousDayClose();
         BigDecimal fiveMinAgo = snapshot.fiveMinuteAgoVix();
 
-        // Rule 1: Current VIX > Previous Day Close
-        if (previousClose != null) {
-            if (currentVix.compareTo(previousClose) > 0) {
-                passedRules.add(String.format("VIX_ABOVE_PREV_CLOSE: %.2f > %.2f",
-                        currentVix, previousClose));
-            } else {
-                failedRules.add(String.format("VIX_ABOVE_PREV_CLOSE: %.2f <= %.2f",
-                        currentVix, previousClose));
-            }
-        } else {
-            failedRules.add("VIX_ABOVE_PREV_CLOSE: Previous close unavailable");
-        }
-
-        // Rule 2: Current VIX > Absolute Threshold
+        // Rule 1: VIX must be above absolute threshold (ensure adequate premium)
         BigDecimal absThreshold = volatilityConfig.getAbsoluteThreshold();
-        if (currentVix.compareTo(absThreshold) > 0) {
-            passedRules.add(String.format("VIX_ABOVE_THRESHOLD: %.2f > %.2f",
+        if (currentVix.compareTo(absThreshold) >= 0) {
+            passedRules.add(String.format("VIX_ABOVE_MIN: %.2f >= %.2f (adequate premium)",
                     currentVix, absThreshold));
         } else {
-            failedRules.add(String.format("VIX_ABOVE_THRESHOLD: %.2f <= %.2f",
+            failedRules.add(String.format("VIX_BELOW_MIN: %.2f < %.2f (insufficient premium)",
                     currentVix, absThreshold));
         }
 
-        // Rule 3: 5-minute percentage change > threshold
+        // Rule 2: VIX must NOT be spiking (5-min change must be below spike threshold)
         if (fiveMinAgo != null && fiveMinAgo.compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal pctChange = currentVix.subtract(fiveMinAgo)
                     .divide(fiveMinAgo, SCALE, ROUNDING)
                     .multiply(new BigDecimal("100"));
-            BigDecimal pctThreshold = volatilityConfig.getPercentageChangeThreshold();
+            BigDecimal spikeThreshold = volatilityConfig.getSpikeThresholdPct();
 
-            if (pctChange.compareTo(pctThreshold) > 0) {
-                passedRules.add(String.format("VIX_5MIN_CHANGE: %.2f%% > %.2f%%",
-                        pctChange, pctThreshold));
+            if (pctChange.compareTo(spikeThreshold) <= 0) {
+                passedRules.add(String.format("VIX_NOT_SPIKING: 5min change=%.2f%% <= %.2f%% (stable)",
+                        pctChange, spikeThreshold));
             } else {
-                failedRules.add(String.format("VIX_5MIN_CHANGE: %.2f%% <= %.2f%%",
-                        pctChange, pctThreshold));
+                failedRules.add(String.format("VIX_SPIKING: 5min change=%.2f%% > %.2f%% (dangerous for seller)",
+                        pctChange, spikeThreshold));
             }
         } else {
-            failedRules.add("VIX_5MIN_CHANGE: 5-minute ago VIX unavailable");
+            // 5-min data unavailable — treat as passed (fail-safe: don't block on missing data)
+            passedRules.add("VIX_NOT_SPIKING: 5-minute data unavailable (fail-safe: pass)");
         }
 
-        // Trade allowed if ANY rule passed (OR logic)
-        if (!passedRules.isEmpty()) {
-            String reason = "VIX conditions favorable. Passed: " + String.join(", ", passedRules);
+        // Rule 3: VIX must NOT be escalating significantly above previous close
+        if (previousClose != null && previousClose.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal abovePrevPct = currentVix.subtract(previousClose)
+                    .divide(previousClose, SCALE, ROUNDING)
+                    .multiply(new BigDecimal("100"));
+            BigDecimal maxAbovePrevPct = volatilityConfig.getMaxVixAbovePrevClosePct();
+
+            if (abovePrevPct.compareTo(maxAbovePrevPct) <= 0) {
+                passedRules.add(String.format("VIX_NOT_ESCALATING: %.2f%% above prev close (max=%.2f%%)",
+                        abovePrevPct, maxAbovePrevPct));
+            } else {
+                failedRules.add(String.format("VIX_ESCALATING: %.2f%% above prev close %.2f (max=%.2f%%)",
+                        abovePrevPct, previousClose, maxAbovePrevPct));
+            }
+        } else {
+            // Previous close unavailable — treat as passed (fail-safe: don't block on missing data)
+            passedRules.add("VIX_NOT_ESCALATING: Previous close unavailable (fail-safe: pass)");
+        }
+
+        // Trade allowed only when ALL rules pass (AND logic — protective for seller)
+        if (failedRules.isEmpty()) {
+            String reason = "VIX conditions favorable for selling. All rules passed: " + String.join(", ", passedRules);
             log.info("Volatility filter PASSED: {}", reason);
             return VolatilityFilterResult.allowed(reason, snapshot, passedRules, failedRules);
         } else {
-            String reason = "VIX flat or falling. All rules failed: " + String.join(", ", failedRules);
+            String reason = "VIX conditions unfavorable for selling. Failed: " + String.join(", ", failedRules);
             log.info("Volatility filter BLOCKED: {}", reason);
             return VolatilityFilterResult.blocked(reason, snapshot, passedRules, failedRules);
         }

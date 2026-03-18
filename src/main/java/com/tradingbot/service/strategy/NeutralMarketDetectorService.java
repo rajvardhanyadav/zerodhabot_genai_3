@@ -2,6 +2,7 @@ package com.tradingbot.service.strategy;
 
 import com.tradingbot.config.NeutralMarketConfig;
 import com.tradingbot.service.InstrumentCacheService;
+import com.tradingbot.service.MarketDataEngine;
 import com.tradingbot.service.TradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.HistoricalData;
@@ -17,6 +18,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.Optional;
 
 /**
  * Neutral Market Detection Engine.
@@ -63,6 +65,7 @@ public class NeutralMarketDetectorService {
     private final NeutralMarketConfig config;
     private final TradingService tradingService;
     private final InstrumentCacheService instrumentCacheService;
+    private final MarketDataEngine marketDataEngine;
 
     /** Cached composite evaluation result. */
     private final AtomicReference<CachedResult> cachedResult = new AtomicReference<>();
@@ -72,10 +75,12 @@ public class NeutralMarketDetectorService {
 
     public NeutralMarketDetectorService(NeutralMarketConfig config,
                                         TradingService tradingService,
-                                        InstrumentCacheService instrumentCacheService) {
+                                        InstrumentCacheService instrumentCacheService,
+                                        MarketDataEngine marketDataEngine) {
         this.config = config;
         this.tradingService = tradingService;
         this.instrumentCacheService = instrumentCacheService;
+        this.marketDataEngine = marketDataEngine;
     }
 
     // ==================== PUBLIC RECORDS ====================
@@ -142,7 +147,7 @@ public class NeutralMarketDetectorService {
         }
     }
 
-    private record PremiumSnapshot(double ceLtp, double peLtp, Instant timestamp, String instrumentType) {}
+    private record PremiumSnapshot(double ceLtp, double peLtp, Instant timestamp, String instrumentType, double atmStrike) {}
 
     // ==================== PUBLIC API ====================
 
@@ -212,8 +217,8 @@ public class NeutralMarketDetectorService {
     private static final java.time.LocalTime MARKET_OPEN = java.time.LocalTime.of(9, 15);
     /** Market closes at 15:30 IST. No new candles after this. */
     private static final java.time.LocalTime MARKET_CLOSE = java.time.LocalTime.of(15, 30);
-    /** Minimum minutes after open before enough candles exist for ADX (50 × 3-min = 150 min, but we need at least 29 candles × 3-min = 87 min). */
-    private static final int MIN_MINUTES_AFTER_OPEN_FOR_ADX = 90;
+    /** Minimum minutes after open before enough candles exist for ADX. With 1-min candles and period 7, only ~15 candles warmup needed. */
+    private static final int MIN_MINUTES_AFTER_OPEN_FOR_ADX = 20;
 
     /**
      * Check if current IST time is within market trading hours.
@@ -271,7 +276,7 @@ public class NeutralMarketDetectorService {
         String instrumentToken = resolveInstrumentToken(instrumentType);
 
         // Fetch 1-minute candles once — shared by VWAP and Range Compression
-        List<HistoricalData> oneMinCandles = fetchOneMinuteCandles(instrumentToken);
+        List<HistoricalData> oneMinCandles = fetchOneMinuteCandles(instrumentType, instrumentToken);
 
         // HFT: Fetch NFO instruments once — shared by Gamma Pin and Premium Decay
         List<Instrument> nfoInstruments = Collections.emptyList();
@@ -287,10 +292,13 @@ public class NeutralMarketDetectorService {
         // Evaluate all 5 signals
         List<SignalResult> signals = new ArrayList<>(TOTAL_SIGNALS);
 
+        // Determine if expiry day for tighter range compression threshold
+        boolean isExpiryDayForSignals = nearestExpiry != null && isSameDay(nearestExpiry, new Date());
+
         signals.add(calculateVWAPDeviation(spotPrice, oneMinCandles));
         signals.add(calculateADX(instrumentToken));
         signals.add(detectGammaPin(spotPrice, instrumentType, strikeInterval, nfoInstruments, nearestExpiry));
-        signals.add(calculateRangeCompression(spotPrice, oneMinCandles));
+        signals.add(calculateRangeCompression(spotPrice, oneMinCandles, isExpiryDayForSignals));
         signals.add(detectDualPremiumDecay(spotPrice, instrumentType, strikeInterval, nfoInstruments, nearestExpiry));
 
         // Compute composite score
@@ -298,7 +306,18 @@ public class NeutralMarketDetectorService {
         for (SignalResult s : signals) {
             totalScore += s.score();
         }
-        boolean neutral = totalScore >= config.getMinimumScore();
+
+        // Determine effective minimum score — tighter on expiry day
+        boolean isExpiryDay = nearestExpiry != null && isSameDay(nearestExpiry, new Date());
+        int effectiveMinScore = isExpiryDay
+                ? config.getExpiryDayMinimumScore()
+                : config.getMinimumScore();
+        boolean neutral = totalScore >= effectiveMinScore;
+
+        if (isExpiryDay) {
+            log.info("EXPIRY DAY detected — using tighter minimum score: {}/{} (normal={})",
+                    effectiveMinScore, MAX_SCORE, config.getMinimumScore());
+        }
 
         // Build per-signal summary string for record
         StringBuilder sb = new StringBuilder();
@@ -330,7 +349,7 @@ public class NeutralMarketDetectorService {
                 totalScore, MAX_SCORE, neutral, elapsed);
 
         return new NeutralMarketResult(neutral, totalScore, MAX_SCORE,
-                config.getMinimumScore(), Collections.unmodifiableList(signals), summary, Instant.now());
+                effectiveMinScore, Collections.unmodifiableList(signals), summary, Instant.now());
     }
 
     // ==================== SIGNAL 1: VWAP DEVIATION ====================
@@ -422,11 +441,11 @@ public class NeutralMarketDetectorService {
             if (!hasEnoughTimeForADX()) {
                 ZonedDateTime now = ZonedDateTime.now(IST);
                 long minutesSinceOpen = java.time.Duration.between(MARKET_OPEN, now.toLocalTime()).toMinutes();
-                log.info("ADX check: SKIPPED — only {}min since market open, need {}min for reliable ADX. " +
-                                "Treating as passed (no trend detected early in session).",
+                log.info("ADX check: UNAVAILABLE — only {}min since market open, need {}min for reliable ADX. " +
+                                "Returning unavailable (score 0) — insufficient data for trend assessment.",
                         minutesSinceOpen, MIN_MINUTES_AFTER_OPEN_FOR_ADX);
-                return SignalResult.passed(signalName,
-                        String.format("Early session bypass: %dmin since open (need %dmin). Defaulting to neutral.",
+                return SignalResult.unavailable(signalName,
+                        String.format("Early session: %dmin since open (need %dmin). Insufficient data for ADX.",
                                 minutesSinceOpen, MIN_MINUTES_AFTER_OPEN_FOR_ADX));
             }
 
@@ -674,8 +693,11 @@ public class NeutralMarketDetectorService {
             }
 
             // Aggregate OI per strike: combinedOI = callOI + putOI
+            // Also track total call and put OI separately for PCR computation
             // Kite SDK Quote.oi is double
             Map<Double, Double> combinedOI = new HashMap<>();
+            double totalCallOI = 0;
+            double totalPutOI = 0;
             for (Map.Entry<String, Quote> qEntry : quotes.entrySet()) {
                 String symbol = qEntry.getKey();
                 Quote quote = qEntry.getValue();
@@ -683,6 +705,12 @@ public class NeutralMarketDetectorService {
                 if (strike != null && quote != null) {
                     double oi = quote.oi;
                     combinedOI.merge(strike, oi, Double::sum);
+                    // Determine CE vs PE by symbol suffix
+                    if (symbol.endsWith("CE")) {
+                        totalCallOI += oi;
+                    } else if (symbol.endsWith("PE")) {
+                        totalPutOI += oi;
+                    }
                 }
             }
 
@@ -705,15 +733,19 @@ public class NeutralMarketDetectorService {
             double thresholdPct = config.getGammaPinThreshold() * 100;
             boolean passed = distance < config.getGammaPinThreshold();
 
-            log.info("Gamma pin check: price={}, maxOIStrike={}, maxOI={}, distancePct={}, threshold={}, passed={}",
+            // PCR = Put-Call Ratio (informational — valuable for log analysis)
+            double pcr = (totalCallOI > 0) ? totalPutOI / totalCallOI : 0.0;
+
+            log.info("Gamma pin check: price={}, maxOIStrike={}, maxOI={}, distancePct={}, threshold={}, pcr={}, passed={}",
                     String.format("%.2f", spotPrice), String.format("%.0f", maxOIStrike),
                     String.format("%.0f", maxOI), String.format("%.4f", distancePct),
-                    String.format("%.4f", thresholdPct), passed);
-            log.debug("Gamma pin detail: strikesScanned={}, symbolsFetched={}, quotesReceived={}, combinedOIEntries={}",
-                    targetStrikes.size(), allSymbols.size(), quotes.size(), combinedOI.size());
+                    String.format("%.4f", thresholdPct), String.format("%.2f", pcr), passed);
+            log.debug("Gamma pin detail: strikesScanned={}, symbolsFetched={}, quotesReceived={}, combinedOIEntries={}, totalCallOI={}, totalPutOI={}",
+                    targetStrikes.size(), allSymbols.size(), quotes.size(), combinedOI.size(),
+                    String.format("%.0f", totalCallOI), String.format("%.0f", totalPutOI));
 
-            String detail = String.format("MaxOI strike=%.0f (OI=%.0f), Spot=%.2f, Distance=%.4f%% (threshold=%.4f%%)",
-                    maxOIStrike, maxOI, spotPrice, distancePct, thresholdPct);
+            String detail = String.format("MaxOI strike=%.0f (OI=%.0f), Spot=%.2f, Distance=%.4f%% (threshold=%.4f%%), PCR=%.2f",
+                    maxOIStrike, maxOI, spotPrice, distancePct, thresholdPct, pcr);
             return passed ? SignalResult.passed(signalName, detail) : SignalResult.failed(signalName, detail);
 
         } catch (Exception | KiteException e) {
@@ -727,11 +759,12 @@ public class NeutralMarketDetectorService {
     /**
      * Check if the last N candles are compressed within a tight range.
      *
-     * @param spotPrice current spot price
-     * @param candles   1-minute candles (shared fetch)
+     * @param spotPrice    current spot price
+     * @param candles      1-minute candles (shared fetch)
+     * @param isExpiryDay  whether today is expiry day (uses tighter threshold)
      * @return SignalResult with score +2 if range &lt; threshold
      */
-    private SignalResult calculateRangeCompression(double spotPrice, List<HistoricalData> candles) {
+    private SignalResult calculateRangeCompression(double spotPrice, List<HistoricalData> candles, boolean isExpiryDay) {
         final String signalName = "RANGE_COMPRESSION";
         try {
             int required = config.getRangeCompressionCandles();
@@ -739,6 +772,11 @@ public class NeutralMarketDetectorService {
                 return SignalResult.unavailable(signalName,
                         "Insufficient candles: need " + required + ", got " + (candles == null ? 0 : candles.size()));
             }
+
+            // Use tighter range threshold on expiry day
+            double effectiveThreshold = isExpiryDay
+                    ? config.getExpiryDayRangeThreshold()
+                    : config.getRangeCompressionThreshold();
 
             // Use the last N candles
             int startIdx = candles.size() - required;
@@ -754,13 +792,13 @@ public class NeutralMarketDetectorService {
             double range = highestHigh - lowestLow;
             double rangeFraction = range / spotPrice;
             double rangePct = rangeFraction * 100;
-            double thresholdPct = config.getRangeCompressionThreshold() * 100;
-            boolean passed = rangeFraction < config.getRangeCompressionThreshold();
+            double thresholdPct = effectiveThreshold * 100;
+            boolean passed = rangeFraction < effectiveThreshold;
 
-            log.info("Range compression check: rangePoints={}, rangePct={}, threshold={}, highestHigh={}, lowestLow={}, candles={}, passed={}",
+            log.info("Range compression check: rangePoints={}, rangePct={}, threshold={}, highestHigh={}, lowestLow={}, candles={}, isExpiryDay={}, passed={}",
                     String.format("%.2f", range), String.format("%.4f", rangePct),
                     String.format("%.4f", thresholdPct), String.format("%.2f", highestHigh),
-                    String.format("%.2f", lowestLow), required, passed);
+                    String.format("%.2f", lowestLow), required, isExpiryDay, passed);
 
             String detail = String.format("Range=%.2f (H=%.2f, L=%.2f), RangePct=%.4f%% (threshold=%.4f%%), Candles=%d",
                     range, highestHigh, lowestLow, rangePct, thresholdPct, required);
@@ -776,12 +814,19 @@ public class NeutralMarketDetectorService {
 
     /**
      * Check if both ATM CE and PE premiums are decaying compared to previous snapshot.
-     * First invocation stores a baseline and returns score 0 (no prior data to compare).
+     * First invocation stores a baseline and returns unavailable (no prior data to compare).
+     *
+     * <h3>Guards</h3>
+     * <ul>
+     *   <li>ATM strike shift: if ATM strike changed between snapshots, skip (comparing different instruments)</li>
+     *   <li>Maximum snapshot age: discard stale snapshots older than {@code premiumMaxSnapshotAgeMs}</li>
+     *   <li>Minimum decay: both CE and PE must decay by at least {@code premiumMinDecayPct}%</li>
+     * </ul>
      *
      * @param spotPrice      current spot price
      * @param instrumentType "NIFTY" or "BANKNIFTY"
      * @param strikeInterval strike interval
-     * @return SignalResult with score +2 if both premiums are decreasing
+     * @return SignalResult with score +2 if both premiums are meaningfully decreasing
      */
     private SignalResult detectDualPremiumDecay(double spotPrice, String instrumentType, double strikeInterval,
                                                 List<Instrument> nfoInstruments, Date nearestExpiry) {
@@ -832,17 +877,27 @@ public class NeutralMarketDetectorService {
             // Compare with previous snapshot — must be same instrument
             PremiumSnapshot previous = previousPremiumSnapshot.get();
 
-            // Always store current as the new snapshot for next comparison
-            previousPremiumSnapshot.set(new PremiumSnapshot(currentCE, currentPE, now, instrumentType));
+            // Always store current as the new snapshot for next comparison (with ATM strike)
+            previousPremiumSnapshot.set(new PremiumSnapshot(currentCE, currentPE, now, instrumentType, atmStrike));
 
+            // Guard 1: First invocation — no prior data to compare
             if (previous == null || !instrumentType.equalsIgnoreCase(previous.instrumentType())) {
-                String detail = String.format("Baseline stored: CE=%.2f, PE=%.2f (first reading, no comparison)",
-                        currentCE, currentPE);
-                log.info("Signal {}: NO_DATA — {}", signalName, detail);
-                return SignalResult.failed(signalName, detail);
+                String detail = String.format("Baseline stored: CE=%.2f, PE=%.2f, ATM=%.0f (first reading, no comparison)",
+                        currentCE, currentPE, atmStrike);
+                log.info("Signal {}: UNAVAILABLE — {}", signalName, detail);
+                return SignalResult.unavailable(signalName, detail);
             }
 
-            // Check minimum interval between snapshots
+            // Guard 2: ATM strike shift — comparing different instruments would be meaningless
+            if (Math.abs(previous.atmStrike() - atmStrike) > 0.01) {
+                String detail = String.format("ATM strike shifted: %.0f -> %.0f. Skipping cross-strike comparison. " +
+                                "CE=%.2f, PE=%.2f (new baseline stored)",
+                        previous.atmStrike(), atmStrike, currentCE, currentPE);
+                log.info("Signal {}: UNAVAILABLE — {}", signalName, detail);
+                return SignalResult.unavailable(signalName, detail);
+            }
+
+            // Guard 3: Minimum snapshot interval
             long intervalMs = now.toEpochMilli() - previous.timestamp().toEpochMilli();
             if (intervalMs < config.getPremiumSnapshotMinIntervalMs()) {
                 String detail = String.format("Snapshot interval %dms < minimum %dms. CE=%.2f->%.2f, PE=%.2f->%.2f",
@@ -852,19 +907,41 @@ public class NeutralMarketDetectorService {
                 return SignalResult.failed(signalName, detail);
             }
 
+            // Guard 4: Maximum snapshot age — discard stale snapshots
+            if (intervalMs > config.getPremiumMaxSnapshotAgeMs()) {
+                String detail = String.format("Snapshot too old: %dms > max %dms. Discarding stale comparison. " +
+                                "CE=%.2f, PE=%.2f (new baseline stored)",
+                        intervalMs, config.getPremiumMaxSnapshotAgeMs(), currentCE, currentPE);
+                log.info("Signal {}: UNAVAILABLE — {}", signalName, detail);
+                return SignalResult.unavailable(signalName, detail);
+            }
+
             boolean ceDecaying = currentCE < previous.ceLtp();
             boolean peDecaying = currentPE < previous.peLtp();
-            boolean passed = ceDecaying && peDecaying;
 
-            log.info("Premium decay check: callPrev={}, callNow={}, callDecaying={}, putPrev={}, putNow={}, putDecaying={}, intervalMs={}, passed={}",
-                    String.format("%.2f", previous.ceLtp()), String.format("%.2f", currentCE), ceDecaying,
-                    String.format("%.2f", previous.peLtp()), String.format("%.2f", currentPE), peDecaying,
-                    intervalMs, passed);
+            // Guard 5: Minimum decay magnitude — prevent trivially small decays from passing
+            double ceDecayPct = (previous.ceLtp() > 0)
+                    ? (previous.ceLtp() - currentCE) / previous.ceLtp() * 100.0 : 0.0;
+            double peDecayPct = (previous.peLtp() > 0)
+                    ? (previous.peLtp() - currentPE) / previous.peLtp() * 100.0 : 0.0;
+            double minDecayPct = config.getPremiumMinDecayPct();
+            boolean ceDecaySufficient = ceDecaying && ceDecayPct >= minDecayPct;
+            boolean peDecaySufficient = peDecaying && peDecayPct >= minDecayPct;
+            boolean passed = ceDecaySufficient && peDecaySufficient;
 
-            String detail = String.format("CE: %.2f->%.2f (%s), PE: %.2f->%.2f (%s), interval=%dms",
-                    previous.ceLtp(), currentCE, ceDecaying ? "DECAYING" : "RISING",
-                    previous.peLtp(), currentPE, peDecaying ? "DECAYING" : "RISING",
-                    intervalMs);
+            log.info("Premium decay check: callPrev={}, callNow={}, callDecayPct={}, putPrev={}, putNow={}, putDecayPct={}, " +
+                            "minDecayPct={}, intervalMs={}, atmStrike={}, passed={}",
+                    String.format("%.2f", previous.ceLtp()), String.format("%.2f", currentCE),
+                    String.format("%.4f", ceDecayPct),
+                    String.format("%.2f", previous.peLtp()), String.format("%.2f", currentPE),
+                    String.format("%.4f", peDecayPct),
+                    String.format("%.4f", minDecayPct),
+                    intervalMs, String.format("%.0f", atmStrike), passed);
+
+            String detail = String.format("CE: %.2f->%.2f (%.4f%% %s), PE: %.2f->%.2f (%.4f%% %s), minDecay=%.2f%%, interval=%dms",
+                    previous.ceLtp(), currentCE, ceDecayPct, ceDecaySufficient ? "SUFFICIENT" : "INSUFFICIENT",
+                    previous.peLtp(), currentPE, peDecayPct, peDecaySufficient ? "SUFFICIENT" : "INSUFFICIENT",
+                    minDecayPct, intervalMs);
             return passed ? SignalResult.passed(signalName, detail) : SignalResult.failed(signalName, detail);
 
         } catch (Exception | KiteException e) {
@@ -876,10 +953,23 @@ public class NeutralMarketDetectorService {
     // ==================== DATA FETCHING HELPERS ====================
 
     private double fetchSpotPrice(String instrumentType) {
+        // Prefer MarketDataEngine cache (refreshed every 1s) — avoids redundant API calls
+        try {
+            Optional<Double> cachedPrice = marketDataEngine.getIndexPrice(instrumentType);
+            if (cachedPrice.isPresent()) {
+                log.debug("fetchSpotPrice: using MarketDataEngine cache for {} = {}", instrumentType, cachedPrice.get());
+                return cachedPrice.get();
+            }
+        } catch (Exception e) {
+            log.debug("fetchSpotPrice: MarketDataEngine cache miss for {}: {}", instrumentType, e.getMessage());
+        }
+
+        // Fallback to direct API call when MDE is disabled or cache is stale
         try {
             String symbol = resolveSpotSymbol(instrumentType);
             Map<String, LTPQuote> ltp = tradingService.getLTP(new String[]{symbol});
             if (ltp != null && ltp.containsKey(symbol)) {
+                log.debug("fetchSpotPrice: using direct API call for {} = {}", instrumentType, ltp.get(symbol).lastPrice);
                 return ltp.get(symbol).lastPrice;
             }
         } catch (KiteException | IOException e) {
@@ -890,10 +980,25 @@ public class NeutralMarketDetectorService {
 
     /**
      * Fetch 1-minute candles for VWAP and Range Compression (shared single API call).
+     * Prefers MarketDataEngine cache (refreshed every 60s) to avoid redundant API calls.
      */
-    private List<HistoricalData> fetchOneMinuteCandles(String instrumentToken) {
-        int count = Math.max(config.getVwapCandleCount(), config.getRangeCompressionCandles());
-        return fetchCandles(instrumentToken, "minute", count);
+    private List<HistoricalData> fetchOneMinuteCandles(String instrumentType, String instrumentToken) {
+        int requiredCount = Math.max(config.getVwapCandleCount(), config.getRangeCompressionCandles());
+
+        // Prefer MarketDataEngine cache (refreshed every 60s)
+        try {
+            Optional<List<HistoricalData>> cached = marketDataEngine.getCandles(instrumentType);
+            if (cached.isPresent() && cached.get().size() >= requiredCount) {
+                log.debug("fetchOneMinuteCandles: using MarketDataEngine cache for {}, candles={}", instrumentType, cached.get().size());
+                return cached.get();
+            }
+        } catch (Exception e) {
+            log.debug("fetchOneMinuteCandles: MarketDataEngine cache miss for {}: {}", instrumentType, e.getMessage());
+        }
+
+        // Fallback to direct API call
+        log.debug("fetchOneMinuteCandles: falling back to direct API call for {}", instrumentType);
+        return fetchCandles(instrumentToken, "minute", requiredCount);
     }
 
     /**

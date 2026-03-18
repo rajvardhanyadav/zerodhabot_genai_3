@@ -93,6 +93,9 @@ public class StrategyService {
         execution.setTargetDecayPct(request.getTargetDecayPct());
         execution.setStopLossExpansionPct(request.getStopLossExpansionPct());
         execution.setSlTargetMode(request.getSlTargetMode());
+        // Store hedge and order type for restart preservation
+        execution.setHedgeEnabled(request.getHedgeEnabled());
+        execution.setOrderType(request.getOrderType());
         execution.setTradingMode(unifiedTradingService.isPaperTradingEnabled()
                 ? StrategyConstants.TRADING_MODE_PAPER
                 : StrategyConstants.TRADING_MODE_LIVE);
@@ -160,6 +163,9 @@ public class StrategyService {
                 execution.setMessage(response.getMessage());
                 log.info("Strategy {} SKIPPED due to filter conditions (user={}): {}",
                         executionId, userId, response.getMessage());
+
+                // Publish event so restart scheduler registers it for retry on next neutral market event
+                eventPublisher.publishEvent(new StrategyCompletionEvent(this, execution));
             } else {
                 execution.setStatus(StrategyStatus.FAILED);
                 execution.setMessage(response.getMessage());

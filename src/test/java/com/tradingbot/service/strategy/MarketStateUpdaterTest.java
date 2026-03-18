@@ -1,7 +1,9 @@
 package com.tradingbot.service.strategy;
 
+import com.tradingbot.config.MarketDataEngineConfig;
 import com.tradingbot.config.NeutralMarketConfig;
 import com.tradingbot.model.MarketStateEvent;
+import com.tradingbot.service.session.UserSessionManager;
 import com.tradingbot.service.strategy.NeutralMarketDetectorService.NeutralMarketResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,7 +14,7 @@ import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.Instant;
 import java.util.Collections;
-import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -31,14 +33,24 @@ class MarketStateUpdaterTest {
     private NeutralMarketConfig neutralMarketConfig;
 
     @Mock
+    private MarketDataEngineConfig marketDataEngineConfig;
+
+    @Mock
     private ApplicationEventPublisher eventPublisher;
+
+    @Mock
+    private UserSessionManager userSessionManager;
 
     private MarketStateUpdater updater;
 
     @BeforeEach
     void setUp() {
         try (AutoCloseable mocks = MockitoAnnotations.openMocks(this)) {
-            updater = new MarketStateUpdater(neutralMarketDetectorService, neutralMarketConfig, eventPublisher);
+            when(marketDataEngineConfig.getSupportedInstrumentsArray()).thenReturn(new String[]{"NIFTY"});
+            updater = new MarketStateUpdater(neutralMarketDetectorService, neutralMarketConfig,
+                    marketDataEngineConfig, eventPublisher, userSessionManager);
+            // Default: at least one active user session
+            when(userSessionManager.getActiveUserIds()).thenReturn(Set.of("TEST_USER"));
         } catch (Exception e) {
             throw new RuntimeException("Failed to initialize mocks", e);
         }
@@ -58,17 +70,14 @@ class MarketStateUpdaterTest {
     }
 
     @Test
-    void testEvaluateAndPublish_WhenEnabled_PublishesEventsForBothInstruments() {
+    void testEvaluateAndPublish_WhenEnabled_PublishesEventForNifty() {
         // Given: Neutral market filter is enabled
         when(neutralMarketConfig.isEnabled()).thenReturn(true);
 
         NeutralMarketResult niftyResult = new NeutralMarketResult(
                 true, 8, 10, 7, Collections.emptyList(), "test-summary", Instant.now());
-        NeutralMarketResult bankNiftyResult = new NeutralMarketResult(
-                false, 4, 10, 7, Collections.emptyList(), "test-summary", Instant.now());
 
         when(neutralMarketDetectorService.evaluate("NIFTY")).thenReturn(niftyResult);
-        when(neutralMarketDetectorService.evaluate("BANKNIFTY")).thenReturn(bankNiftyResult);
 
         // Spy on the updater to override market hours check
         MarketStateUpdater spyUpdater = spy(updater);
@@ -77,27 +86,18 @@ class MarketStateUpdaterTest {
         // When
         spyUpdater.evaluateAndPublish();
 
-        // Then: Two events published
+        // Then: One event published for NIFTY
         ArgumentCaptor<MarketStateEvent> eventCaptor = ArgumentCaptor.forClass(MarketStateEvent.class);
-        verify(eventPublisher, times(2)).publishEvent(eventCaptor.capture());
+        verify(eventPublisher, times(1)).publishEvent(eventCaptor.capture());
 
-        List<MarketStateEvent> events = eventCaptor.getAllValues();
-
-        // NIFTY event
-        MarketStateEvent niftyEvent = events.get(0);
+        MarketStateEvent niftyEvent = eventCaptor.getValue();
         assertEquals("NIFTY", niftyEvent.instrumentType());
         assertTrue(niftyEvent.neutral());
         assertEquals(8, niftyEvent.score());
-
-        // BANKNIFTY event
-        MarketStateEvent bankNiftyEvent = events.get(1);
-        assertEquals("BANKNIFTY", bankNiftyEvent.instrumentType());
-        assertFalse(bankNiftyEvent.neutral());
-        assertEquals(4, bankNiftyEvent.score());
     }
 
     @Test
-    void testEvaluateAndPublish_WhenEvaluationThrows_ContinuesToNextInstrument() {
+    void testEvaluateAndPublish_WhenEvaluationThrows_NoEventsPublished() {
         // Given: Neutral market filter is enabled
         when(neutralMarketConfig.isEnabled()).thenReturn(true);
 
@@ -105,23 +105,14 @@ class MarketStateUpdaterTest {
         when(neutralMarketDetectorService.evaluate("NIFTY"))
                 .thenThrow(new RuntimeException("Kite API timeout"));
 
-        NeutralMarketResult bankNiftyResult = new NeutralMarketResult(
-                true, 8, 10, 7, Collections.emptyList(), "test-summary", Instant.now());
-        when(neutralMarketDetectorService.evaluate("BANKNIFTY")).thenReturn(bankNiftyResult);
-
         MarketStateUpdater spyUpdater = spy(updater);
         doReturn(true).when(spyUpdater).isWithinMarketHours();
 
         // When
         spyUpdater.evaluateAndPublish();
 
-        // Then: Only BANKNIFTY event published (NIFTY failed gracefully)
-        ArgumentCaptor<MarketStateEvent> eventCaptor = ArgumentCaptor.forClass(MarketStateEvent.class);
-        verify(eventPublisher, times(1)).publishEvent(eventCaptor.capture());
-
-        MarketStateEvent event = eventCaptor.getValue();
-        assertEquals("BANKNIFTY", event.instrumentType());
-        assertTrue(event.neutral());
+        // Then: No events published (NIFTY failed gracefully)
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     @Test

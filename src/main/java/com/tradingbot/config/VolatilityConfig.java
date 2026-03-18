@@ -51,12 +51,25 @@ public class VolatilityConfig {
     private BigDecimal absoluteThreshold = new BigDecimal("12.5");
 
     /**
-     * 5-minute VIX percentage change threshold.
-     * If VIX has increased by more than this percentage in the last 5 minutes,
-     * straddle placement is allowed (volatility expansion = opportunity).
+     * 5-minute VIX percentage change threshold (legacy — used by original OR-logic rules).
      * Default: 0.3 (0.3%)
      */
     private BigDecimal percentageChangeThreshold = new BigDecimal("0.3");
+
+    /**
+     * Spike threshold: block trade if VIX 5-min change exceeds this percentage.
+     * For a straddle SELLER, a rapid VIX spike means premiums are expanding dangerously.
+     * Default: 1.0 (1.0%)
+     */
+    private BigDecimal spikeThresholdPct = new BigDecimal("1.0");
+
+    /**
+     * Maximum percentage VIX can be above previous day close before blocking trade.
+     * For a straddle SELLER, a significantly elevated VIX vs previous close signals
+     * increasing risk — premiums may expand further.
+     * Default: 5.0 (5%)
+     */
+    private BigDecimal maxVixAbovePrevClosePct = new BigDecimal("5.0");
 
     /**
      * Enable volatility filter during backtesting/historical replay.

@@ -33,7 +33,7 @@ import static com.tradingbot.service.TradingConstants.*;
  *
  * <h2>Responsibilities</h2>
  * <ol>
- *   <li>{@link #getIndexPrice(String)} — Cached spot price of NIFTY/BANKNIFTY/SENSEX</li>
+ *   <li>{@link #getIndexPrice(String)} — Cached spot price of NIFTY/SENSEX</li>
  *   <li>{@link #getOptionChain(String, String)} — Pre-fetched option chain for index/expiry</li>
  *   <li>{@link #getCandles(String)} — Cached OHLCV candle data for a symbol</li>
  *   <li>{@link #getVWAP(String)} — Pre-computed VWAP from candle data</li>
@@ -190,7 +190,7 @@ public class MarketDataEngine {
      * Get cached spot price for an index instrument.
      * Returns Optional.empty() if data is stale or unavailable.
      *
-     * @param instrumentType "NIFTY", "BANKNIFTY", or "SENSEX"
+     * @param instrumentType "NIFTY" or "SENSEX"
      * @return Cached spot price or empty
      */
     public Optional<Double> getIndexPrice(String instrumentType) {
@@ -207,7 +207,7 @@ public class MarketDataEngine {
     /**
      * Get cached option chain for an instrument and expiry.
      *
-     * @param instrumentType "NIFTY" or "BANKNIFTY"
+     * @param instrumentType "NIFTY"
      * @param expiry "WEEKLY", "MONTHLY", or "yyyy-MM-dd"
      * @return Cached option chain or empty list
      */
@@ -226,7 +226,7 @@ public class MarketDataEngine {
     /**
      * Get pre-computed ATM strike for an instrument (nearest delta to 0.5).
      *
-     * @param instrumentType "NIFTY" or "BANKNIFTY"
+     * @param instrumentType "NIFTY"
      * @return Cached ATM strike or empty
      */
     public Optional<Double> getPrecomputedATMStrike(String instrumentType) {
@@ -243,7 +243,7 @@ public class MarketDataEngine {
     /**
      * Get pre-computed delta value for a specific strike.
      *
-     * @param instrumentType "NIFTY" or "BANKNIFTY"
+     * @param instrumentType "NIFTY"
      * @param strike Strike price
      * @return Cached delta or empty
      */
@@ -261,9 +261,26 @@ public class MarketDataEngine {
     }
 
     /**
+     * Get the full pre-computed delta map (strike → callDelta) for an instrument.
+     * Allows consumers to do arbitrary delta lookups at read time without engine code changes.
+     *
+     * @param instrumentType "NIFTY"
+     * @return Cached delta map or empty
+     */
+    public Optional<Map<Double, Double>> getPrecomputedDeltaMap(String instrumentType) {
+        CacheEntry<Map<Double, Double>> entry = deltaMapCache.get(instrumentType.toUpperCase());
+        if (entry != null && !entry.isExpired(config.getDeltaTtlMs())) {
+            cacheHitCount.incrementAndGet();
+            return Optional.of(entry.value);
+        }
+        cacheMissCount.incrementAndGet();
+        return Optional.empty();
+    }
+
+    /**
      * Get pre-computed strike for a target delta and option type.
      *
-     * @param instrumentType "NIFTY" or "BANKNIFTY"
+     * @param instrumentType "NIFTY"
      * @param targetDelta Target absolute delta (e.g., 0.1, 0.4)
      * @param optionType "CE" or "PE"
      * @return Cached strike or empty
@@ -283,7 +300,7 @@ public class MarketDataEngine {
     /**
      * Get cached VWAP for an instrument.
      *
-     * @param instrumentType "NIFTY" or "BANKNIFTY"
+     * @param instrumentType "NIFTY"
      * @return Cached VWAP or empty
      */
     public Optional<BigDecimal> getVWAP(String instrumentType) {
@@ -299,7 +316,7 @@ public class MarketDataEngine {
     /**
      * Get cached candle data for a symbol.
      *
-     * @param instrumentType "NIFTY" or "BANKNIFTY"
+     * @param instrumentType "NIFTY"
      * @return Cached candle data or empty list
      */
     public Optional<List<HistoricalData>> getCandles(String instrumentType) {
@@ -316,7 +333,7 @@ public class MarketDataEngine {
     /**
      * Get cached nearest weekly expiry date for an instrument.
      *
-     * @param instrumentType "NIFTY" or "BANKNIFTY"
+     * @param instrumentType "NIFTY"
      * @return Cached expiry date or empty
      */
     public Optional<Date> getNearestWeeklyExpiry(String instrumentType) {
@@ -329,15 +346,39 @@ public class MarketDataEngine {
 
     /**
      * Check if the engine is enabled and has warm cache data.
+     * Requires both spot prices AND ATM strike deltas to be cached for all instruments
+     * to prevent strategies from falling back to synchronous mode at startup.
      *
-     * @return true if engine is running and has at least spot prices cached
+     * @return true if engine is running and has spot + delta data cached
      */
     public boolean isWarmedUp() {
         if (!config.isEnabled()) return false;
         for (String inst : config.getSupportedInstrumentsArray()) {
-            if (!spotPriceCache.containsKey(inst.trim().toUpperCase())) return false;
+            String key = inst.trim().toUpperCase();
+            if (!spotPriceCache.containsKey(key)) return false;
         }
         return true;
+    }
+
+    /**
+     * Check if delta data is available (spot + ATM + delta map all cached).
+     * More strict than isWarmedUp() — use this before relying on delta-based strike selection.
+     *
+     * @return true if delta pre-computation is complete for at least one instrument
+     */
+    public boolean isDeltaWarmedUp() {
+        if (!isWarmedUp()) return false;
+        for (String inst : config.getSupportedInstrumentsArray()) {
+            String key = inst.trim().toUpperCase();
+            CacheEntry<Double> atm = atmStrikeCache.get(key);
+            CacheEntry<Map<Double, Double>> deltas = deltaMapCache.get(key);
+            if (atm != null && !atm.isExpired(config.getDeltaTtlMs())
+                    && deltas != null && !deltas.isExpired(config.getDeltaTtlMs())
+                    && !deltas.value.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -347,6 +388,7 @@ public class MarketDataEngine {
         Map<String, Object> stats = new LinkedHashMap<>();
         stats.put("enabled", config.isEnabled());
         stats.put("warmedUp", isWarmedUp());
+        stats.put("deltaWarmedUp", isDeltaWarmedUp());
         stats.put("spotPriceRefreshCount", spotPriceRefreshCount.get());
         stats.put("deltaRefreshCount", deltaRefreshCount.get());
         stats.put("optionChainRefreshCount", optionChainRefreshCount.get());
@@ -481,9 +523,17 @@ public class MarketDataEngine {
 
     /**
      * Refresh delta calculations for all supported instruments.
-     * Pre-computes: ATM strike, per-strike delta map, and strike-by-delta for common targets.
+     * Pre-computes: ATM strike, per-strike delta map, and strike-by-delta for all configured targets.
      * Frequency: every 5 seconds (configurable).
-     * API calls: 1 batch quote call per instrument (via DeltaCacheService).
+     * API calls: 1 batch quote call per instrument.
+     *
+     * <h2>Key optimizations over legacy BaseStrategy synchronous path:</h2>
+     * <ul>
+     *   <li>Single batch quote API call per instrument (vs N individual calls per strike)</li>
+     *   <li>Dynamic strike range: ±10 for near-ATM, ±30 for far OTM targets</li>
+     *   <li>Model-based fallback IV for far OTM strikes where market quotes are unavailable</li>
+     *   <li>Config-driven delta targets — no code change needed when strategy deltas change</li>
+     * </ul>
      */
     private void refreshDeltas() {
         if (!isMarketHours()) return;
@@ -524,9 +574,10 @@ public class MarketDataEngine {
                         double strikeInterval = getStrikeInterval(instType);
                         double approximateATM = Math.round(spotPrice / strikeInterval) * strikeInterval;
 
-                        // Generate strikes to check (±10 around ATM)
+                        // Use wider strike range to cover far OTM delta targets (0.1Δ, 0.05Δ hedges)
+                        int farRange = config.getDeltaStrikeRangeFarOtm();
                         Set<Double> strikesToCheck = new LinkedHashSet<>();
-                        for (int i = -10; i <= 10; i++) {
+                        for (int i = -farRange; i <= farRange; i++) {
                             strikesToCheck.add(approximateATM + i * strikeInterval);
                         }
 
@@ -548,7 +599,7 @@ public class MarketDataEngine {
                             return;
                         }
 
-                        // Batch fetch quotes (1 API call for ~42 instruments)
+                        // Batch fetch quotes (1 API call for all instruments)
                         Map<String, Quote> quotes = tradingService.getQuote(
                                 identifiers.toArray(new String[0]));
 
@@ -571,8 +622,9 @@ public class MarketDataEngine {
                         // Calculate implied forward price
                         double forwardPrice = calculateImpliedForward(spotPrice, midPrices, timeToExpiry);
 
-                        // Compute all deltas
+                        // Phase 1: Compute market-data-based deltas and collect IVs
                         Map<Double, Double> deltaMap = new HashMap<>();
+                        Map<Double, Double> computedIVs = new HashMap<>();
                         double sqrtT = Math.sqrt(timeToExpiry);
 
                         for (Map.Entry<Double, double[]> e : midPrices.entrySet()) {
@@ -586,11 +638,37 @@ public class MarketDataEngine {
                             double d1 = (Math.log(forwardPrice / strike) + 0.5 * iv * iv * timeToExpiry) / (iv * sqrtT);
                             double delta = cumulativeNormalDistribution(d1);
                             deltaMap.put(strike, delta);
+                            computedIVs.put(strike, iv);
+                        }
+
+                        // Phase 2: Model-based fallback for far OTM strikes without market data
+                        // This is critical for 0.1Δ and 0.05Δ hedge legs that are typically 15-30 strikes from ATM
+                        double fallbackIV = estimateFallbackIV(computedIVs, approximateATM, strikeInterval);
+                        int fallbackCount = 0;
+
+                        for (Double strike : strikesToCheck) {
+                            if (deltaMap.containsKey(strike)) continue;
+
+                            double d1 = (Math.log(forwardPrice / strike) + 0.5 * fallbackIV * fallbackIV * timeToExpiry)
+                                    / (fallbackIV * sqrtT);
+                            double modelDelta = cumulativeNormalDistribution(d1);
+
+                            // Only add if delta is in a reasonable range (excludes deep ITM/OTM noise)
+                            if (modelDelta > 0.001 && modelDelta < 0.999) {
+                                deltaMap.put(strike, modelDelta);
+                                fallbackCount++;
+                            }
                         }
 
                         if (deltaMap.isEmpty()) {
                             log.debug("Delta computation produced no results for {}", instType);
                             return;
+                        }
+
+                        if (fallbackCount > 0) {
+                            log.debug("Delta refresh for {}: {} market-based + {} model-based (fallbackIV={}) = {} total strikes",
+                                    instType, deltaMap.size() - fallbackCount, fallbackCount,
+                                    String.format("%.4f", fallbackIV), deltaMap.size());
                         }
 
                         // Store delta map
@@ -608,8 +686,8 @@ public class MarketDataEngine {
                         }
                         atmStrikeCache.put(instType, new CacheEntry<>(bestStrike));
 
-                        // Pre-compute strikes for common target deltas (0.1, 0.15, 0.2, 0.3, 0.4, 0.5)
-                        double[] targetDeltas = {0.1, 0.15, 0.2, 0.3, 0.4, 0.5};
+                        // Pre-compute strikes for all configured target deltas
+                        double[] targetDeltas = config.getDeltaTargetsArray();
                         for (double targetDelta : targetDeltas) {
                             // CE: find strike where callDelta ≈ targetDelta
                             double bestCE = findStrikeForDelta(deltaMap, targetDelta, true, approximateATM);
@@ -623,7 +701,8 @@ public class MarketDataEngine {
                         }
 
                         deltaRefreshCount.incrementAndGet();
-                        log.debug("Delta refresh complete for {}: ATM={}, deltaStrikes={}", instType, bestStrike, deltaMap.size());
+                        log.debug("Delta refresh complete for {}: ATM={}, deltaStrikes={}, targets={}",
+                                instType, bestStrike, deltaMap.size(), targetDeltas.length);
 
                     } catch (KiteException | IOException e) {
                         log.warn("Failed to refresh deltas for {}: {}", instType, e.getMessage());
@@ -633,6 +712,54 @@ public class MarketDataEngine {
                 log.warn("Error in delta refresh for {}: {}", instType, e.getMessage());
             }
         }
+    }
+
+    /**
+     * Estimate a fallback IV for model-based delta computation when market quotes are unavailable.
+     * Extracts IVs from near-ATM strikes that were successfully computed, and returns the median.
+     *
+     * @param computedIVs    map of strike → IV from successful market-data-based computations
+     * @param approximateATM approximate ATM strike
+     * @param strikeInterval strike interval for the instrument
+     * @return estimated implied volatility for model-based computation
+     */
+    private double estimateFallbackIV(Map<Double, Double> computedIVs, double approximateATM,
+                                       double strikeInterval) {
+        if (computedIVs == null || computedIVs.isEmpty()) {
+            return 0.15; // conservative default
+        }
+
+        // Collect IVs from near-ATM strikes (within ±5 strike intervals)
+        double nearATMBound = 5.0 * strikeInterval;
+        List<Double> nearATMIVs = new ArrayList<>();
+        for (Map.Entry<Double, Double> entry : computedIVs.entrySet()) {
+            if (Math.abs(entry.getKey() - approximateATM) <= nearATMBound) {
+                double iv = entry.getValue();
+                if (iv > 0.01 && iv < 3.0) {
+                    nearATMIVs.add(iv);
+                }
+            }
+        }
+
+        if (nearATMIVs.isEmpty()) {
+            // Fall back to all available IVs
+            for (Double iv : computedIVs.values()) {
+                if (iv > 0.01 && iv < 3.0) {
+                    nearATMIVs.add(iv);
+                }
+            }
+        }
+
+        if (nearATMIVs.isEmpty()) {
+            return 0.15;
+        }
+
+        // Return median IV for robustness
+        Collections.sort(nearATMIVs);
+        int size = nearATMIVs.size();
+        return size % 2 == 1
+                ? nearATMIVs.get(size / 2)
+                : (nearATMIVs.get(size / 2 - 1) + nearATMIVs.get(size / 2)) / 2.0;
     }
 
     /**
@@ -937,7 +1064,6 @@ public class MarketDataEngine {
     private String mapInstrumentToSymbol(String instrumentType) {
         return switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> "NSE:NIFTY 50";
-            case "BANKNIFTY" -> "NSE:NIFTY BANK";
             case "SENSEX" -> "BSE:SENSEX";
             default -> "NSE:" + instrumentType;
         };
@@ -946,7 +1072,6 @@ public class MarketDataEngine {
     private String mapToUnderlyingName(String instrumentType) {
         return switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> INSTRUMENT_NIFTY;
-            case "BANKNIFTY" -> INSTRUMENT_BANKNIFTY;
             default -> instrumentType.toUpperCase();
         };
     }
@@ -954,7 +1079,6 @@ public class MarketDataEngine {
     private double getStrikeInterval(String instrumentType) {
         return switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> 50.0;
-            case "BANKNIFTY" -> 100.0;
             default -> 50.0;
         };
     }
@@ -963,7 +1087,6 @@ public class MarketDataEngine {
         // Use well-known instrument tokens for major indices
         return switch (instrumentType.toUpperCase()) {
             case "NIFTY" -> "256265";   // NSE:NIFTY 50
-            case "BANKNIFTY" -> "260105"; // NSE:NIFTY BANK
             default -> null;
         };
     }
@@ -1048,13 +1171,5 @@ public class MarketDataEngine {
         }
     }
 }
-
-
-
-
-
-
-
-
 
 

@@ -33,7 +33,7 @@ public class MarketDataEngineConfig {
 
     /**
      * Spot price refresh interval.
-     * Index prices (NIFTY/BANKNIFTY/SENSEX) refresh at this rate.
+     * Index prices (NIFTY/SENSEX) refresh at this rate.
      * Default: 1000ms (1 second) — critical for ATM strike accuracy.
      */
     private long spotPriceRefreshMs = 1000;
@@ -110,9 +110,38 @@ public class MarketDataEngineConfig {
 
     /**
      * Comma-separated list of supported index instruments.
-     * Default: NIFTY,BANKNIFTY
+     * Default: NIFTY
      */
-    private String supportedInstruments = "NIFTY,BANKNIFTY";
+    private String supportedInstruments = "NIFTY";
+
+    // ==================== DELTA PRE-COMPUTATION ====================
+
+    /**
+     * Comma-separated list of target delta values to pre-compute strikes for.
+     * Must cover all strategy requirements:
+     * - 0.5: ATM straddle sell legs
+     * - 0.4: Short strangle sell legs (shortStrangleSellDelta)
+     * - 0.3: Near-ATM analysis
+     * - 0.2: Moderate OTM analysis
+     * - 0.15: OTM analysis
+     * - 0.1: Hedge legs (sellStraddleHedgeDelta, shortStrangleHedgeDelta)
+     * - 0.05: Far OTM hedge analysis
+     * Default: "0.05,0.1,0.15,0.2,0.25,0.3,0.35,0.4,0.45,0.5"
+     */
+    private String deltaTargets = "0.05,0.1,0.15,0.2,0.25,0.3,0.35,0.4,0.45,0.5";
+
+    /**
+     * Number of strikes to scan on each side of ATM for near-ATM delta targets (≥ 0.3).
+     * Default: 10
+     */
+    private int deltaStrikeRangeNearAtm = 10;
+
+    /**
+     * Number of strikes to scan on each side of ATM for far OTM delta targets (< 0.3).
+     * Must be wide enough to find 0.1Δ and 0.05Δ strikes.
+     * Default: 30
+     */
+    private int deltaStrikeRangeFarOtm = 30;
 
     /**
      * Returns the supported instruments as an array.
@@ -120,5 +149,16 @@ public class MarketDataEngineConfig {
     public String[] getSupportedInstrumentsArray() {
         return supportedInstruments.split(",");
     }
-}
 
+    /**
+     * Returns the delta targets as a double array.
+     */
+    public double[] getDeltaTargetsArray() {
+        String[] parts = deltaTargets.split(",");
+        double[] targets = new double[parts.length];
+        for (int i = 0; i < parts.length; i++) {
+            targets[i] = Double.parseDouble(parts[i].trim());
+        }
+        return targets;
+    }
+}

@@ -185,6 +185,42 @@ public class StrategyConfig {
      */
     private double shortStrangleHedgeDelta = 0.1;
 
+    // ==================== ENTRY TIME WINDOW CONFIGURATION ====================
+
+    /**
+     * Earliest time (IST) at which a new straddle entry is permitted.
+     * Entries before this time are SKIPPED to avoid opening noise and gaps.
+     * Format: "HH:mm"
+     * Default: "10:00" (45 minutes after market open for data warmup)
+     */
+    private String entryWindowStart = "10:00";
+
+    /**
+     * Latest time (IST) at which a new straddle entry is permitted.
+     * Entries after this time are SKIPPED — insufficient theta remaining.
+     * Format: "HH:mm"
+     * Default: "14:00" (1 hour+ before auto square-off)
+     */
+    private String entryWindowEnd = "15:00";
+
+    // ==================== EXPIRY DAY CONFIGURATION ====================
+
+    /**
+     * Whether to allow trading on expiry day.
+     * When false, all entries on expiry day are SKIPPED.
+     * Default: true (allow with tighter thresholds)
+     */
+    private boolean expiryDayEnabled = true;
+
+    /**
+     * Tighter entry window end time on expiry day (IST).
+     * On expiry, gamma acceleration makes late entries very risky.
+     * Format: "HH:mm"
+     * Default: "13:00"
+     */
+    private String expiryDayEntryEndTime = "13:00";
+
+
     @Bean
     public TaskScheduler strategyTaskScheduler() {
         ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();

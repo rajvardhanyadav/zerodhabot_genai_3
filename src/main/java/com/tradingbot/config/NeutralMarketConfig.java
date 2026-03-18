@@ -35,10 +35,12 @@ public class NeutralMarketConfig {
         if (enabled) {
             log.info("Neutral market config: enabled={}, minimumScore={}, cacheTtlMs={}, " +
                             "vwapThreshold={}, adxThreshold={}, gammaPinThreshold={}, " +
-                            "rangeThreshold={}, premiumSnapshotIntervalMs={}, allowOnUnavailable={}",
+                            "rangeThreshold={}, premiumSnapshotIntervalMs={}, premiumMinDecayPct={}, " +
+                            "premiumMaxSnapshotAgeMs={}, allowOnUnavailable={}",
                     enabled, minimumScore, cacheTtlMs,
                     vwapDeviationThreshold, adxThreshold, gammaPinThreshold,
-                    rangeCompressionThreshold, premiumSnapshotMinIntervalMs, allowOnDataUnavailable);
+                    rangeCompressionThreshold, premiumSnapshotMinIntervalMs, premiumMinDecayPct,
+                    premiumMaxSnapshotAgeMs, allowOnDataUnavailable);
         }
     }
 
@@ -55,6 +57,21 @@ public class NeutralMarketConfig {
      * Default: 7 (requires at least 4 of 5 signals to pass)
      */
     private int minimumScore = 7;
+
+    /**
+     * Tighter minimum score required on expiry day (0–10).
+     * On expiry day, gamma is elevated and only strongly pinned markets justify entry.
+     * Default: 8 (requires at least 4 of 5 signals, with strong confidence)
+     */
+    private int expiryDayMinimumScore = 8;
+
+    /**
+     * Tighter range compression threshold on expiry day.
+     * Expressed as a decimal fraction (e.g., 0.002 = 0.2%).
+     * On expiry day, the market should be in an even tighter range to justify selling.
+     * Default: 0.002 (0.2% = ~48 points at NIFTY 24000)
+     */
+    private double expiryDayRangeThreshold = 0.002;
 
     // ==================== VWAP DEVIATION ====================
 
@@ -155,6 +172,23 @@ public class NeutralMarketConfig {
      * Default: 25000 (25 seconds — gives 5s headroom with 30s cache TTL)
      */
     private long premiumSnapshotMinIntervalMs = 25000;
+
+    /**
+     * Minimum percentage decay required for both CE and PE premiums to pass the signal.
+     * Prevents trivially small decays (e.g., ₹0.05 on a ₹120 premium) from triggering a pass.
+     * Expressed as a percentage (e.g., 0.5 = 0.5%).
+     * Default: 0.5 (0.5% — for NIFTY ATM premiums of ~₹100–200, this is ₹0.50–₹1.00)
+     */
+    private double premiumMinDecayPct = 0.5;
+
+    /**
+     * Maximum age (ms) of the previous premium snapshot before it is discarded.
+     * If the previous snapshot is older than this, the comparison is skipped and the
+     * snapshot is replaced with the current reading (treated as a fresh baseline).
+     * Prevents stale comparisons after cache clears, restarts, or prolonged data gaps.
+     * Default: 120000 (2 minutes)
+     */
+    private long premiumMaxSnapshotAgeMs = 120000;
 
     // ==================== CACHING ====================
 

@@ -6,6 +6,7 @@ import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.dto.StrategyTypeInfo;
 import com.tradingbot.model.StrategyExecution;
+import com.tradingbot.model.StrategyStatus;
 import com.tradingbot.model.StrategyType;
 import com.tradingbot.service.StrategyService;
 import com.tradingbot.util.ApiConstants;
@@ -54,7 +55,12 @@ public class StrategyController {
         log.info(ApiConstants.LOG_EXECUTE_STRATEGY_REQUEST, request.getStrategyType(), request.getInstrumentType());
         StrategyExecutionResponse response = strategyService.executeStrategy(request);
         log.info(ApiConstants.LOG_EXECUTE_STRATEGY_RESPONSE, response.getExecutionId(), response.getStatus());
-        botStatusService.markRunning();
+
+        // Only mark RUNNING if positions were actually opened (not SKIPPED)
+        if (!StrategyStatus.SKIPPED.name().equalsIgnoreCase(response.getStatus())) {
+            botStatusService.markRunning();
+        }
+
         return ResponseEntity.ok(ApiResponse.success(ApiConstants.MSG_STRATEGY_EXECUTED_SUCCESS, response));
     }
 
