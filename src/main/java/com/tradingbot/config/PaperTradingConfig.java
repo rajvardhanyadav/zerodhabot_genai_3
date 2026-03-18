@@ -4,6 +4,8 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
  * Paper Trading Configuration
  * Controls whether the application runs in paper trading mode or live trading mode
@@ -34,4 +36,27 @@ public class PaperTradingConfig {
     // Order rejection simulation
     private boolean enableOrderRejection = false;
     private double rejectionProbability = 0.02; // 2%
+
+    /**
+     * Runtime override for paper trading mode. When set, overrides
+     * the static paperTradingEnabled config value. Thread-safe for runtime toggling.
+     */
+    private final AtomicBoolean runtimeOverride = new AtomicBoolean();
+    private volatile boolean runtimeOverrideSet = false;
+
+    /**
+     * Thread-safe runtime toggle. Overrides the static config value.
+     * Called by PaperTradingController.setTradingMode().
+     */
+    public void setRuntimePaperTradingEnabled(boolean enabled) {
+        runtimeOverride.set(enabled);
+        runtimeOverrideSet = true;
+    }
+
+    /**
+     * Returns effective paper trading state: runtime override if set, else static config.
+     */
+    public boolean isEffectivelyPaperTradingEnabled() {
+        return runtimeOverrideSet ? runtimeOverride.get() : paperTradingEnabled;
+    }
 }

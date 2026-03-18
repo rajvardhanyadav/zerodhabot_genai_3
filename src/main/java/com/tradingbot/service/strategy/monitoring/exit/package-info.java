@@ -37,7 +37,7 @@
  *   <li>Pre-computed thresholds passed via context</li>
  * </ul>
  *
- * @see com.tradingbot.service.strategy.monitoring.PositionMonitor
+ * @see com.tradingbot.service.strategy.monitoring.PositionMonitorV2
  */
 package com.tradingbot.service.strategy.monitoring.exit;
 

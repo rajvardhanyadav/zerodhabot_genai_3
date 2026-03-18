@@ -256,11 +256,7 @@ public class TradingHistoryController {
             @Parameter(description = "Date (yyyy-MM-dd), defaults to today", example = "2026-03-14")
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
 
-        String userId = CurrentUserContext.getUserId();
-        if (userId == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("X-User-Id header is required"));
-        }
+        String userId = CurrentUserContext.getRequiredUserId();
 
         LocalDate targetDate = date != null ? date : LocalDate.now();
         List<MTMSnapshotEntity> snapshots = persistenceService.getMTMSnapshotsForDate(userId, targetDate);
@@ -338,11 +334,7 @@ public class TradingHistoryController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
     })
     public ResponseEntity<ApiResponse<List<WebSocketEventEntity>>> getWebSocketEvents() {
-        String userId = CurrentUserContext.getUserId();
-        if (userId == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("X-User-Id header is required"));
-        }
+        String userId = CurrentUserContext.getRequiredUserId();
 
         List<WebSocketEventEntity> events = persistenceService.getWebSocketEventsByUser(userId);
         return ResponseEntity.ok(ApiResponse.success(

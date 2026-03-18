@@ -6,12 +6,14 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.InetAddress;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -23,6 +25,9 @@ public class HealthController {
 
     private final UserSessionManager sessionManager;
 
+    @Value("${spring.application.version:unknown}")
+    private String appVersion;
+
     @GetMapping("/health")
     @Operation(summary = "Get application health status",
                description = "Returns basic application health information including status, version, and environment")
@@ -33,10 +38,10 @@ public class HealthController {
     public Map<String, Object> health() {
         return Map.of(
             "status", "UP",
-            "timestamp", LocalDateTime.now(),
+            "timestamp", LocalDateTime.now(ZoneId.of("Asia/Kolkata")),
             "application", "Zerodha Trading Bot",
-            "version", "4.1",
-            "environment", "production"
+            "version", appVersion,
+            "environment", System.getenv("K_SERVICE") != null ? "cloud-run" : "local"
         );
     }
 

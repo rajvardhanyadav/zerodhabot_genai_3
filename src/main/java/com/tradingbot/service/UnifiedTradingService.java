@@ -183,7 +183,7 @@ public class UnifiedTradingService {
      * Check if paper trading is enabled
      */
     public boolean isPaperTradingEnabled() {
-        return config.isPaperTradingEnabled();
+        return config.isEffectivelyPaperTradingEnabled();
     }
 
     /**

@@ -27,7 +27,8 @@ public class UserContextFilter extends OncePerRequestFilter {
             "/api/gtt",
             "/api/strategies",
             "/api/monitoring",
-            "/api/historical" // removed /api/auth/session so initial session creation can occur without header
+            "/api/historical", // removed /api/auth/session so initial session creation can occur without header
+            "/api/history"
     );
 
     @Override

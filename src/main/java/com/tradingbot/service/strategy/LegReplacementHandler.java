@@ -134,7 +134,7 @@ public class LegReplacementHandler {
      * @param targetPremium       target premium
      * @param lossMakingLegSymbol symbol of loss-making leg (reference)
      * @param quantity            order quantity
-     * @param monitor             PositionMonitor to update
+     * @param monitor             PositionMonitorV2 to update
      * @param exitedLegLtp        LTP of exited leg
      */
     public void placeReplacementLegOrder(String executionId,

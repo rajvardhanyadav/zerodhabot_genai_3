@@ -48,10 +48,6 @@ public class StrategyController {
     public ResponseEntity<ApiResponse<StrategyExecutionResponse>> executeStrategy(
             @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Strategy execution parameters including type, instrument, expiry, and exit conditions", required = true)
             @Valid @RequestBody StrategyRequest request) throws KiteException, IOException {
-        // Default to ATM_STRADDLE when strategyType is not provided by frontend
-        if (request.getStrategyType() == null) {
-            request.setStrategyType(StrategyType.ATM_STRADDLE);
-        }
         log.info(ApiConstants.LOG_EXECUTE_STRATEGY_REQUEST, request.getStrategyType(), request.getInstrumentType());
         StrategyExecutionResponse response = strategyService.executeStrategy(request);
         log.info(ApiConstants.LOG_EXECUTE_STRATEGY_RESPONSE, response.getExecutionId(), response.getStatus());
@@ -128,15 +124,11 @@ public class StrategyController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Instruments returned"),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
     })
-    public ResponseEntity<ApiResponse<List<InstrumentInfo>>> getInstruments() {
+    public ResponseEntity<ApiResponse<List<InstrumentInfo>>> getInstruments()
+            throws KiteException, IOException {
         log.debug(ApiConstants.LOG_GET_INSTRUMENTS_REQUEST);
-        List<StrategyService.InstrumentDetail> instrumentDetails = null;
-        try {
-            instrumentDetails = strategyService.getAvailableInstruments();
-        } catch (KiteException e) {
-            logKiteExceptionDetails(e);
-            throw new RuntimeException(e);
-        }
+        List<StrategyService.InstrumentDetail> instrumentDetails =
+                strategyService.getAvailableInstruments();
 
         List<InstrumentInfo> instruments = instrumentDetails.stream()
             .map(detail -> new InstrumentInfo(
@@ -149,19 +141,6 @@ public class StrategyController {
         return ResponseEntity.ok(ApiResponse.success(instruments));
     }
 
-    private void logKiteExceptionDetails(KiteException e) {
-        log.error("╔═══════════════════════════════════════════════════════════════╗");
-        log.error("║              KITE API EXCEPTION DETAILS                       ║");
-        log.error("╠═══════════════════════════════════════════════════════════════╣");
-        log.error("║ Error Code     : {}", e.code);
-        log.error("║ Error Message  : {}", e.message);
-        log.error("║ Exception Class: {}", e.getClass().getSimpleName());
-        log.error("║ getMessage()   : {}", e.getMessage());
-        log.error("║ Cause          : {}", e.getCause() != null ? e.getCause().getMessage() : "null");
-        log.error("╠═══════════════════════════════════════════════════════════════╣");
-        log.error("║ FULL STACK TRACE:                                             ║");
-        log.error("╚═══════════════════════════════════════════════════════════════╝", e);
-    }
 
     @GetMapping("/expiries/{instrumentType}")
     @Operation(summary = "Get available expiry dates for an instrument",

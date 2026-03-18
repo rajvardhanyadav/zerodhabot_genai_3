@@ -133,8 +133,8 @@ public class PaperTradingController {
         info.put("mode", isPaperMode ? "PAPER_TRADING" : "LIVE_TRADING");
         info.put("paperTradingEnabled", isPaperMode);
         info.put("description", isPaperMode
-            ? "📊 Paper Trading Mode: All orders are simulated using real-time market data from Kite API"
-            : "💰 Live Trading Mode: Orders are placed on actual exchange via Kite API");
+            ? "Paper Trading Mode: All orders are simulated using real-time market data"
+            : "Live Trading Mode: Orders are placed on actual exchange via Kite API");
 
         if (isPaperMode) {
             PaperAccount account = unifiedTradingService.getPaperAccount();
@@ -166,7 +166,7 @@ public class PaperTradingController {
             return ResponseEntity.ok(ApiResponse.success(status));
         }
 
-        paperTradingConfig.setPaperTradingEnabled(paperTradingEnabled);
+        paperTradingConfig.setRuntimePaperTradingEnabled(paperTradingEnabled);
         boolean isPaperMode = unifiedTradingService.isPaperTradingEnabled();
 
         // Audit log with user id and timestamp

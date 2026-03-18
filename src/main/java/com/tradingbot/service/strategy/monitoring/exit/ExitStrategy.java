@@ -4,7 +4,7 @@ package com.tradingbot.service.strategy.monitoring.exit;
  * Strategy interface for HFT-optimized exit evaluation.
  * <p>
  * Implementations encapsulate specific exit logic (points-based, premium-based, time-based)
- * and are evaluated in priority order by {@link com.tradingbot.service.strategy.monitoring.PositionMonitor}.
+ * and are evaluated in priority order by {@link com.tradingbot.service.strategy.monitoring.PositionMonitorV2}.
  *
  * <h2>Design Principles</h2>
  * <ul>

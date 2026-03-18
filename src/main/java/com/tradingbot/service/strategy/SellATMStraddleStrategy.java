@@ -46,7 +46,7 @@ import static com.tradingbot.service.TradingConstants.*;
  * requirements and cap maximum loss. Hedge is configurable via
  * {@code strategy.sell-straddle-hedge-enabled} or per-request via {@code hedgeEnabled}.
  * <p>
- * Entry/exit thresholds match PositionMonitor (2.5 & 4 points).
+ * Entry/exit thresholds match PositionMonitorV2 (2.5 & 4 points).
  * Flow mirrors ATMStraddleStrategy but uses SELL instead of BUY.
  * <p>
  * HFT Optimizations:

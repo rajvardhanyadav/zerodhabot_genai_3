@@ -1,6 +1,7 @@
 package com.tradingbot.controller;
 
 import com.tradingbot.dto.ApiResponse;
+import com.tradingbot.service.InstrumentCacheService;
 import com.tradingbot.service.MarketDataEngine;
 import com.tradingbot.service.TradingService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
@@ -28,12 +29,17 @@ import java.util.Map;
 @Tag(name = "Market Data", description = "Market data and quotes endpoints")
 public class MarketDataController {
 
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
+
     private final TradingService tradingService;
     private final MarketDataEngine marketDataEngine;
+    private final InstrumentCacheService instrumentCacheService;
 
-    public MarketDataController(TradingService tradingService, MarketDataEngine marketDataEngine) {
+    public MarketDataController(TradingService tradingService, MarketDataEngine marketDataEngine,
+                                InstrumentCacheService instrumentCacheService) {
         this.tradingService = tradingService;
         this.marketDataEngine = marketDataEngine;
+        this.instrumentCacheService = instrumentCacheService;
     }
 
     // ==================== MARKET DATA ENGINE ENDPOINTS ====================
@@ -200,7 +206,7 @@ public class MarketDataController {
             @Parameter(description = "Exchange segment: NSE, NFO, BSE, BFO, MCX, CDS", required = true, example = "NFO")
             @PathVariable String exchange)
             throws KiteException, IOException {
-        List<Instrument> instruments = tradingService.getInstruments(exchange);
+        List<Instrument> instruments = instrumentCacheService.getInstruments(exchange.toUpperCase());
         return ResponseEntity.ok(ApiResponse.success(instruments));
     }
 
@@ -209,7 +215,7 @@ public class MarketDataController {
      */
     private Date parseDate(String dateStr) throws DateTimeParseException {
         LocalDate localDate = LocalDate.parse(dateStr);
-        return Date.from(localDate.atStartOfDay(ZoneId.systemDefault()).toInstant());
+        return Date.from(localDate.atStartOfDay(IST).toInstant());
     }
 
     /**
