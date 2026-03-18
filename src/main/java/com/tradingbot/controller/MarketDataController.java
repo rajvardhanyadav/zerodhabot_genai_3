@@ -190,7 +190,7 @@ public class MarketDataController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Kite API error")
     })
     public ResponseEntity<ApiResponse<List<Instrument>>> getInstruments() throws KiteException, IOException {
-        List<Instrument> instruments = tradingService.getInstruments();
+        List<Instrument> instruments = instrumentCacheService.getAllInstruments();
         return ResponseEntity.ok(ApiResponse.success(instruments));
     }
 

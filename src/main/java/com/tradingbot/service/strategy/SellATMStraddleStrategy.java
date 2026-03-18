@@ -11,6 +11,7 @@ import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.SlTargetMode;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyStatus;
+import com.tradingbot.service.InstrumentCacheService;
 import com.tradingbot.service.MarketDataEngine;
 import com.tradingbot.service.StrategyService;
 import com.tradingbot.service.TradingService;
@@ -81,6 +82,9 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     private static final ThreadFactory HFT_THREAD_FACTORY = r -> {
         Thread t = new Thread(r, "hft-sell-exit-" + THREAD_COUNTER.incrementAndGet());
         t.setDaemon(true);
+        // NOTE: Thread.MAX_PRIORITY is a JVM hint to the OS scheduler.
+        // On Linux (Cloud Run), this maps to a lower nice value but is not guaranteed.
+        // Actual exit latency depends on system load, not thread priority alone.
         t.setPriority(Thread.MAX_PRIORITY);
         return t;
     };
@@ -125,8 +129,9 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                    LegReplacementHandler legReplacementHandler,
                                    MonitoringSetupHelper monitoringSetupHelper,
                                    NeutralMarketDetectorService neutralMarketDetectorService,
-                                   MarketDataEngine marketDataEngine) {
-        super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService, marketDataEngine);
+                                   MarketDataEngine marketDataEngine,
+                                   InstrumentCacheService instrumentCacheService) {
+        super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService, marketDataEngine, instrumentCacheService);
         this.webSocketService = webSocketService;
         this.strategyConfig = strategyConfig;
         this.strategyService = strategyService;

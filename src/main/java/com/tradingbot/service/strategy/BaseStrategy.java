@@ -2,6 +2,7 @@ package com.tradingbot.service.strategy;
 
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.dto.StrategyRequest;
+import com.tradingbot.service.InstrumentCacheService;
 import com.tradingbot.service.MarketDataEngine;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.service.UnifiedTradingService;
@@ -34,10 +35,8 @@ public abstract class BaseStrategy implements TradingStrategy {
     protected final Map<String, Integer> lotSizeCache;
     protected final DeltaCacheService deltaCacheService;
     protected final MarketDataEngine marketDataEngine;
-    private final Map<String, List<Instrument>> instrumentCache = new HashMap<>();
+    protected final InstrumentCacheService instrumentCacheService;
 
-    // HFT: Flag to enable/disable cache usage (default: enabled)
-    private static final boolean USE_DELTA_CACHE = true;
 
     // Constants for Black-Scholes calculation
     private static final double RISK_FREE_RATE = 0.065; // Approximate annual risk-free rate (6.5%)
@@ -64,42 +63,26 @@ public abstract class BaseStrategy implements TradingStrategy {
     private static final ThreadLocal<Calendar> CALENDAR_DEFAULT = ThreadLocal.withInitial(Calendar::getInstance);
 
     /**
-     * Full constructor with MarketDataEngine support.
+     * Full constructor with MarketDataEngine and InstrumentCacheService support.
      * @param tradingService Core trading service for API calls
      * @param unifiedTradingService Unified service for paper/live trading
      * @param lotSizeCache Cache for lot sizes
      * @param deltaCacheService Service for pre-computed delta values (can be null for backward compatibility)
      * @param marketDataEngine Centralized market data engine (can be null for backward compatibility)
+     * @param instrumentCacheService Cached instrument lookup service (can be null for backward compatibility)
      */
     protected BaseStrategy(TradingService tradingService,
                           UnifiedTradingService unifiedTradingService,
                           Map<String, Integer> lotSizeCache,
                           DeltaCacheService deltaCacheService,
-                          MarketDataEngine marketDataEngine) {
+                          MarketDataEngine marketDataEngine,
+                          InstrumentCacheService instrumentCacheService) {
         this.tradingService = tradingService;
         this.unifiedTradingService = unifiedTradingService;
         this.lotSizeCache = lotSizeCache;
         this.deltaCacheService = deltaCacheService;
         this.marketDataEngine = marketDataEngine;
-    }
-
-    /**
-     * Constructor with DeltaCacheService but no MarketDataEngine (backward compatible).
-     */
-    protected BaseStrategy(TradingService tradingService,
-                          UnifiedTradingService unifiedTradingService,
-                          Map<String, Integer> lotSizeCache,
-                          DeltaCacheService deltaCacheService) {
-        this(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService, null);
-    }
-
-    /**
-     * Backward-compatible constructor (for subclasses not yet using DeltaCacheService)
-     */
-    protected BaseStrategy(TradingService tradingService,
-                          UnifiedTradingService unifiedTradingService,
-                          Map<String, Integer> lotSizeCache) {
-        this(tradingService, unifiedTradingService, lotSizeCache, null, null);
+        this.instrumentCacheService = instrumentCacheService;
     }
 
     /**
@@ -173,7 +156,7 @@ public abstract class BaseStrategy implements TradingStrategy {
         }
 
         // ==================== TIER 2: DeltaCacheService (30s refresh cycle, <10ms) ====================
-        if (USE_DELTA_CACHE && deltaCacheService != null) {
+        if (deltaCacheService != null) {
             Optional<Double> cachedStrike = deltaCacheService.getCachedATMStrike(instrumentType, expiry);
             if (cachedStrike.isPresent()) {
                 log.debug("Using DeltaCacheService ATM strike: {} (approximate ATM: {})", cachedStrike.get(), approximateATM);
@@ -282,7 +265,7 @@ public abstract class BaseStrategy implements TradingStrategy {
         }
 
         // ==================== TIER 2: DeltaCacheService cached deltas ====================
-        if (USE_DELTA_CACHE && deltaCacheService != null) {
+        if (deltaCacheService != null) {
             Map<Double, Double> cachedDeltas = deltaCacheService.getCachedDeltas(instrumentType, expiry);
             if (cachedDeltas != null && !cachedDeltas.isEmpty()) {
                 double bestStrike = findBestStrikeFromDeltaMap(cachedDeltas, targetDelta, optionType, approximateATM);
@@ -744,35 +727,30 @@ public abstract class BaseStrategy implements TradingStrategy {
     }
 
     /**
-     * HFT OPTIMIZED: Get instruments for expiry with indexed grouping.
-     * Uses ThreadLocal SimpleDateFormat to avoid object creation.
+     * Get instruments for expiry using InstrumentCacheService.
+     * Uses the shared cache service (5-minute TTL) instead of per-instance HashMap.
      */
     private List<Instrument> getInstrumentsForExpiry(Date expiry) throws KiteException, IOException {
         SimpleDateFormat sdf = SDF_YYYY_MM_DD.get();
         String expiryKey = sdf.format(expiry);
 
-        synchronized (instrumentCache) {
-            if (instrumentCache.containsKey(expiryKey)) {
-                return instrumentCache.get(expiryKey);
-            }
-
-            List<Instrument> allNfoInstruments = tradingService.getInstruments(EXCHANGE_NFO);
-
-            // HFT: Use indexed loop instead of stream for grouping
-            Map<String, List<Instrument>> instrumentsByExpiry = new HashMap<>();
-            final int size = allNfoInstruments.size();
-            for (int i = 0; i < size; i++) {
-                final Instrument inst = allNfoInstruments.get(i);
-                if (inst.getExpiry() == null) continue;
-
-                String key = sdf.format(inst.getExpiry());
-                instrumentsByExpiry.computeIfAbsent(key, k -> new ArrayList<>()).add(inst);
-            }
-
-            instrumentCache.putAll(instrumentsByExpiry);
-
-            return instrumentCache.getOrDefault(expiryKey, Collections.emptyList());
+        List<Instrument> allNfoInstruments;
+        if (instrumentCacheService != null) {
+            allNfoInstruments = instrumentCacheService.getInstruments(EXCHANGE_NFO);
+        } else {
+            allNfoInstruments = tradingService.getInstruments(EXCHANGE_NFO);
         }
+
+        // Filter to the requested expiry
+        List<Instrument> result = new ArrayList<>();
+        final int size = allNfoInstruments.size();
+        for (int i = 0; i < size; i++) {
+            final Instrument inst = allNfoInstruments.get(i);
+            if (inst.getExpiry() != null && expiryKey.equals(sdf.format(inst.getExpiry()))) {
+                result.add(inst);
+            }
+        }
+        return result;
     }
 
     private String getUnderlyingName(String instrumentType) {
@@ -820,11 +798,16 @@ public abstract class BaseStrategy implements TradingStrategy {
             return lotSizeCache.get(instrumentKey);
         }
 
-        // Fetch lot size from Kite instruments
-        log.info("Fetching lot size from Kite API for instrument: {}", instrumentKey);
+        // Fetch lot size from InstrumentCacheService (or fallback to tradingService)
+        log.info("Fetching lot size from InstrumentCacheService for instrument: {}", instrumentKey);
 
         try {
-            List<Instrument> allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
+            List<Instrument> allInstruments;
+            if (instrumentCacheService != null) {
+                allInstruments = instrumentCacheService.getInstruments(EXCHANGE_NFO);
+            } else {
+                allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
+            }
 
             String instrumentName = switch (instrumentKey) {
                 case "NIFTY" -> INSTRUMENT_NIFTY;

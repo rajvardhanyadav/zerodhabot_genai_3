@@ -55,7 +55,6 @@ import org.eclipse.collections.impl.map.mutable.primitive.LongObjectHashMap;
  *
  * @see ExitStrategy
  * @see ExitContext
- * @see PositionMonitor
  */
 @Slf4j
 public class PositionMonitorV2 {
@@ -669,7 +668,8 @@ public class PositionMonitorV2 {
         active = false;
         exitReason = reason;
 
-        log.warn("Triggering exit for {} - Reason: {}", executionId, exitReason);
+        log.warn("[EXIT TRIGGERED] executionId={}, reason={}, pnl={}, direction={}",
+                executionId, exitReason, reusableExitContext.getCumulativePnL(), direction);
 
         if (exitCallback != null) {
             exitCallback.accept(exitReason);

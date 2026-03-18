@@ -9,6 +9,7 @@ import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.SlTargetMode;
+import com.tradingbot.service.InstrumentCacheService;
 import com.tradingbot.service.MarketDataEngine;
 import com.tradingbot.service.StrategyService;
 import com.tradingbot.service.TradingService;
@@ -80,6 +81,9 @@ public class ShortStrangleStrategy extends BaseStrategy {
     private static final ThreadFactory HFT_THREAD_FACTORY = r -> {
         Thread t = new Thread(r, "hft-strangle-exit-" + THREAD_COUNTER.incrementAndGet());
         t.setDaemon(true);
+        // NOTE: Thread.MAX_PRIORITY is a JVM hint to the OS scheduler.
+        // On Linux (Cloud Run), this maps to a lower nice value but is not guaranteed.
+        // Actual exit latency depends on system load, not thread priority alone.
         t.setPriority(Thread.MAX_PRIORITY);
         return t;
     };
@@ -118,8 +122,9 @@ public class ShortStrangleStrategy extends BaseStrategy {
                                   VolatilityConfig volatilityConfig,
                                   StraddleExitHandler exitHandler,
                                   MonitoringSetupHelper monitoringSetupHelper,
-                                  MarketDataEngine marketDataEngine) {
-        super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService, marketDataEngine);
+                                  MarketDataEngine marketDataEngine,
+                                  InstrumentCacheService instrumentCacheService) {
+        super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService, marketDataEngine, instrumentCacheService);
         this.webSocketService = webSocketService;
         this.strategyConfig = strategyConfig;
         this.strategyService = strategyService;

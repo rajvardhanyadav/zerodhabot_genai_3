@@ -30,6 +30,8 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
@@ -50,6 +52,7 @@ public class StrategyService {
     private final WebSocketService webSocketService;
     private final ApplicationEventPublisher eventPublisher;
     private final PersistenceConfig persistenceConfig;
+    private final InstrumentCacheService instrumentCacheService;
 
     // Field injection with @Lazy to break circular dependency
     @Autowired
@@ -71,6 +74,16 @@ public class StrategyService {
 
     // Keyed by executionId but owned by userId; maintain both maps for efficient lookups
     private final Map<String, StrategyExecution> executionsById = new ConcurrentHashMap<>();
+
+    // HFT-safe ThreadLocal date formatter (IST timezone)
+    private static final ThreadLocal<SimpleDateFormat> SDF_EXPIRY =
+            ThreadLocal.withInitial(() -> {
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+                sdf.setTimeZone(java.util.TimeZone.getTimeZone("Asia/Kolkata"));
+                return sdf;
+            });
+
+    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
     /**
      * Create and register a new StrategyExecution for the given request.
@@ -401,18 +414,10 @@ public class StrategyService {
         }
     }
 
-    /**
-     * Update strategy status to COMPLETED when both legs are closed
-     */
-    @Deprecated
-    public void markStrategyAsCompleted(String executionId, String reason) {
-        log.debug("markStrategyAsCompleted invoked for {} with reason={} (deprecated path)", executionId, reason);
-        handleStrategyCompletion(executionId, StrategyCompletionReason.OTHER);
-    }
 
     /**
      * Accumulate realized P&L for the completed execution into the daily P&L gate.
-     * Currently scoped to SELL_ATM_STRADDLE only.
+     * Scoped to short-premium strategies (SELL_ATM_STRADDLE and SHORT_STRANGLE).
      * <p>
      * HFT-safe: this runs on the persistence executor thread, not the tick thread.
      */
@@ -421,7 +426,8 @@ public class StrategyService {
             return;
         }
         try {
-            if (execution.getStrategyType() == com.tradingbot.model.StrategyType.SELL_ATM_STRADDLE
+            if ((execution.getStrategyType() == com.tradingbot.model.StrategyType.SELL_ATM_STRADDLE
+                    || execution.getStrategyType() == com.tradingbot.model.StrategyType.SHORT_STRANGLE)
                     && execution.getProfitLoss() != null) {
                 dailyPnlGateService.accumulate(
                         execution.getUserId(),
@@ -442,15 +448,16 @@ public class StrategyService {
     public List<String> getAvailableExpiries(String instrumentType) throws KiteException, IOException {
         log.info("Fetching available expiries for instrument: {}", instrumentType);
 
-        List<Instrument> allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
+        List<Instrument> allInstruments = instrumentCacheService.getInstruments(EXCHANGE_NFO);
 
         String instrumentName = getInstrumentName(instrumentType);
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        SimpleDateFormat sdf = SDF_EXPIRY.get();
+        Date nowIst = Date.from(ZonedDateTime.now(IST).toInstant());
 
         List<String> expiries = allInstruments.stream()
             .filter(i -> i.name != null && i.name.equals(instrumentName))
             .filter(i -> i.expiry != null)
-            .filter(i -> i.expiry.after(new Date()))
+            .filter(i -> i.expiry.after(nowIst))
             .map(i -> sdf.format(i.expiry))
             .distinct()
             .sorted()
@@ -480,11 +487,11 @@ public class StrategyService {
         String[] supportedInstruments = {"NIFTY", "BANKNIFTY"};
         log.info("Supported instruments: {}", Arrays.toString(supportedInstruments));
 
-        // OPTIMIZATION: Fetch instruments from Kite API ONLY ONCE
+        // OPTIMIZATION: Use InstrumentCacheService (5-min TTL) instead of live API call
         List<Instrument> allInstruments;
         try {
-            allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
-            log.info("Fetched {} instruments from NFO exchange in single API call",
+            allInstruments = instrumentCacheService.getInstruments(EXCHANGE_NFO);
+            log.info("Fetched {} instruments from NFO exchange via InstrumentCacheService",
                     allInstruments != null ? allInstruments.size() : 0);
         } catch (IOException e) {
             log.error("Failed to fetch instruments from Kite API: {}", e.getMessage());
@@ -551,8 +558,8 @@ public class StrategyService {
      * Use extractLotSizeFromInstruments() when possible to avoid multiple API calls.
      */
     private int fetchLotSizeFromKite(String instrumentType) throws KiteException, IOException {
-        log.info("Fetching lot size for instrument: {} from Kite API", instrumentType);
-        List<Instrument> allInstruments = tradingService.getInstruments(EXCHANGE_NFO);
+        log.info("Fetching lot size for instrument: {} from InstrumentCacheService", instrumentType);
+        List<Instrument> allInstruments = instrumentCacheService.getInstruments(EXCHANGE_NFO);
         return extractLotSizeFromInstruments(allInstruments, instrumentType);
     }
 

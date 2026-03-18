@@ -12,6 +12,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -28,6 +29,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/backtest")
+@ConditionalOnProperty(name = "backtest.enabled", havingValue = "true")
 @RequiredArgsConstructor
 @Slf4j
 @Tag(name = "Backtesting", description = "Strategy backtesting against historical market data")

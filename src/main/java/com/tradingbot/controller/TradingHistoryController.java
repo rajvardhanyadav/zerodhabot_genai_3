@@ -50,11 +50,7 @@ public class TradingHistoryController {
             @Parameter(description = "End date (yyyy-MM-dd)", required = true, example = "2026-03-14")
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
 
-        String userId = CurrentUserContext.getUserId();
-        if (userId == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("X-User-Id header is required"));
-        }
+        String userId = CurrentUserContext.getRequiredUserId();
 
         log.debug("Fetching trade history for user={} from {} to {}", userId, startDate, endDate);
         List<TradeEntity> trades = persistenceService.getTradesForDateRange(userId, startDate, endDate);
@@ -72,11 +68,7 @@ public class TradingHistoryController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
     })
     public ResponseEntity<ApiResponse<List<TradeEntity>>> getTodaysTrades() {
-        String userId = CurrentUserContext.getUserId();
-        if (userId == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("X-User-Id header is required"));
-        }
+        String userId = CurrentUserContext.getRequiredUserId();
 
         LocalDate today = LocalDate.now();
         List<TradeEntity> trades = persistenceService.getTradesForDateRange(userId, today, today);
@@ -96,11 +88,7 @@ public class TradingHistoryController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
     })
     public ResponseEntity<ApiResponse<List<StrategyExecutionEntity>>> getStrategyExecutions() {
-        String userId = CurrentUserContext.getUserId();
-        if (userId == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("X-User-Id header is required"));
-        }
+        String userId = CurrentUserContext.getRequiredUserId();
 
         log.debug("Fetching strategy execution history for user={}", userId);
         List<StrategyExecutionEntity> executions = persistenceService.getStrategyExecutionsForUser(userId);
@@ -125,11 +113,7 @@ public class TradingHistoryController {
             @Parameter(description = "End date (yyyy-MM-dd)", required = true, example = "2026-03-14")
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
 
-        String userId = CurrentUserContext.getUserId();
-        if (userId == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("X-User-Id header is required"));
-        }
+        String userId = CurrentUserContext.getRequiredUserId();
 
         log.debug("Fetching daily summaries for user={} from {} to {}", userId, startDate, endDate);
         List<DailyPnLSummaryEntity> summaries = persistenceService.getDailySummariesForDateRange(userId, startDate, endDate);
@@ -150,11 +134,7 @@ public class TradingHistoryController {
             @Parameter(description = "Trading mode: PAPER or LIVE", example = "PAPER")
             @RequestParam(defaultValue = "PAPER") String tradingMode) {
 
-        String userId = CurrentUserContext.getUserId();
-        if (userId == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("X-User-Id header is required"));
-        }
+        String userId = CurrentUserContext.getRequiredUserId();
 
         LocalDate today = LocalDate.now();
         return persistenceService.getDailySummary(userId, today, tradingMode)
@@ -173,11 +153,7 @@ public class TradingHistoryController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Failed to persist position snapshot")
     })
     public ResponseEntity<ApiResponse<String>> persistPositionSnapshot() {
-        String userId = CurrentUserContext.getUserId();
-        if (userId == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("X-User-Id header is required"));
-        }
+        String userId = CurrentUserContext.getRequiredUserId();
 
         try {
             unifiedTradingService.persistPositionSnapshot();
@@ -190,19 +166,6 @@ public class TradingHistoryController {
         }
     }
 
-    // ==================== TRADING MODE ====================
-
-    @GetMapping("/trading-mode")
-    @Operation(summary = "Get current trading mode",
-               description = "Get whether the system is in PAPER or LIVE trading mode")
-    @ApiResponses({
-        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Trading mode returned"),
-        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
-    })
-    public ResponseEntity<ApiResponse<String>> getTradingMode() {
-        String mode = unifiedTradingService.getTradingMode();
-        return ResponseEntity.ok(ApiResponse.success("Current trading mode", mode));
-    }
 
     // ==================== ALERT HISTORY ====================
 
@@ -215,11 +178,7 @@ public class TradingHistoryController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
     })
     public ResponseEntity<ApiResponse<List<AlertHistoryEntity>>> getAlerts() {
-        String userId = CurrentUserContext.getUserId();
-        if (userId == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("X-User-Id header is required"));
-        }
+        String userId = CurrentUserContext.getRequiredUserId();
 
         List<AlertHistoryEntity> alerts = persistenceService.getAlertsByUser(userId);
         return ResponseEntity.ok(ApiResponse.success(
@@ -274,11 +233,7 @@ public class TradingHistoryController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
     })
     public ResponseEntity<ApiResponse<MTMSnapshotEntity>> getLatestMTMSnapshot() {
-        String userId = CurrentUserContext.getUserId();
-        if (userId == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("X-User-Id header is required"));
-        }
+        String userId = CurrentUserContext.getRequiredUserId();
 
         return persistenceService.getLatestMTMSnapshot(userId)
                 .map(snapshot -> ResponseEntity.ok(ApiResponse.success("Latest MTM snapshot", snapshot)))
@@ -296,11 +251,7 @@ public class TradingHistoryController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "Internal server error")
     })
     public ResponseEntity<ApiResponse<List<StrategyConfigHistoryEntity>>> getConfigHistory() {
-        String userId = CurrentUserContext.getUserId();
-        if (userId == null) {
-            return ResponseEntity.badRequest()
-                    .body(ApiResponse.error("X-User-Id header is required"));
-        }
+        String userId = CurrentUserContext.getRequiredUserId();
 
         List<StrategyConfigHistoryEntity> history = persistenceService.getStrategyConfigHistoryByUser(userId);
         return ResponseEntity.ok(ApiResponse.success(

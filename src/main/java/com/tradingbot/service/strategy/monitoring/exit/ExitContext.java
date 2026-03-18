@@ -66,7 +66,7 @@ public class ExitContext {
     @Setter
     private double stopLossPremiumLevel;
 
-    // ==================== LEG STATE (snapshot from PositionMonitor) ====================
+    // ==================== LEG STATE (snapshot from PositionMonitorV2) ====================
 
     /** Pre-cached legs array (read-only snapshot) */
     @Setter
