@@ -3,8 +3,8 @@ package com.tradingbot.service.strategy;
 import com.tradingbot.config.MarketDataEngineConfig;
 import com.tradingbot.config.NeutralMarketConfig;
 import com.tradingbot.model.MarketStateEvent;
+import com.tradingbot.model.NeutralMarketResult;
 import com.tradingbot.service.session.UserSessionManager;
-import com.tradingbot.service.strategy.NeutralMarketDetectorService.NeutralMarketResult;
 import com.tradingbot.util.CurrentUserContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -41,13 +41,13 @@ public class MarketStateUpdater {
     private static final LocalTime MARKET_OPEN = LocalTime.of(9, 15);
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 10);
 
-    private final NeutralMarketDetectorService neutralMarketDetectorService;
+    private final NeutralMarketDetectorServiceV2 neutralMarketDetectorService;
     private final NeutralMarketConfig neutralMarketConfig;
     private final MarketDataEngineConfig marketDataEngineConfig;
     private final ApplicationEventPublisher eventPublisher;
     private final UserSessionManager userSessionManager;
 
-    public MarketStateUpdater(NeutralMarketDetectorService neutralMarketDetectorService,
+    public MarketStateUpdater(NeutralMarketDetectorServiceV2 neutralMarketDetectorService,
                               NeutralMarketConfig neutralMarketConfig,
                               MarketDataEngineConfig marketDataEngineConfig,
                               ApplicationEventPublisher eventPublisher,

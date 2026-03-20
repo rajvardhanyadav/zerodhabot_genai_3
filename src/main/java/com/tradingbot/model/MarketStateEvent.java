@@ -1,6 +1,5 @@
 package com.tradingbot.model;
 
-import com.tradingbot.service.strategy.NeutralMarketDetectorService.NeutralMarketResult;
 
 import java.time.Instant;
 

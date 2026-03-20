@@ -9,6 +9,7 @@ import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.SlTargetMode;
+import com.tradingbot.model.NeutralMarketResult;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyStatus;
 import com.tradingbot.service.InstrumentCacheService;
@@ -73,7 +74,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     private final StraddleExitHandler exitHandler;
     private final LegReplacementHandler legReplacementHandler;
     private final MonitoringSetupHelper monitoringSetupHelper;
-    private final NeutralMarketDetectorService neutralMarketDetectorService;
+    private final NeutralMarketDetectorServiceV2 neutralMarketDetectorService;
 
     // ==================== HFT Thread Pool Configuration ====================
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
@@ -128,7 +129,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                    StraddleExitHandler exitHandler,
                                    LegReplacementHandler legReplacementHandler,
                                    MonitoringSetupHelper monitoringSetupHelper,
-                                   NeutralMarketDetectorService neutralMarketDetectorService,
+                                   NeutralMarketDetectorServiceV2 neutralMarketDetectorService,
                                    MarketDataEngine marketDataEngine,
                                    InstrumentCacheService instrumentCacheService) {
         super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService, marketDataEngine, instrumentCacheService);
@@ -192,11 +193,11 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         log.info("[{}] Evaluating ATM straddle entry for {}. Checking neutral market conditions...",
                 tradingMode, instrumentType);
 
-        NeutralMarketDetectorService.NeutralMarketResult neutralResult =
+        NeutralMarketResult neutralResult =
                 neutralMarketDetectorService.evaluate(instrumentType);
-        log.info("[{}] Neutral market check: instrument={}, score={}/{}, minimumRequired={}, neutral={}, signals=[{}]",
+        log.info("[{}] Neutral market check: instrument={}, score={}/{}, regime={}, minimumRequired={}, neutral={}, signals=[{}]",
                 tradingMode, instrumentType, neutralResult.totalScore(), neutralResult.maxScore(),
-                neutralResult.minimumRequired(), neutralResult.neutral(), neutralResult.summary());
+                neutralResult.getRegime(), neutralResult.minimumRequired(), neutralResult.neutral(), neutralResult.summary());
 
         if (!neutralResult.neutral()) {
             String failedSignals = neutralResult.signals().isEmpty()

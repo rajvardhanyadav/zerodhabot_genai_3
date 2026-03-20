@@ -206,5 +206,90 @@ public class NeutralMarketConfig {
      * Default: true (allow trade — don't block on transient API failures)
      */
     private boolean allowOnDataUnavailable = true;
-}
 
+    // ==================== V2: PRICE OSCILLATION SIGNAL ====================
+
+    /**
+     * Number of recent 1-minute candles to use for price oscillation (chop) detection.
+     * Higher values smooth out noise; lower values are more responsive.
+     * Default: 10
+     */
+    private int oscillationCandleCount = 10;
+
+    /**
+     * Minimum number of direction reversals (close-to-close) within the oscillation window
+     * to consider the market choppy/neutral. Each reversal means the candle closed in the
+     * opposite direction of the previous candle.
+     * Default: 4 (out of 9 possible in a 10-candle window)
+     */
+    private int oscillationMinReversals = 4;
+
+    // ==================== V2: VWAP PULLBACK ENTRY SIGNAL ====================
+
+    /**
+     * Maximum deviation from VWAP (as fraction of VWAP) that qualifies as a "pullback zone".
+     * Price must have deviated at least this much before reverting to trigger the signal.
+     * Default: 0.003 (0.3%)
+     */
+    private double vwapPullbackThreshold = 0.003;
+
+    /**
+     * Maximum deviation from VWAP (as fraction of VWAP) that qualifies as "reverted to VWAP".
+     * Price must be within this band of VWAP for the reversion leg to pass.
+     * Default: 0.001 (0.1%)
+     */
+    private double vwapPullbackReversionThreshold = 0.001;
+
+    /**
+     * Number of recent candles to examine for the VWAP pullback pattern.
+     * The detector looks for a deviation→reversion sequence within this window.
+     * Default: 8
+     */
+    private int vwapPullbackCandleCount = 8;
+
+    // ==================== V2: TIME-BASED ADAPTATION ====================
+
+    /**
+     * Enable time-based score adaptation.
+     * When enabled, the score is adjusted based on market session:
+     * - 09:15–10:00 (opening volatility): subtract 1 point (stricter)
+     * - 10:00–13:30 (mid-session): no adjustment
+     * - 13:30–15:00 (pre-close): add 1 point (more lenient)
+     * Default: true
+     */
+    private boolean timeBasedAdaptationEnabled = true;
+
+    // ==================== V2: WEIGHTED SCORING ====================
+
+    /** Weight for VWAP Proximity signal. Default: 3 */
+    private int weightVwap = 3;
+
+    /** Weight for Range Compression signal. Default: 2 */
+    private int weightRange = 2;
+
+    /** Weight for Price Oscillation signal. Default: 2 */
+    private int weightOscillation = 2;
+
+    /** Weight for VWAP Pullback Entry signal. Default: 2 */
+    private int weightVwapPullback = 2;
+
+    /** Weight for ADX Trend Strength signal. Default: 1 */
+    private int weightAdx = 1;
+
+    /** Weight for Gamma Pin signal (expiry day only). Default: 1 */
+    private int weightGammaPin = 1;
+
+    // ==================== V2: REGIME THRESHOLDS ====================
+
+    /**
+     * Minimum score for STRONG_NEUTRAL regime (full position).
+     * Default: 6
+     */
+    private int strongNeutralThreshold = 6;
+
+    /**
+     * Minimum score for WEAK_NEUTRAL regime (tradable with reduced size).
+     * Default: 4
+     */
+    private int weakNeutralThreshold = 4;
+}

@@ -3,13 +3,13 @@ package com.tradingbot.service.strategy;
 import com.tradingbot.config.MarketDataEngineConfig;
 import com.tradingbot.config.NeutralMarketConfig;
 import com.tradingbot.model.MarketStateEvent;
-import com.tradingbot.service.session.UserSessionManager;
-import com.tradingbot.service.strategy.NeutralMarketDetectorService.NeutralMarketResult;
+import com.tradingbot.model.NeutralMarketResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import com.tradingbot.service.session.UserSessionManager;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.Instant;
@@ -27,7 +27,7 @@ import static org.mockito.Mockito.*;
 class MarketStateUpdaterTest {
 
     @Mock
-    private NeutralMarketDetectorService neutralMarketDetectorService;
+    private NeutralMarketDetectorServiceV2 neutralMarketDetectorService;
 
     @Mock
     private NeutralMarketConfig neutralMarketConfig;
@@ -75,7 +75,8 @@ class MarketStateUpdaterTest {
         when(neutralMarketConfig.isEnabled()).thenReturn(true);
 
         NeutralMarketResult niftyResult = new NeutralMarketResult(
-                true, 8, 10, 7, Collections.emptyList(), "test-summary", Instant.now());
+                true, 8, 0.8, NeutralMarketResult.REGIME_STRONG_NEUTRAL,
+                Collections.emptyMap(), Collections.emptyList(), "test-summary", Instant.now(), 4);
 
         when(neutralMarketDetectorService.evaluate("NIFTY")).thenReturn(niftyResult);
 
@@ -131,4 +132,3 @@ class MarketStateUpdaterTest {
         verify(eventPublisher, never()).publishEvent(any());
     }
 }
-

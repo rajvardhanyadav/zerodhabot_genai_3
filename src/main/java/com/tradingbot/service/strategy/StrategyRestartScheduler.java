@@ -62,7 +62,7 @@ public class StrategyRestartScheduler {
     private final TaskScheduler taskScheduler;
     private final DailyPnlGateService dailyPnlGateService;
     private final BotStatusService botStatusService;
-    private final NeutralMarketDetectorService neutralMarketDetectorService;
+    private final NeutralMarketDetectorServiceV2 neutralMarketDetectorService;
 
     /** Clock for obtaining current time — overridable in tests. */
     private Clock clock = Clock.system(MARKET_ZONE);
@@ -92,7 +92,7 @@ public class StrategyRestartScheduler {
                                     TaskScheduler taskScheduler,
                                     DailyPnlGateService dailyPnlGateService,
                                     BotStatusService botStatusService,
-                                    NeutralMarketDetectorService neutralMarketDetectorService) {
+                                    NeutralMarketDetectorServiceV2 neutralMarketDetectorService) {
         this.strategyConfig = strategyConfig;
         this.strategyService = strategyService;
         this.taskScheduler = taskScheduler;
