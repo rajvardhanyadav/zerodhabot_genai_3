@@ -2,6 +2,7 @@ package com.tradingbot.service.strategy;
 
 import com.tradingbot.config.NeutralMarketV3Config;
 import com.tradingbot.model.BreakoutRisk;
+import com.tradingbot.model.NeutralMarketEvaluation;
 import com.tradingbot.model.NeutralMarketResultV3;
 import com.tradingbot.model.Regime;
 import com.tradingbot.service.InstrumentCacheService;
@@ -63,9 +64,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * @see Regime
  * @see BreakoutRisk
  */
-@Service
+@Service("neutralMarketDetectorV3")
 @Slf4j
-public class NeutralMarketDetectorServiceV3 {
+public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
 
     // ==================== CONSTANTS ====================
 
@@ -134,6 +135,7 @@ public class NeutralMarketDetectorServiceV3 {
      * @param instrumentType "NIFTY" or "BANKNIFTY"
      * @return composite result with tradable decision, scores, regime, and breakout risk
      */
+    @Override
     public NeutralMarketResultV3 evaluate(String instrumentType) {
         if (!config.isEnabled()) {
             log.debug("NeutralMarketDetectorV3 disabled, allowing trade");
@@ -170,12 +172,19 @@ public class NeutralMarketDetectorServiceV3 {
         return evaluate(instrumentType).isTradable();
     }
 
+    /** {@inheritDoc} Delegates to {@link #isMarketTradable(String)}. */
+    @Override
+    public boolean isMarketNeutral(String instrumentType) {
+        return isMarketTradable(instrumentType);
+    }
+
     /** Convenience: get the recommended lot multiplier (0–3). */
     public int getRecommendedLotMultiplier(String instrumentType) {
         return evaluate(instrumentType).getRecommendedLotMultiplier();
     }
 
     /** Clear all cached state. Useful for testing or forced refresh. */
+    @Override
     public void clearCache() {
         cachedResults.clear();
         instrumentTokenCache.clear();

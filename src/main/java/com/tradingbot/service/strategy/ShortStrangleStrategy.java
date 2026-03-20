@@ -116,6 +116,9 @@ public class ShortStrangleStrategy extends BaseStrategy {
                                   Map<String, Integer> lotSizeCache,
                                   WebSocketService webSocketService,
                                   StrategyConfig strategyConfig,
+                                  // CYCLE B: StrategyService → StrategyFactory → ShortStrangleStrategy → StrategyService.
+                                  // Strategy calls strategyService.completeExecution() / updateLegLifecycleState().
+                                  // Decoupling plan: ObjectProvider<StrategyService> or StrategyCompletionEvent.
                                   @Lazy StrategyService strategyService,
                                   DeltaCacheService deltaCacheService,
                                   VolatilityFilterService volatilityFilterService,

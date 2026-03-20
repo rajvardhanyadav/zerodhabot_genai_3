@@ -8,8 +8,6 @@ import com.tradingbot.paper.PaperPosition;
 import com.tradingbot.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,27 +39,11 @@ public class TradePersistenceService {
     private final PositionSnapshotRepository positionSnapshotRepository;
     private final OrderTimingRepository orderTimingRepository;
     private final PersistenceConfig persistenceConfig;
-
-    // New repositories for extended persistence
-    @Autowired
-    @Lazy
-    private AlertHistoryRepository alertHistoryRepository;
-
-    @Autowired
-    @Lazy
-    private MTMSnapshotRepository mtmSnapshotRepository;
-
-    @Autowired
-    @Lazy
-    private StrategyConfigHistoryRepository strategyConfigHistoryRepository;
-
-    @Autowired
-    @Lazy
-    private WebSocketEventRepository webSocketEventRepository;
-
-    @Autowired
-    @Lazy
-    private SystemHealthSnapshotRepository systemHealthSnapshotRepository;
+    private final AlertHistoryRepository alertHistoryRepository;
+    private final MTMSnapshotRepository mtmSnapshotRepository;
+    private final StrategyConfigHistoryRepository strategyConfigHistoryRepository;
+    private final WebSocketEventRepository webSocketEventRepository;
+    private final SystemHealthSnapshotRepository systemHealthSnapshotRepository;
 
     // ==================== TRADE PERSISTENCE ====================
 

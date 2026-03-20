@@ -57,11 +57,21 @@ public class StrategyRestartScheduler {
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 10);
 
     private final StrategyConfig strategyConfig;
+
+    /*
+     * CYCLE A: StrategyService ↔ StrategyRestartScheduler (bidirectional).
+     * Path: StrategyRestartScheduler → StrategyService.executeStrategy()
+     *        StrategyService → StrategyRestartScheduler.cancelScheduledRestarts()
+     * Decoupling plan: Replace direct calls with ApplicationEvents
+     *   (StrategyStoppedEvent, StrategyRestartRequestEvent).
+     */
     @Lazy
     private final StrategyService strategyService;
     private final TaskScheduler taskScheduler;
     private final DailyPnlGateService dailyPnlGateService;
     private final BotStatusService botStatusService;
+    // TODO: Migrate to NeutralMarketDetector interface + @Qualifier("neutralMarketDetectorV3")
+    //       once V3 parallel validation is complete (V2 is @Deprecated).
     private final NeutralMarketDetectorServiceV2 neutralMarketDetectorService;
 
     /** Clock for obtaining current time — overridable in tests. */

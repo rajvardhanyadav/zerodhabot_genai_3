@@ -22,8 +22,6 @@ import com.zerodhatech.models.Trade;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.json.JSONObject;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -51,11 +49,7 @@ public class UnifiedTradingService {
     private final PaperTradingService paperTradingService;
     private final TradingService liveTradingService;
     private final PersistenceConfig persistenceConfig;
-
-    // Lazy injection to break circular dependency
-    @Autowired
-    @Lazy
-    private TradePersistenceService persistenceService;
+    private final TradePersistenceService persistenceService;
 
     /**
      * Place order - routes to paper or live trading based on config

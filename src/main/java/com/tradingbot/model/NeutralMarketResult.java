@@ -30,7 +30,7 @@ import java.util.Map;
  *
  * @since 5.0
  */
-public final class NeutralMarketResult {
+public final class NeutralMarketResult implements NeutralMarketEvaluation {
 
     // ==================== REGIME CONSTANTS ====================
     public static final String REGIME_STRONG_NEUTRAL = "STRONG_NEUTRAL";
@@ -81,6 +81,12 @@ public final class NeutralMarketResult {
 
     /** Per-signal pass/fail breakdown. Key = signal name, Value = passed. */
     public Map<String, Boolean> getSignalBreakdown() { return signalBreakdown; }
+
+    // ==================== NeutralMarketEvaluation contract ====================
+
+    /** {@inheritDoc} */
+    @Override
+    public String getRegimeLabel() { return regime; }
 
     // ==================== BACKWARD-COMPAT ACCESSORS ====================
 

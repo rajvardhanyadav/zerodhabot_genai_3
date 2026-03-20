@@ -53,24 +53,20 @@ public class StrategyService {
     private final ApplicationEventPublisher eventPublisher;
     private final PersistenceConfig persistenceConfig;
     private final InstrumentCacheService instrumentCacheService;
+    private final TradePersistenceService persistenceService;
+    @org.springframework.beans.factory.annotation.Qualifier("persistenceExecutor")
+    private final Executor persistenceExecutor;
+    private final com.tradingbot.service.strategy.DailyPnlGateService dailyPnlGateService;
 
-    // Field injection with @Lazy to break circular dependency
+    /*
+     * CYCLE A: StrategyService ↔ StrategyRestartScheduler (bidirectional).
+     * StrategyService.stopStrategy() → StrategyRestartScheduler.cancelScheduledRestarts()
+     * StrategyRestartScheduler.onMarketStateEvent() → StrategyService.executeStrategy()
+     * @Lazy retained until this is decoupled via ApplicationEvent.
+     */
     @Autowired
     @Lazy
     private com.tradingbot.service.strategy.StrategyRestartScheduler strategyRestartScheduler;
-
-    @Autowired
-    @Lazy
-    private TradePersistenceService persistenceService;
-
-    @Autowired
-    @Lazy
-    @org.springframework.beans.factory.annotation.Qualifier("persistenceExecutor")
-    private Executor persistenceExecutor;
-
-    @Autowired
-    @Lazy
-    private com.tradingbot.service.strategy.DailyPnlGateService dailyPnlGateService;
 
     // Keyed by executionId but owned by userId; maintain both maps for efficient lookups
     private final Map<String, StrategyExecution> executionsById = new ConcurrentHashMap<>();

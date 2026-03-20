@@ -108,9 +108,9 @@ strategy:
 
   # Entry Time Window Configuration (IST)
   # No entries before this time (avoid opening noise and gaps)
-  entry-window-start: "10:00"
+  entry-window-start: "09:40"
   # No entries after this time (insufficient theta remaining)
-  entry-window-end: "15:00"
+  entry-window-end: "15:15"
 
   # Expiry Day Configuration
   # Whether to allow trading on expiry day (true = allow with tighter thresholds)

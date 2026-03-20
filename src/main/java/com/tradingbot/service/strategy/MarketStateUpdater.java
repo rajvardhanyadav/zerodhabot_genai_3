@@ -41,6 +41,8 @@ public class MarketStateUpdater {
     private static final LocalTime MARKET_OPEN = LocalTime.of(9, 15);
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 10);
 
+    // TODO: Migrate to NeutralMarketDetector interface + @Qualifier("neutralMarketDetectorV3")
+    //       once V3 parallel validation is complete (V2 is @Deprecated).
     private final NeutralMarketDetectorServiceV2 neutralMarketDetectorService;
     private final NeutralMarketConfig neutralMarketConfig;
     private final MarketDataEngineConfig marketDataEngineConfig;

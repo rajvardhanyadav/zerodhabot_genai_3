@@ -16,8 +16,6 @@ import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.LTPQuote;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -43,11 +41,7 @@ public class PaperTradingService {
     private final TradingService tradingService;
     private final ZerodhaChargeCalculator chargeCalculator;
     private final PersistenceConfig persistenceConfig;
-
-    // Lazy injection to break circular dependency
-    @Autowired
-    @Lazy
-    private TradePersistenceService persistenceService;
+    private final TradePersistenceService persistenceService;
 
     // In-memory storage for paper trading
     private final Map<String, PaperOrder> orders = new ConcurrentHashMap<>();

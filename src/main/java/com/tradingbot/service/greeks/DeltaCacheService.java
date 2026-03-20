@@ -12,8 +12,6 @@ import com.zerodhatech.models.Instrument;
 import com.zerodhatech.models.LTPQuote;
 import com.zerodhatech.models.Quote;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -46,11 +44,7 @@ public class DeltaCacheService {
     private final TradingService tradingService;
     private final UserSessionManager userSessionManager;
     private final PersistenceConfig persistenceConfig;
-
-    // Lazy injection to break circular dependency
-    @Autowired
-    @Lazy
-    private TradePersistenceService persistenceService;
+    private final TradePersistenceService persistenceService;
 
     // Cache for pre-computed ATM strikes by delta
     // Key format: "NIFTY_2024-12-19" (instrumentType_expiryDate)
@@ -95,10 +89,12 @@ public class DeltaCacheService {
     private static final ThreadLocal<Calendar> CALENDAR_IST = ThreadLocal.withInitial(() -> Calendar.getInstance(IST));
 
     public DeltaCacheService(TradingService tradingService, UserSessionManager userSessionManager,
-                              PersistenceConfig persistenceConfig) {
+                              PersistenceConfig persistenceConfig,
+                              TradePersistenceService persistenceService) {
         this.tradingService = tradingService;
         this.userSessionManager = userSessionManager;
         this.persistenceConfig = persistenceConfig;
+        this.persistenceService = persistenceService;
     }
 
     /**

@@ -4,10 +4,8 @@ import com.tradingbot.service.persistence.PersistenceBufferService;
 import com.tradingbot.util.CurrentUserContext;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.core.task.TaskDecorator;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -36,9 +34,11 @@ import java.util.concurrent.ThreadPoolExecutor;
 @Slf4j
 public class AsyncPersistenceConfig {
 
-    @Autowired
-    @Lazy
-    private PersistenceBufferService persistenceBufferService;
+    private final PersistenceBufferService persistenceBufferService;
+
+    public AsyncPersistenceConfig(PersistenceBufferService persistenceBufferService) {
+        this.persistenceBufferService = persistenceBufferService;
+    }
 
     /**
      * Dedicated executor for persistence operations.

@@ -5,8 +5,6 @@ import com.tradingbot.entity.SystemHealthSnapshotEntity;
 import com.tradingbot.service.StrategyService;
 import com.tradingbot.service.strategy.monitoring.WebSocketService;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -35,14 +33,8 @@ public class SystemHealthMonitorService {
     private final PersistenceConfig persistenceConfig;
     private final PersistenceBufferService persistenceBufferService;
     private final DataSource dataSource;
-
-    @Autowired
-    @Lazy
-    private WebSocketService webSocketService;
-
-    @Autowired
-    @Lazy
-    private StrategyService strategyService;
+    private final WebSocketService webSocketService;
+    private final StrategyService strategyService;
 
     // Metrics counters - all use atomic operations for thread-safety without locks
     private final AtomicLong ticksReceived = new AtomicLong(0);
@@ -58,10 +50,14 @@ public class SystemHealthMonitorService {
 
     public SystemHealthMonitorService(PersistenceConfig persistenceConfig,
                                        PersistenceBufferService persistenceBufferService,
-                                       DataSource dataSource) {
+                                       DataSource dataSource,
+                                       WebSocketService webSocketService,
+                                       StrategyService strategyService) {
         this.persistenceConfig = persistenceConfig;
         this.persistenceBufferService = persistenceBufferService;
         this.dataSource = dataSource;
+        this.webSocketService = webSocketService;
+        this.strategyService = strategyService;
     }
 
     /**

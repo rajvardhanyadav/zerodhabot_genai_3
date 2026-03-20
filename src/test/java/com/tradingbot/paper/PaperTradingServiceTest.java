@@ -5,6 +5,7 @@ import com.tradingbot.config.PersistenceConfig;
 import com.tradingbot.dto.OrderRequest;
 import com.tradingbot.service.TradingService;
 import com.tradingbot.paper.ZerodhaChargeCalculator;
+import com.tradingbot.service.persistence.TradePersistenceService;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.LTPQuote;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,7 +53,8 @@ public class PaperTradingServiceTest {
                         .stampDuty(java.math.BigDecimal.ZERO)
                         .totalCharges(java.math.BigDecimal.ZERO)
                         .build());
-        paperTradingService = new PaperTradingService(config, tradingService, chargeCalculator, persistenceConfig);
+        paperTradingService = new PaperTradingService(config, tradingService, chargeCalculator, persistenceConfig,
+                Mockito.mock(TradePersistenceService.class));
     }
 
     private void stubLtp(double price) {

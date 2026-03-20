@@ -2,7 +2,7 @@
 
 > **Purpose:** Comprehensive project reference for AI agents.
 > All details needed to understand, modify, and extend this codebase are documented here.
-> Last updated: 2026-03-20 | Version: 6.0
+> Last updated: 2026-03-21 | Version: 6.1
 
 ---
 
@@ -149,6 +149,8 @@
 4. **Event-Driven Restart:** `MarketStateUpdater` publishes `MarketStateEvent` records; `StrategyRestartScheduler` listens and triggers buffered re-entry — no polling loops.
 5. **Async Persistence:** All trade/order writes go through `TradePersistenceService` → `PersistenceBufferService` (buffered batch writes) to avoid blocking strategy threads on DB I/O.
 6. **Multi-User Support:** `UserSessionManager` manages per-user Kite sessions with DB-backed recovery (for Cloud Run container restarts). `CurrentUserContext` (ThreadLocal) provides the active user to any service.
+7. **Interface-Based Detector Injection:** Neutral market detection uses `NeutralMarketDetector` interface with `@Qualifier` for version selection (`"neutralMarketDetectorV2"` / `"neutralMarketDetectorV3"`). Results use `NeutralMarketEvaluation` interface.
+8. **Constructor-First DI:** All non-circular dependencies use constructor injection (`final` fields + `@RequiredArgsConstructor`). `@Lazy` is reserved only for genuine bidirectional cycles (6 remaining — see `docs/LAZY_AUDIT.md`).
 
 ---
 
@@ -218,8 +220,9 @@ com.tradingbot
 │   │   ├── StrategyRestartScheduler.java         # Listens for neutral market events → triggers re-entry
 │   │   ├── DailyPnlGateService.java              # Halts restart if daily P&L limit hit
 │   │   ├── NeutralMarketDetectorService.java     # V1: 5-signal neutral market scoring engine (binary +2 per signal)
-│   │   ├── NeutralMarketDetectorServiceV2.java   # ⭐ V2: Weighted confidence scoring engine (6 signals, regime classification) (see §12)
-│   │   ├── NeutralMarketDetectorServiceV3.java   # ⭐ V3: 3-Layer tradable opportunity detector (regime + micro + breakout) (see §13)
+│   │   ├── NeutralMarketDetector.java            # ⭐ Interface: evaluate(), isMarketNeutral(), clearCache() — shared by V2 and V3
+│   │   ├── NeutralMarketDetectorServiceV2.java   # @Deprecated V2: Weighted confidence scoring engine (bean: "neutralMarketDetectorV2") (see §12)
+│   │   ├── NeutralMarketDetectorServiceV3.java   # ⭐ V3 (ACTIVE): 3-Layer tradable opportunity detector (bean: "neutralMarketDetectorV3") (see §13)
 │   │   └── VolatilityFilterService.java          # India VIX filter before strategy entry
 │   │
 │   │   └── monitoring/
@@ -328,8 +331,9 @@ com.tradingbot
 │   ├── BotStatus.java                            # Bot lifecycle state
 │   ├── StrategyExecution.java                    # Runtime execution state model
 │   ├── MarketStateEvent.java                     # Record: instrumentType, neutral, score, maxScore, result, evaluatedAt
-│   ├── NeutralMarketResult.java                  # V2 result: score (0–10), confidence, regime (STRONG_NEUTRAL/WEAK_NEUTRAL/TRENDING), tradable flag, signal breakdown
-│   ├── NeutralMarketResultV3.java                # V3 result: regime + micro + breakout composite (immutable, pre-allocated disabled singleton)
+│   ├── NeutralMarketEvaluation.java              # ⭐ Interface: neutral(), isTradable(), totalScore(), maxScore(), summary(), getRegimeLabel(), signals() — shared by V2 and V3 results
+│   ├── NeutralMarketResult.java                  # V2 result: implements NeutralMarketEvaluation. Score (0–10), confidence, regime, tradable flag, signal breakdown
+│   ├── NeutralMarketResultV3.java                # V3 result: implements NeutralMarketEvaluation. Regime + micro + breakout composite (immutable, pre-allocated disabled singleton)
 │   ├── SignalResult.java                         # V2 signal: record with name, score, maxScore, passed, detail (factory methods: passed/failed/unavailable/partial)
 │   ├── Regime.java                               # V3 regime classification: STRONG_NEUTRAL, WEAK_NEUTRAL, TRENDING
 │   └── BreakoutRisk.java                         # V3 breakout risk: LOW, MEDIUM, HIGH
@@ -727,8 +731,9 @@ StrategyFactory.create(StrategyType)
   2. VolatilityFilterService — India VIX above absolute-threshold (12.5)
                                AND VIX 5-min change < spike-threshold (1.0%)
                                AND VIX not too far above prev close
-  3. NeutralMarketDetectorServiceV2 — weighted score ≥ weak-neutral-threshold (4)
-                                      Regime: STRONG_NEUTRAL (≥6) / WEAK_NEUTRAL (≥4) / TRENDING (<4)
+  3. NeutralMarketDetectorServiceV3 — 3-layer evaluation: Regime (macro) + Micro (entry timing) + Breakout Risk (safety gate)
+                                       Tradable if: regime ≥ 4 AND micro ≥ 2 AND breakoutRisk ≠ HIGH
+                                       (SellATMStraddleStrategy uses V3 via @Qualifier("neutralMarketDetectorV3"))
     │
     ▼
 [Instrument resolution — from MarketDataEngine cache, NOT inline API calls]
@@ -963,9 +968,9 @@ MarketDataEngine (cache) → NeutralMarketDetectorService (scores)
 
 ## 12. Neutral Market Detection V2 (Weighted Confidence Engine)
 
-> **Since:** Version 5.0
-> **Class:** `NeutralMarketDetectorServiceV2`
-> **Active consumers:** `MarketStateUpdater`, `SellATMStraddleStrategy`, `StrategyRestartScheduler`
+> **Since:** Version 5.0 | **Deprecated** since Version 6.1 (superseded by V3)
+> **Class:** `NeutralMarketDetectorServiceV2` | **Bean:** `"neutralMarketDetectorV2"` | **Implements:** `NeutralMarketDetector`
+> **Active consumers:** `MarketStateUpdater`, `StrategyRestartScheduler` (TODO: migrate to V3)
 
 Redesign of V1 to increase tradable opportunities, eliminate over-filtering, and provide dynamic confidence-based regime classification optimised for SELL ATM STRADDLE.
 
@@ -1098,10 +1103,10 @@ MarketStateUpdater.evaluateAndPublish() [every 30s]
 
 ## 13. Neutral Market Detection V3 (3-Layer Tradable Opportunity Detector)
 
-> **Since:** Version 6.0
-> **Class:** `NeutralMarketDetectorServiceV3`
+> **Since:** Version 6.0 | **Interface-wired** since Version 6.1
+> **Class:** `NeutralMarketDetectorServiceV3` | **Bean:** `"neutralMarketDetectorV3"` | **Implements:** `NeutralMarketDetector`
 > **Config:** `NeutralMarketV3Config` (`neutral-market-v3.*`)
-> **Status:** New — not yet wired into active strategy execution (V2 remains active consumer). Available for integration.
+> **Active consumers:** `SellATMStraddleStrategy` (via `@Qualifier("neutralMarketDetectorV3")`)
 
 A production-grade, HFT-safe 3-layer detection engine that determines not just *whether* the market is neutral, but whether a **real-time tradable opportunity** exists right now for SELL ATM STRADDLE. Combines macro regime analysis, microstructure opportunity detection, and breakout risk assessment.
 
@@ -1549,7 +1554,7 @@ public record MarketStateEvent(
 
 ### 19.6 `NeutralMarketResult` (V2 Result Object)
 
-Immutable result of neutral market evaluation. Provides both V2 and backward-compatible V1 accessors. See §12.5 for full API.
+Immutable result of neutral market evaluation. Implements `NeutralMarketEvaluation`. Provides both V2 and backward-compatible V1 accessors. See §12.5 for full API.
 
 ### 19.7 `SignalResult` (V2 Signal Record)
 
@@ -1564,15 +1569,58 @@ public record SignalResult(String name, int score, int maxScore, boolean passed,
 
 ### 19.8 `NeutralMarketResultV3` (V3 Result Object)
 
-Immutable 3-layer composite result. See §13.8 for full API.
+Immutable 3-layer composite result. Implements `NeutralMarketEvaluation`. See §13.8 for full API.
 
-### 19.9 `Regime` (V3 Enum)
+### 19.9 `NeutralMarketDetector` (Detector Interface) — NEW in 6.1
+
+Common interface for neutral market detection engines. Enables version-agnostic injection via `@Qualifier`.
+
+```java
+public interface NeutralMarketDetector {
+    NeutralMarketEvaluation evaluate(String instrumentType);
+    boolean isMarketNeutral(String instrumentType);
+    void clearCache();
+}
+```
+
+**Implementations:**
+| Bean Name | Class | Status |
+|---|---|---|
+| `neutralMarketDetectorV2` | `NeutralMarketDetectorServiceV2` | `@Deprecated` — retained for parallel validation |
+| `neutralMarketDetectorV3` | `NeutralMarketDetectorServiceV3` | **Active** — wired into `SellATMStraddleStrategy` |
+
+**Injection pattern:**
+```java
+@Autowired
+@Qualifier("neutralMarketDetectorV3")
+private NeutralMarketDetector neutralMarketDetector;
+```
+
+### 19.10 `NeutralMarketEvaluation` (Result Interface) — NEW in 6.1
+
+Common interface for neutral market evaluation results. Abstracts over V2 (`NeutralMarketResult`) and V3 (`NeutralMarketResultV3`).
+
+```java
+public interface NeutralMarketEvaluation {
+    boolean neutral();
+    boolean isTradable();
+    int totalScore();
+    int maxScore();
+    String summary();
+    Instant evaluatedAt();
+    String getRegimeLabel();
+    int minimumRequired();
+    List<SignalResult> signals();
+}
+```
+
+### 19.11 `Regime` (V3 Enum)
 
 ```java
 public enum Regime { STRONG_NEUTRAL, WEAK_NEUTRAL, TRENDING }
 ```
 
-### 19.10 `BreakoutRisk` (V3 Enum)
+### 19.12 `BreakoutRisk` (V3 Enum)
 
 ```java
 public enum BreakoutRisk { LOW, MEDIUM, HIGH }
@@ -1716,6 +1764,8 @@ docker build -t zerodhabot_genai_3:latest .
 6. **Exit Logic**: Implement `ExitStrategy`, assign priority, register in `PositionMonitorV2`.
 7. **Persistence**: Use `TradePersistenceService` (async) — never block strategy threads on DB writes.
 8. **Timestamps**: All timestamps in IST (Asia/Kolkata).
+9. **Neutral Market Detector**: Inject via `NeutralMarketDetector` interface + `@Qualifier("neutralMarketDetectorV3")` — never inject concrete V2/V3 class in new code.
+10. **Dependency Injection**: Prefer constructor injection (`final` fields + `@RequiredArgsConstructor`). Never use `@Lazy` for non-circular dependencies. See `docs/LAZY_AUDIT.md` for remaining real cycles.
 
 ### HFT Hot-Path Rules
 
@@ -1746,7 +1796,9 @@ docker build -t zerodhabot_genai_3:latest .
 | **Change neutral market signals (V2)** | `NeutralMarketDetectorServiceV2.java`, `NeutralMarketConfig.java`, `NeutralMarketResult.java`, `SignalResult.java` |
 | **Change neutral market signals (V3)** | `NeutralMarketDetectorServiceV3.java`, `NeutralMarketV3Config.java`, `NeutralMarketResultV3.java`, `Regime.java`, `BreakoutRisk.java` |
 | **Add a V3 regime/micro/breakout signal** | `NeutralMarketDetectorServiceV3.java` (add evaluator method + wire in `evaluateAllLayers`), `NeutralMarketV3Config.java` (add weight + threshold) |
-| **Wire V3 into strategy execution** | `MarketStateUpdater.java`, `SellATMStraddleStrategy.java`, `StrategyRestartScheduler.java` — replace V2 dependency with V3 |
+| **Wire V3 into remaining consumers** | `MarketStateUpdater.java`, `StrategyRestartScheduler.java` — still on V2 (TODO comments mark these). Replace `NeutralMarketDetectorServiceV2` with `NeutralMarketDetector` + `@Qualifier("neutralMarketDetectorV3")` |
+| **Switch a detector version** | Change `@Qualifier` value in injection site: `"neutralMarketDetectorV2"` ↔ `"neutralMarketDetectorV3"`. Both implement `NeutralMarketDetector` |
+| **Audit @Lazy dependencies** | `docs/LAZY_AUDIT.md` — maps all remaining `@Lazy` sites with cycle explanations and decoupling plans |
 | **Modify order placement** | `UnifiedTradingService.java`, `PaperTradingService.java`, `TradingService.java` |
 | **Add a new config property** | Relevant `*Config.java` class + `application.yml` |
 | **Add a new REST endpoint** | Existing controller for reference → new/existing Service → return `ApiResponse<T>` |
@@ -1810,6 +1862,50 @@ docker build -t zerodhabot_genai_3:latest .
 
 ## 26. Changelog
 
+### Version 6.1 (2026-03-20) — V3 Wiring + @Lazy Dependency Cleanup
+
+**Task 1 — Wire V3 Detector into SellATMStraddleStrategy:**
+
+*Pre-existing interfaces (already defined, now implemented):*
+- `NeutralMarketDetector.java` — Common interface for neutral market detection engines: `evaluate(String)`, `isMarketNeutral(String)`, `clearCache()`. Bean names: `"neutralMarketDetectorV2"`, `"neutralMarketDetectorV3"`.
+- `NeutralMarketEvaluation.java` — Common interface for evaluation results: `neutral()`, `isTradable()`, `totalScore()`, `maxScore()`, `summary()`, `getRegimeLabel()`, `minimumRequired()`, `signals()`.
+
+*Modified Files:*
+- `NeutralMarketResult.java` — Now `implements NeutralMarketEvaluation`. Added `getRegimeLabel()`.
+- `NeutralMarketResultV3.java` — Now `implements NeutralMarketEvaluation`. Added `getRegimeLabel()`, `minimumRequired()` (returns 0), `signals()` (returns empty list).
+- `NeutralMarketDetectorServiceV2.java` — Now `@Deprecated`, `@Service("neutralMarketDetectorV2")`, `implements NeutralMarketDetector`. Added `@Override` on `evaluate()`, `isMarketNeutral()`, `clearCache()`.
+- `NeutralMarketDetectorServiceV3.java` — Now `@Service("neutralMarketDetectorV3")`, `implements NeutralMarketDetector`. Added `isMarketNeutral()` (delegates to `isMarketTradable()`), `@Override` on `evaluate()`, `clearCache()`.
+- `SellATMStraddleStrategy.java` — Injection changed from `NeutralMarketDetectorServiceV2` (concrete) to `@Qualifier("neutralMarketDetectorV3") NeutralMarketDetector` (interface). Result type changed from `NeutralMarketResult` to `NeutralMarketEvaluation`. `getRegime()` → `getRegimeLabel()`.
+- `MarketStateUpdater.java` — Added TODO comment marking V2 injection for future migration.
+- `StrategyRestartScheduler.java` — Added TODO comment marking V2 injection for future migration.
+
+**Task 2 — Eliminate @Lazy Circular Dependencies (Phase 1):**
+
+*Removed 17 non-cycle `@Lazy` annotations* — converted to constructor injection:
+
+| Service | Previously @Lazy Bean(s) |
+|---|---|
+| `StrategyService` | `TradePersistenceService`, `Executor (persistenceExecutor)`, `DailyPnlGateService` |
+| `UnifiedTradingService` | `TradePersistenceService` |
+| `WebSocketService` | `TradePersistenceService` |
+| `PaperTradingService` | `TradePersistenceService` |
+| `DeltaCacheService` | `TradePersistenceService` |
+| `SystemHealthMonitorService` | `WebSocketService`, `StrategyService` |
+| `TradePersistenceService` | 5 Repositories (`AlertHistory`, `MTMSnapshot`, `StrategyConfigHistory`, `WebSocketEvent`, `SystemHealthSnapshot`) |
+| `DataCleanupService` | 5 Repositories (same set as above) |
+| `AsyncPersistenceConfig` | `PersistenceBufferService` |
+
+*6 real-cycle `@Lazy` retained* — all documented with cycle explanation and decoupling plan:
+- Cycle A: `StrategyService` ↔ `StrategyRestartScheduler` (bidirectional)
+- Cycle B: `StrategyService` ↔ `SellATMStraddleStrategy` / `ShortStrangleStrategy` (factory cycle)
+- Cycle C: `StrategyService` ↔ `StraddleExitHandler` / `LegReplacementHandler` (handler cycle)
+
+*New Documentation:*
+- `docs/LAZY_AUDIT.md` updated with Phase 1 completion status and Phase 2 decoupling plan.
+
+*Test Fixes:*
+- `PaperTradingServiceTest.java` — Updated constructor call to include `TradePersistenceService` mock.
+
 ### Version 6.0 (2026-03-20) — Neutral Market Detector V3 (3-Layer Tradable Opportunity Detector)
 
 **New Files:**
@@ -1840,8 +1936,9 @@ docker build -t zerodhabot_genai_3:latest .
 - Replaced `RuntimeException` in `resolveInstrumentToken` with graceful error handling
 
 **Integration Status:**
-- V3 is compiled and available as a Spring `@Service` bean
-- NOT yet wired into active strategy execution (V2 remains the active consumer in `MarketStateUpdater`, `SellATMStraddleStrategy`, `StrategyRestartScheduler`)
+- V3 is compiled and available as a Spring `@Service("neutralMarketDetectorV3")` bean implementing `NeutralMarketDetector`
+- ✅ **Wired into `SellATMStraddleStrategy`** as of V6.1 via `@Qualifier("neutralMarketDetectorV3")`
+- `MarketStateUpdater` and `StrategyRestartScheduler` still use V2 (migration TODO)
 - Can be tested via direct `evaluate("NIFTY")` call
 - No unit tests yet (to be added)
 
@@ -1862,7 +1959,7 @@ docker build -t zerodhabot_genai_3:latest .
 **Modified Files:**
 - `NeutralMarketConfig.java` — Added 14 V2 config properties (oscillation, pullback, time adaptation, weights, regime thresholds)
 - `MarketStateUpdater.java` — Now uses `NeutralMarketDetectorServiceV2` instead of V1
-- `SellATMStraddleStrategy.java` — Now uses V2 detector for pre-flight neutral market check
+- `SellATMStraddleStrategy.java` — Used V2 detector for pre-flight neutral market check (later migrated to V3 in v6.1)
 - `StrategyRestartScheduler.java` — Now uses V2 detector for restart gating
 
 **Key Design Decisions:**

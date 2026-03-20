@@ -59,6 +59,9 @@ public class LegReplacementHandler {
 
     public LegReplacementHandler(TradingService tradingService,
                                  UnifiedTradingService unifiedTradingService,
+                                 // CYCLE C: StrategyService → StrategyFactory → Strategies → LegReplacementHandler → StrategyService.
+                                 // Handler calls strategyService.completeExecution() / updateLegLifecycleState() after leg replacement.
+                                 // Decoupling plan: StrategyCompletionEvent or StrategyCompletionCallback.
                                  @Lazy StrategyService strategyService,
                                  WebSocketService webSocketService) {
         this.tradingService = tradingService;

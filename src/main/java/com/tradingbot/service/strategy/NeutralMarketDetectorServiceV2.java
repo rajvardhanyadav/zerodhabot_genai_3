@@ -1,6 +1,7 @@
 package com.tradingbot.service.strategy;
 
 import com.tradingbot.config.NeutralMarketConfig;
+import com.tradingbot.model.NeutralMarketEvaluation;
 import com.tradingbot.model.NeutralMarketResult;
 import com.tradingbot.model.SignalResult;
 import com.tradingbot.service.InstrumentCacheService;
@@ -25,6 +26,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Redesign of the original {@link NeutralMarketDetectorService} to increase tradable
  * opportunities, eliminate over-filtering, and provide dynamic confidence-based regime
  * classification optimised for the SELL ATM STRADDLE intraday strategy on NIFTY 50.</p>
+ *
+ * <p><strong>Deprecated:</strong> Superseded by {@link NeutralMarketDetectorServiceV3}.
+ * To be removed after parallel validation.</p>
  *
  * <h2>Key Improvements over V1</h2>
  * <ul>
@@ -59,12 +63,14 @@ import java.util.concurrent.ConcurrentHashMap;
  * </ul>
  *
  * @since 5.0
+ * @deprecated Superseded by {@link NeutralMarketDetectorServiceV3}. To be removed after parallel validation.
  * @see NeutralMarketConfig
  * @see NeutralMarketResult
  */
-@Service
+@Deprecated
+@Service("neutralMarketDetectorV2")
 @Slf4j
-public class NeutralMarketDetectorServiceV2 {
+public class NeutralMarketDetectorServiceV2 implements NeutralMarketDetector {
 
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
     private static final LocalTime MARKET_OPEN = LocalTime.of(9, 15);
@@ -118,6 +124,7 @@ public class NeutralMarketDetectorServiceV2 {
      * @param instrumentType "NIFTY" or "BANKNIFTY"
      * @return composite result with weighted scoring and regime classification
      */
+    @Override
     public NeutralMarketResult evaluate(String instrumentType) {
         if (!config.isEnabled()) {
             log.debug("Neutral market filter V2 disabled, allowing trade");
@@ -154,6 +161,7 @@ public class NeutralMarketDetectorServiceV2 {
     /**
      * Convenience: check if the market is neutral (tradable) for the given instrument.
      */
+    @Override
     public boolean isMarketNeutral(String instrumentType) {
         return evaluate(instrumentType).neutral();
     }
@@ -168,6 +176,7 @@ public class NeutralMarketDetectorServiceV2 {
     /**
      * Clear all cached state. Useful for testing or forced refresh.
      */
+    @Override
     public void clearCache() {
         cachedResults.clear();
         log.debug("Neutral market detector V2 cache cleared");

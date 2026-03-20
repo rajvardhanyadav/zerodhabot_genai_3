@@ -14,8 +14,6 @@ import jakarta.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.DisposableBean;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -36,16 +34,15 @@ public class WebSocketService implements DisposableBean {
     private final UserSessionManager sessionManager;
     private final KiteConfig kiteConfig;
     private final PersistenceConfig persistenceConfig;
-
-    @Autowired
-    @Lazy
-    private TradePersistenceService tradePersistenceService;
+    private final TradePersistenceService tradePersistenceService;
 
     public WebSocketService(UserSessionManager sessionManager, KiteConfig kiteConfig,
-                             PersistenceConfig persistenceConfig) {
+                             PersistenceConfig persistenceConfig,
+                             TradePersistenceService tradePersistenceService) {
         this.sessionManager = sessionManager;
         this.kiteConfig = kiteConfig;
         this.persistenceConfig = persistenceConfig;
+        this.tradePersistenceService = tradePersistenceService;
     }
 
 

@@ -39,6 +39,9 @@ public class StraddleExitHandler {
     private final WebSocketService webSocketService;
 
     public StraddleExitHandler(UnifiedTradingService unifiedTradingService,
+                               // CYCLE C: StrategyService → StrategyFactory → Strategies → StraddleExitHandler → StrategyService.
+                               // ExitHandler calls strategyService.completeExecution() after exit processing.
+                               // Decoupling plan: StrategyCompletionEvent or StrategyCompletionCallback.
                                @Lazy StrategyService strategyService,
                                WebSocketService webSocketService) {
         this.unifiedTradingService = unifiedTradingService;

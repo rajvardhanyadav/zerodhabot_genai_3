@@ -9,7 +9,7 @@ import com.tradingbot.dto.OrderResponse;
 import com.tradingbot.dto.StrategyExecutionResponse;
 import com.tradingbot.dto.StrategyRequest;
 import com.tradingbot.model.SlTargetMode;
-import com.tradingbot.model.NeutralMarketResult;
+import com.tradingbot.model.NeutralMarketEvaluation;
 import com.tradingbot.model.StrategyExecution;
 import com.tradingbot.model.StrategyStatus;
 import com.tradingbot.service.InstrumentCacheService;
@@ -25,6 +25,7 @@ import com.tradingbot.util.StrategyConstants;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Instrument;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
@@ -74,7 +75,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
     private final StraddleExitHandler exitHandler;
     private final LegReplacementHandler legReplacementHandler;
     private final MonitoringSetupHelper monitoringSetupHelper;
-    private final NeutralMarketDetectorServiceV2 neutralMarketDetectorService;
+    private final NeutralMarketDetector neutralMarketDetectorService;
 
     // ==================== HFT Thread Pool Configuration ====================
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
@@ -122,6 +123,9 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                    Map<String, Integer> lotSizeCache,
                                    WebSocketService webSocketService,
                                    StrategyConfig strategyConfig,
+                                   // CYCLE B: StrategyService → StrategyFactory → SellATMStraddleStrategy → StrategyService.
+                                   // Strategy calls strategyService.completeExecution() / updateLegLifecycleState().
+                                   // Decoupling plan: ObjectProvider<StrategyService> or StrategyCompletionEvent.
                                    @Lazy StrategyService strategyService,
                                    DeltaCacheService deltaCacheService,
                                    VolatilityFilterService volatilityFilterService,
@@ -129,7 +133,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                                    StraddleExitHandler exitHandler,
                                    LegReplacementHandler legReplacementHandler,
                                    MonitoringSetupHelper monitoringSetupHelper,
-                                   NeutralMarketDetectorServiceV2 neutralMarketDetectorService,
+                                   @Qualifier("neutralMarketDetectorV3") NeutralMarketDetector neutralMarketDetectorService,
                                    MarketDataEngine marketDataEngine,
                                    InstrumentCacheService instrumentCacheService) {
         super(tradingService, unifiedTradingService, lotSizeCache, deltaCacheService, marketDataEngine, instrumentCacheService);
@@ -193,11 +197,11 @@ public class SellATMStraddleStrategy extends BaseStrategy {
         log.info("[{}] Evaluating ATM straddle entry for {}. Checking neutral market conditions...",
                 tradingMode, instrumentType);
 
-        NeutralMarketResult neutralResult =
+        NeutralMarketEvaluation neutralResult =
                 neutralMarketDetectorService.evaluate(instrumentType);
         log.info("[{}] Neutral market check: instrument={}, score={}/{}, regime={}, minimumRequired={}, neutral={}, signals=[{}]",
                 tradingMode, instrumentType, neutralResult.totalScore(), neutralResult.maxScore(),
-                neutralResult.getRegime(), neutralResult.minimumRequired(), neutralResult.neutral(), neutralResult.summary());
+                neutralResult.getRegimeLabel(), neutralResult.minimumRequired(), neutralResult.neutral(), neutralResult.summary());
 
         if (!neutralResult.neutral()) {
             String failedSignals = neutralResult.signals().isEmpty()

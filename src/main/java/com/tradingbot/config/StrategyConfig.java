@@ -193,7 +193,7 @@ public class StrategyConfig {
      * Format: "HH:mm"
      * Default: "10:00" (45 minutes after market open for data warmup)
      */
-    private String entryWindowStart = "10:00";
+    private String entryWindowStart = "09:40";
 
     /**
      * Latest time (IST) at which a new straddle entry is permitted.
@@ -201,7 +201,7 @@ public class StrategyConfig {
      * Format: "HH:mm"
      * Default: "14:00" (1 hour+ before auto square-off)
      */
-    private String entryWindowEnd = "15:00";
+    private String entryWindowEnd = "15:15";
 
     // ==================== EXPIRY DAY CONFIGURATION ====================
 
