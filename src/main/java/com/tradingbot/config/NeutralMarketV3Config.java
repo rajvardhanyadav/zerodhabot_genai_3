@@ -30,11 +30,11 @@ public class NeutralMarketV3Config {
     void validate() {
         if (enabled) {
             log.info("NeutralMarketV3 config loaded: enabled={}, cacheTtlMs={}, " +
-                            "regimeStrongThreshold={}, regimeWeakThreshold={}, " +
-                            "timeAdaptation={}, breakoutTightRange={}",
+                            "regimeStrongThreshold={}, regimeWeakThreshold={}, regimeOnlyMinThreshold={}, " +
+                            "timeAdaptation={}, breakoutTightRange={}, excessiveRangeThreshold={}",
                     enabled, cacheTtlMs,
-                    regimeStrongNeutralThreshold, regimeWeakNeutralThreshold,
-                    timeBasedAdaptationEnabled, breakoutTightRangeThreshold);
+                    regimeStrongNeutralThreshold, regimeWeakNeutralThreshold, regimeOnlyMinimumThreshold,
+                    timeBasedAdaptationEnabled, breakoutTightRangeThreshold, excessiveRangeThreshold);
         }
     }
 
@@ -70,8 +70,8 @@ public class NeutralMarketV3Config {
 
     // ==================== REGIME LAYER: THRESHOLDS ====================
 
-    /** VWAP proximity: max deviation from VWAP as fraction. Default: 0.002 (0.2%) */
-    private double vwapProximityThreshold = 0.002;
+    /** VWAP proximity: max deviation from VWAP as fraction. Default: 0.004 (0.4%) */
+    private double vwapProximityThreshold = 0.004;
 
     /**
      * Number of 1-min candles for VWAP computation (SMA proxy for index).
@@ -79,8 +79,8 @@ public class NeutralMarketV3Config {
      */
     private int vwapCandleCount = 15;
 
-    /** Range compression: max (high-low)/price over last N candles. Default: 0.0035 (0.35%) */
-    private double rangeCompressionThreshold = 0.0035;
+    /** Range compression: max (high-low)/price over last N candles. Default: 0.006 (0.6%) */
+    private double rangeCompressionThreshold = 0.006;
 
     /** Number of 1-min candles for range compression check. Default: 10 */
     private int rangeCompressionCandles = 10;
@@ -88,11 +88,11 @@ public class NeutralMarketV3Config {
     /** Price oscillation: number of 1-min candles to check direction flips. Default: 10 */
     private int oscillationCandleCount = 10;
 
-    /** Minimum direction reversals to pass oscillation signal. Default: 4 */
-    private int oscillationMinReversals = 4;
+    /** Minimum direction reversals to pass oscillation signal. Default: 3 */
+    private int oscillationMinReversals = 3;
 
-    /** ADX threshold: market is ranging if ADX < this. Default: 20.0 */
-    private double adxThreshold = 20.0;
+    /** ADX threshold: market is ranging if ADX < this. Default: 25.0 */
+    private double adxThreshold = 25.0;
 
     /** ADX Wilder smoothing period. Default: 7 (short-term intraday) */
     private int adxPeriod = 7;
@@ -114,8 +114,8 @@ public class NeutralMarketV3Config {
     /** Regime score >= this → STRONG_NEUTRAL. Default: 6 */
     private int regimeStrongNeutralThreshold = 6;
 
-    /** Regime score >= this → WEAK_NEUTRAL. Default: 4 */
-    private int regimeWeakNeutralThreshold = 4;
+    /** Regime score >= this → WEAK_NEUTRAL. Default: 3 */
+    private int regimeWeakNeutralThreshold = 3;
 
     /** Minimum regime score for micro-neutral override (allows entry when micro signals are very strong). Default: 3 */
     private int microNeutralOverrideRegimeThreshold = 3;
@@ -138,9 +138,9 @@ public class NeutralMarketV3Config {
 
     /**
      * VWAP Pullback: minimum deviation from VWAP to qualify as "away".
-     * As fraction of VWAP. Default: 0.0015 (0.15%)
+     * As fraction of VWAP. Default: 0.001 (0.1%)
      */
-    private double microVwapPullbackDeviationThreshold = 0.0015;
+    private double microVwapPullbackDeviationThreshold = 0.001;
 
     /** Number of candles to check for VWAP pullback reversal. Default: 5 */
     private int microVwapPullbackCandles = 5;
@@ -159,23 +159,23 @@ public class NeutralMarketV3Config {
 
     /**
      * Maximum average absolute move per candle (as fraction of price) to confirm
-     * oscillation is small-amplitude. Default: 0.001 (0.1%)
+     * oscillation is small-amplitude. Default: 0.002 (0.2%)
      */
-    private double microOscillationMaxAvgMove = 0.001;
+    private double microOscillationMaxAvgMove = 0.002;
 
     /** Number of candles for micro range stability check. Default: 5 */
     private int microRangeCandles = 5;
 
-    /** Max (high-low)/price for micro range stability to pass. Default: 0.001 (0.1%) */
-    private double microRangeThreshold = 0.001;
+    /** Max (high-low)/price for micro range stability to pass. Default: 0.003 (0.3%) */
+    private double microRangeThreshold = 0.003;
 
     // ==================== BREAKOUT RISK LAYER ====================
 
     /**
      * Range tightness threshold: if range/price < this, consolidation is "tight".
-     * Tight range is a precondition for breakout. Default: 0.0015 (0.15%)
+     * Tight range is a precondition for breakout. Default: 0.001 (0.1%)
      */
-    private double breakoutTightRangeThreshold = 0.0015;
+    private double breakoutTightRangeThreshold = 0.001;
 
     /** Number of candles for breakout range analysis. Default: 10 */
     private int breakoutRangeCandles = 10;
@@ -188,9 +188,9 @@ public class NeutralMarketV3Config {
 
     /**
      * Minimum consecutive same-direction candles at the end to detect building momentum.
-     * Default: 3
+     * Default: 4
      */
-    private int breakoutMomentumCandles = 3;
+    private int breakoutMomentumCandles = 4;
 
     // ==================== TIME-BASED ADAPTATION ====================
 
@@ -202,6 +202,29 @@ public class NeutralMarketV3Config {
      * Default: true
      */
     private boolean timeBasedAdaptationEnabled = true;
-}
 
+    // ==================== EXCESSIVE RANGE VETO GATE ====================
+
+    /**
+     * Hard veto: if the last N candles have a range exceeding this fraction of price,
+     * a strong directional move is underway and straddle entry is vetoed.
+     * This is a safety gate independent of the regime score.
+     * Default: 0.008 (0.8% = ~192pts at NIFTY 24000)
+     */
+    private double excessiveRangeThreshold = 0.008;
+
+    /** Number of candles for excessive range veto check. Default: 10 */
+    private int excessiveRangeCandles = 10;
+
+    // ==================== REGIME-ONLY TRADABILITY ====================
+
+    /**
+     * Minimum regime score for tradability.
+     * Under the "danger veto + confidence scoring" model, the micro layer is a
+     * bonus for position sizing — NOT a hard requirement for entry.
+     * Trade is allowed when regimeScore >= this threshold (and no veto gates fired).
+     * Default: 3
+     */
+    private int regimeOnlyMinimumThreshold = 3;
+}
 

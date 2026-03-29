@@ -1,12 +1,13 @@
 package com.tradingbot.service.strategy;
 
 import com.tradingbot.config.MarketDataEngineConfig;
-import com.tradingbot.config.NeutralMarketConfig;
+import com.tradingbot.config.NeutralMarketV3Config;
 import com.tradingbot.model.MarketStateEvent;
-import com.tradingbot.model.NeutralMarketResult;
+import com.tradingbot.model.NeutralMarketEvaluation;
 import com.tradingbot.service.session.UserSessionManager;
 import com.tradingbot.util.CurrentUserContext;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -41,21 +42,19 @@ public class MarketStateUpdater {
     private static final LocalTime MARKET_OPEN = LocalTime.of(9, 15);
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 10);
 
-    // TODO: Migrate to NeutralMarketDetector interface + @Qualifier("neutralMarketDetectorV3")
-    //       once V3 parallel validation is complete (V2 is @Deprecated).
-    private final NeutralMarketDetectorServiceV2 neutralMarketDetectorService;
-    private final NeutralMarketConfig neutralMarketConfig;
+    private final NeutralMarketDetector neutralMarketDetectorService;
+    private final NeutralMarketV3Config neutralMarketV3Config;
     private final MarketDataEngineConfig marketDataEngineConfig;
     private final ApplicationEventPublisher eventPublisher;
     private final UserSessionManager userSessionManager;
 
-    public MarketStateUpdater(NeutralMarketDetectorServiceV2 neutralMarketDetectorService,
-                              NeutralMarketConfig neutralMarketConfig,
+    public MarketStateUpdater(@Qualifier("neutralMarketDetectorV3") NeutralMarketDetector neutralMarketDetectorService,
+                              NeutralMarketV3Config neutralMarketV3Config,
                               MarketDataEngineConfig marketDataEngineConfig,
                               ApplicationEventPublisher eventPublisher,
                               UserSessionManager userSessionManager) {
         this.neutralMarketDetectorService = neutralMarketDetectorService;
-        this.neutralMarketConfig = neutralMarketConfig;
+        this.neutralMarketV3Config = neutralMarketV3Config;
         this.marketDataEngineConfig = marketDataEngineConfig;
         this.eventPublisher = eventPublisher;
         this.userSessionManager = userSessionManager;
@@ -70,8 +69,8 @@ public class MarketStateUpdater {
      */
     @Scheduled(fixedRateString = "${strategy.neutral-market-poll-interval-ms:30000}")
     public void evaluateAndPublish() {
-        if (!neutralMarketConfig.isEnabled()) {
-            log.trace("MarketStateUpdater: neutral-market filter disabled, skipping evaluation cycle");
+        if (!neutralMarketV3Config.isEnabled()) {
+            log.trace("MarketStateUpdater: V3 neutral-market filter disabled, skipping evaluation cycle");
             return;
         }
 
@@ -101,7 +100,7 @@ public class MarketStateUpdater {
 
             for (String instrument : marketDataEngineConfig.getSupportedInstrumentsArray()) {
                 try {
-                    NeutralMarketResult result = neutralMarketDetectorService.evaluate(instrument);
+                    NeutralMarketEvaluation result = neutralMarketDetectorService.evaluate(instrument);
                     Instant now = Instant.now();
 
                     MarketStateEvent event = new MarketStateEvent(

@@ -49,7 +49,7 @@ class StrategyRestartSchedulerTest {
     private BotStatusService botStatusService;
 
     @Mock
-    private NeutralMarketDetectorServiceV2 neutralMarketDetectorService;
+    private NeutralMarketDetector neutralMarketDetectorService;
 
     private StrategyRestartScheduler scheduler;
 

@@ -276,10 +276,13 @@ neutral-market:
   weak-neutral-threshold: 4          # Score >= 4 → WEAK_NEUTRAL (tradable, reduced size)
 
 # ==================== NEUTRAL MARKET V3: 3-LAYER DETECTION ENGINE ====================
-# Three-layer tradable opportunity detector:
+# Three-layer tradable opportunity detector with "danger veto + confidence scoring" model:
 #   Layer 1 (Regime):        Macro neutrality (VWAP, range, oscillation, ADX, gamma pin)
-#   Layer 2 (Microstructure): Immediate tradable signal (pullback, HF oscillation, range)
-#   Layer 3 (Breakout Risk):  Safety gate (blocks entry before breakout)
+#   Layer 2 (Microstructure): Bonus signals for position sizing (pullback, HF oscillation, range)
+#   Layer 3 (Veto Gates):    Safety gates — breakout risk + excessive range
+#
+# Decision: tradable = (no veto gates fired) AND (regimeScore >= regimeOnlyMinThreshold)
+#           Micro signals are BONUS for lot sizing, NOT a hard requirement.
 neutral-market-v3:
   enabled: true
   allow-on-data-unavailable: true
@@ -292,14 +295,14 @@ neutral-market-v3:
   weight-adx: 1                                # Confirmatory only (lagging indicator)
   weight-gamma-pin: 1                          # Expiry day only — gamma pin effect
 
-  # --- Regime Layer: Thresholds ---
-  vwap-proximity-threshold: 0.002              # 0.2% max deviation from VWAP
+  # --- Regime Layer: Thresholds (RELAXED for more trading opportunities) ---
+  vwap-proximity-threshold: 0.004              # 0.4% max deviation from VWAP (~96pts at 24000)
   vwap-candle-count: 15                        # 1-min candles for VWAP SMA proxy
-  range-compression-threshold: 0.0035          # 0.35% = ~84pts at NIFTY 24000
+  range-compression-threshold: 0.006           # 0.6% = ~144pts at NIFTY 24000
   range-compression-candles: 10                # Last 10 one-minute candles
   oscillation-candle-count: 10                 # 10 candles for direction flip count
-  oscillation-min-reversals: 4                 # Minimum 4 reversals out of 9 possible
-  adx-threshold: 20.0                          # ADX < 20 = ranging market
+  oscillation-min-reversals: 3                 # 3 reversals (was 4) — still confirms chop
+  adx-threshold: 25.0                          # ADX < 25 = ranging (was 20; 20-25 is transitional)
   adx-period: 7                                # Short-term intraday Wilder smoothing
   adx-candle-interval: "minute"                # 1-min candles for fast ADX reaction
   adx-candle-count: 30                         # ~30 min window — available by 9:45 IST
@@ -308,28 +311,35 @@ neutral-market-v3:
 
   # --- Regime Layer: Classification ---
   regime-strong-neutral-threshold: 6           # Score >= 6 → STRONG_NEUTRAL
-  regime-weak-neutral-threshold: 4             # Score >= 4 → WEAK_NEUTRAL
+  regime-weak-neutral-threshold: 3             # Score >= 3 → WEAK_NEUTRAL (was 4)
 
-  # --- Microstructure Layer: Weights ---
+  # --- Regime-Only Tradability (danger-veto model) ---
+  regime-only-minimum-threshold: 3             # Trade allowed when regime >= 3 (no micro required)
+
+  # --- Microstructure Layer: Weights (BONUS for lot sizing, not required) ---
   weight-micro-vwap-pullback: 2                # VWAP pullback reversal momentum
   weight-micro-oscillation: 2                  # HF oscillation (flips + small amplitude)
   weight-micro-range-stability: 1              # Micro range stability
 
-  # --- Microstructure Layer: Thresholds ---
-  micro-vwap-pullback-deviation-threshold: 0.0015  # 0.15% min deviation to qualify as "away"
+  # --- Microstructure Layer: Thresholds (RELAXED) ---
+  micro-vwap-pullback-deviation-threshold: 0.001   # 0.1% min deviation (was 0.15%)
   micro-vwap-pullback-candles: 5               # Window for pullback pattern detection
   micro-vwap-pullback-slope-candles: 3         # Last 3 candles must revert toward VWAP
   micro-oscillation-candles: 8                 # Shorter window than regime (immediacy)
   micro-oscillation-min-flips: 4               # Minimum direction flips
-  micro-oscillation-max-avg-move: 0.001        # 0.1% max avg move per candle (small amplitude)
+  micro-oscillation-max-avg-move: 0.002        # 0.2% max avg move per candle (was 0.1%)
   micro-range-candles: 5                       # Last 5 candles for micro range check
-  micro-range-threshold: 0.001                 # 0.1% = ~24pts at NIFTY 24000
+  micro-range-threshold: 0.003                 # 0.3% = ~72pts at NIFTY 24000 (was 0.1%)
 
-  # --- Breakout Risk Layer ---
-  breakout-tight-range-threshold: 0.0015       # 0.15% — very tight consolidation
+  # --- Veto Gate: Breakout Risk Layer (tightened to reduce false positives) ---
+  breakout-tight-range-threshold: 0.001        # 0.1% — only truly extreme compression (was 0.15%)
   breakout-range-candles: 10                   # Candles to compute breakout range
   breakout-edge-proximity-pct: 0.2             # Within 20% of range from edge
-  breakout-momentum-candles: 3                 # 3 consecutive same-direction candles
+  breakout-momentum-candles: 4                 # 4 consecutive same-direction candles (was 3)
+
+  # --- Veto Gate: Excessive Range (NEW — catches strong directional moves) ---
+  excessive-range-threshold: 0.008             # 0.8% = ~192pts at 24000 → veto trade
+  excessive-range-candles: 10                  # Last 10 candles for range check
 
   # --- Time-Based Adaptation ---
   time-based-adaptation-enabled: true          # 09:15-10:00 → −1, 13:30-15:00 → +1

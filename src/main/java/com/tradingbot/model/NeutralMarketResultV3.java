@@ -17,7 +17,7 @@ import java.util.Map;
  * <ul>
  *   <li><b>Regime Score</b> (0–9): Macro neutrality from VWAP, range, oscillation, ADX, gamma pin</li>
  *   <li><b>Micro Score</b> (0–5): Immediate tradable opportunity from pullback, HF oscillation, range stability</li>
- *   <li><b>Final Score</b> (0–14+): regime + micro, time-adjusted. Used for confidence and lot sizing.</li>
+ *   <li><b>Final Score</b> (0–14+): regime + micro, time-adjusted. Used for confidence.</li>
  * </ul>
  *
  * <h2>HFT Safety</h2>
@@ -34,7 +34,7 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
     private static final NeutralMarketResultV3 DISABLED = new NeutralMarketResultV3(
             true, 10, 5, 15, 1.0,
             Regime.STRONG_NEUTRAL, BreakoutRisk.LOW,
-            true, 3, Collections.emptyMap(),
+            true, Collections.emptyMap(),
             "V3 filter disabled — allowing trade", Instant.EPOCH
     );
 
@@ -47,7 +47,6 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
     private final Regime regime;
     private final BreakoutRisk breakoutRisk;
     private final boolean microTradable;
-    private final int recommendedLotMultiplier;
     private final Map<String, Boolean> signals;
     private final String summary;
     private final Instant evaluatedAt;
@@ -55,7 +54,7 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
     // ==================== CONSTRUCTOR ====================
     public NeutralMarketResultV3(boolean tradable, int regimeScore, int microScore, int finalScore,
                                  double confidence, Regime regime, BreakoutRisk breakoutRisk,
-                                 boolean microTradable, int recommendedLotMultiplier,
+                                 boolean microTradable,
                                  Map<String, Boolean> signals, String summary, Instant evaluatedAt) {
         this.tradable = tradable;
         this.regimeScore = regimeScore;
@@ -65,7 +64,6 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
         this.regime = regime;
         this.breakoutRisk = breakoutRisk;
         this.microTradable = microTradable;
-        this.recommendedLotMultiplier = recommendedLotMultiplier;
         this.signals = signals != null ? Collections.unmodifiableMap(new LinkedHashMap<>(signals)) : Collections.emptyMap();
         this.summary = summary;
         this.evaluatedAt = evaluatedAt;
@@ -96,9 +94,6 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
 
     /** Whether the microstructure layer independently signals a tradable opportunity. */
     public boolean isMicroTradable() { return microTradable; }
-
-    /** Recommended lot multiplier (0–3) based on finalScore. 0 = do not trade. */
-    public int getRecommendedLotMultiplier() { return recommendedLotMultiplier; }
 
     /** Per-signal pass/fail breakdown. Key = signal name, Value = passed. */
     public Map<String, Boolean> getSignals() { return signals; }
@@ -161,7 +156,7 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
         return new NeutralMarketResultV3(
                 allowTrade, 0, 0, 0, 0.0,
                 Regime.TRENDING, BreakoutRisk.LOW,
-                false, 0, Collections.emptyMap(),
+                false, Collections.emptyMap(),
                 "Data unavailable: " + reason + ". Fail-safe: " + (allowTrade ? "ALLOW" : "BLOCK"),
                 Instant.now()
         );
@@ -177,8 +172,6 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
                 ", microScore=" + microScore +
                 ", finalScore=" + finalScore +
                 ", confidence=" + String.format("%.2f", confidence) +
-                ", lotMultiplier=" + recommendedLotMultiplier +
                 '}';
     }
 }
-

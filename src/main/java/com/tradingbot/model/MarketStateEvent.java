@@ -13,9 +13,9 @@ import java.time.Instant;
  *
  * @param instrumentType instrument evaluated (e.g. "NIFTY", "BANKNIFTY")
  * @param neutral        whether the market was determined to be neutral/range-bound
- * @param score          composite neutrality score (0–10)
- * @param maxScore       maximum possible score (10)
- * @param result         full evaluation result with per-signal breakdown
+ * @param score          composite neutrality score (version-dependent: 0–10 for V2, 0–15 for V3)
+ * @param maxScore       maximum possible score
+ * @param result         full evaluation result with per-signal breakdown (V2 or V3)
  * @param evaluatedAt    timestamp of the evaluation
  * @since 4.2
  */
@@ -24,7 +24,7 @@ public record MarketStateEvent(
         boolean neutral,
         int score,
         int maxScore,
-        NeutralMarketResult result,
+        NeutralMarketEvaluation result,
         Instant evaluatedAt
 ) {
 }

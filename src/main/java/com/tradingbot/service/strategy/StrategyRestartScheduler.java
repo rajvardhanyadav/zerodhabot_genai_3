@@ -13,6 +13,7 @@ import com.tradingbot.util.CurrentUserContext;
 import com.tradingbot.util.StrategyConstants;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.TaskScheduler;
@@ -70,9 +71,7 @@ public class StrategyRestartScheduler {
     private final TaskScheduler taskScheduler;
     private final DailyPnlGateService dailyPnlGateService;
     private final BotStatusService botStatusService;
-    // TODO: Migrate to NeutralMarketDetector interface + @Qualifier("neutralMarketDetectorV3")
-    //       once V3 parallel validation is complete (V2 is @Deprecated).
-    private final NeutralMarketDetectorServiceV2 neutralMarketDetectorService;
+    private final NeutralMarketDetector neutralMarketDetectorService;
 
     /** Clock for obtaining current time — overridable in tests. */
     private Clock clock = Clock.system(MARKET_ZONE);
@@ -102,7 +101,7 @@ public class StrategyRestartScheduler {
                                     TaskScheduler taskScheduler,
                                     DailyPnlGateService dailyPnlGateService,
                                     BotStatusService botStatusService,
-                                    NeutralMarketDetectorServiceV2 neutralMarketDetectorService) {
+                                    @Qualifier("neutralMarketDetectorV3") NeutralMarketDetector neutralMarketDetectorService) {
         this.strategyConfig = strategyConfig;
         this.strategyService = strategyService;
         this.taskScheduler = taskScheduler;

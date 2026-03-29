@@ -38,12 +38,15 @@ import java.util.concurrent.ConcurrentHashMap;
  *       Blocks entry when breakout is imminent (HIGH risk).</li>
  * </ol>
  *
- * <h2>Final Decision Logic</h2>
+ * <h2>Final Decision Logic — Danger Veto + Confidence Scoring</h2>
  * <pre>
- * if (breakoutRisk == HIGH)           → NOT tradable
- * if (regime ≥ 4 AND micro ≥ 2)      → tradable
- * if (regime == 3 AND micro ≥ 3)     → tradable (micro-neutral opportunity)
- * else                                 → NOT tradable
+ * HARD VETO GATES (any one blocks):
+ *   if (breakoutRisk == HIGH)              → NOT tradable
+ *   if (excessiveRange detected)           → NOT tradable
+ *
+ * REGIME-ONLY TRADABILITY:
+ *   if (regimeScore >= regimeOnlyMinThreshold) → tradable (micro is bonus for lot sizing)
+ *   else                                       → NOT tradable
  * </pre>
  *
  * <h2>HFT Constraints (ALL enforced)</h2>
@@ -75,8 +78,8 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
 
     // Time-based adaptation boundaries (IST)
-    private static final LocalTime OPENING_SESSION_END = LocalTime.of(10, 0);
-    private static final LocalTime CLOSING_SESSION_START = LocalTime.of(13, 30);
+    private static final LocalTime OPENING_SESSION_END = LocalTime.of(9, 40);
+    private static final LocalTime CLOSING_SESSION_START = LocalTime.of(15, 15);
 
     // ADX warmup: need ~20 minutes of 1-min candles after open
     private static final int MIN_MINUTES_AFTER_OPEN_FOR_ADX = 20;
@@ -176,11 +179,6 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
     @Override
     public boolean isMarketNeutral(String instrumentType) {
         return isMarketTradable(instrumentType);
-    }
-
-    /** Convenience: get the recommended lot multiplier (0–3). */
-    public int getRecommendedLotMultiplier(String instrumentType) {
-        return evaluate(instrumentType).getRecommendedLotMultiplier();
     }
 
     /** Clear all cached state. Useful for testing or forced refresh. */
@@ -352,6 +350,14 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         log.debug("V3 Breakout: risk={}", breakoutRisk);
 
         // ======================================================================
+        //                   EXCESSIVE RANGE VETO GATE
+        // ======================================================================
+        boolean excessiveRange = evaluateExcessiveRange(candles, spotPrice);
+        signalMap.put("EXCESSIVE_RANGE_SAFE", !excessiveRange);
+
+        log.debug("V3 ExcessiveRange: vetoed={}", excessiveRange);
+
+        // ======================================================================
         //                   TIME-BASED ADJUSTMENT
         // ======================================================================
         int timeAdjustment = 0;
@@ -360,36 +366,37 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         }
 
         // ======================================================================
-        //                   FINAL DECISION LOGIC
+        //            FINAL DECISION LOGIC — DANGER VETO + CONFIDENCE SCORING
         // ======================================================================
         int rawFinalScore = regimeScore + microScore;
         int finalScore = Math.max(0, Math.min(rawFinalScore + timeAdjustment, 15));
 
-        // Decision tree (as specified):
-        // 1. Breakout risk HIGH → not tradable (safety gate)
-        // 2. Regime >= weakNeutralThreshold AND micro >= 2 → tradable (standard entry)
-        // 3. Regime >= microNeutralOverrideRegimeThreshold AND micro >= microNeutralOverrideMicroThreshold → tradable (micro-neutral opportunity)
+        // New decision model:
+        // 1. HARD VETO: Breakout risk HIGH → not tradable (safety gate)
+        // 2. HARD VETO: Excessive range → not tradable (strong directional move)
+        // 3. REGIME-ONLY GATE: regimeScore >= regimeOnlyMinimumThreshold → tradable
+        //    Micro signals are BONUS for lot sizing, not a hard requirement.
         // 4. Else → not tradable
         boolean tradable;
+        String vetoReason = null;
         if (breakoutRisk == BreakoutRisk.HIGH) {
             tradable = false;
-        } else if (regimeScore >= config.getRegimeWeakNeutralThreshold() && microScore >= 2) {
+            vetoReason = "BREAKOUT_HIGH";
+        } else if (excessiveRange) {
+            tradable = false;
+            vetoReason = "EXCESSIVE_RANGE";
+        } else if (regimeScore >= config.getRegimeOnlyMinimumThreshold()) {
             tradable = true;
-        } else if (regimeScore >= config.getMicroNeutralOverrideRegimeThreshold()
-                && microScore >= config.getMicroNeutralOverrideMicroThreshold()) {
-            tradable = true; // Micro-neutral: regime is borderline but micro signals are strong
         } else {
             tradable = false;
         }
 
         // ======================================================================
-        //                   CONFIDENCE & LOT MULTIPLIER
+        //                   CONFIDENCE
         // ======================================================================
         double confidence = finalScore / MAX_FINAL_SCORE;
         if (confidence > 1.0) confidence = 1.0;
         if (confidence < 0.0) confidence = 0.0;
-
-        int lotMultiplier = tradable ? computeLotMultiplier(finalScore) : 0;
 
         // ======================================================================
         //                   SUMMARY & LOGGING
@@ -410,8 +417,14 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         sb.append(microRangePassed ? " RS✓" : " RS✗");
         sb.append("]=").append(microScore);
         sb.append(" BR=").append(breakoutRisk);
+        if (excessiveRange) {
+            sb.append(" ER=VETO");
+        }
         if (timeAdjustment != 0) {
             sb.append(" T=").append(timeAdjustment > 0 ? "+" : "").append(timeAdjustment);
+        }
+        if (vetoReason != null) {
+            sb.append(" VETO=").append(vetoReason);
         }
         sb.append(" → ").append(tradable ? "TRADE" : "SKIP");
         String summary = sb.toString();
@@ -419,14 +432,15 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         long elapsed = System.currentTimeMillis() - startTime;
 
         log.info("V3 decision: instrument={}, price={}, regime={}, regimeScore={}, microScore={}, " +
-                        "finalScore={}, breakoutRisk={}, tradable={}, lotMultiplier={}, confidence={}, elapsedMs={}, signals=[{}]",
+                        "finalScore={}, breakoutRisk={}, excessiveRange={}, tradable={}, confidence={}, " +
+                        "vetoReason={}, elapsedMs={}, signals=[{}]",
                 instrumentType, String.format("%.2f", spotPrice), regime, regimeScore, microScore,
-                finalScore, breakoutRisk, tradable, lotMultiplier,
-                String.format("%.2f", confidence), elapsed, summary);
+                finalScore, breakoutRisk, excessiveRange, tradable,
+                String.format("%.2f", confidence), vetoReason, elapsed, summary);
 
         return new NeutralMarketResultV3(
                 tradable, regimeScore, microScore, finalScore, confidence,
-                regime, breakoutRisk, microTradable, lotMultiplier,
+                regime, breakoutRisk, microTradable,
                 signalMap, summary, Instant.ofEpochMilli(startTime)
         );
     }
@@ -965,6 +979,51 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
     }
 
     // ==================================================================================
+    //                       EXCESSIVE RANGE VETO GATE
+    // ==================================================================================
+
+    /**
+     * Hard veto: checks if the recent candle range exceeds the excessive range threshold.
+     *
+     * <p>If the last N candles (default 10) have a combined high-low range exceeding
+     * the configured fraction of the spot price (default 0.8% = ~192pts at NIFTY 24000),
+     * a strong directional move is underway. This is unsafe for straddle entry regardless
+     * of what regime signals show, because the move may continue.</p>
+     *
+     * <p>This gate catches strong trending moves that the regime layer's individual
+     * signals might miss (e.g., a fast move where VWAP hasn't caught up yet).</p>
+     *
+     * <p>HFT: Single pass through candle array, primitive arithmetic.</p>
+     *
+     * @return true if range is excessive (VETO trade), false if safe
+     */
+    private boolean evaluateExcessiveRange(List<HistoricalData> candles, double spotPrice) {
+        int required = config.getExcessiveRangeCandles();
+        if (candles.size() < required) {
+            log.debug("V3 EXCESSIVE_RANGE: insufficient candles ({}/{}), no veto", candles.size(), required);
+            return false; // Insufficient data → don't veto
+        }
+
+        int startIdx = candles.size() - required;
+        double highestHigh = Double.MIN_VALUE;
+        double lowestLow = Double.MAX_VALUE;
+
+        for (int i = startIdx; i < candles.size(); i++) {
+            HistoricalData c = candles.get(i);
+            if (c.high > highestHigh) highestHigh = c.high;
+            if (c.low < lowestLow) lowestLow = c.low;
+        }
+
+        double rangeFraction = (spotPrice > 0) ? (highestHigh - lowestLow) / spotPrice : 0;
+        boolean excessive = rangeFraction >= config.getExcessiveRangeThreshold();
+
+        log.debug("V3 EXCESSIVE_RANGE: range={}, rangeFraction={}, threshold={}, candles={}, vetoed={}",
+                String.format("%.2f", highestHigh - lowestLow), String.format("%.5f", rangeFraction),
+                config.getExcessiveRangeThreshold(), required, excessive);
+        return excessive;
+    }
+
+    // ==================================================================================
     //                       TIME-BASED ADAPTATION
     // ==================================================================================
 
@@ -989,25 +1048,6 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         return 0;       // Mid-session — normal
     }
 
-    /**
-     * Compute recommended lot multiplier based on finalScore.
-     *
-     * <ul>
-     *   <li>finalScore ≥ 10 → 3x lots (high confidence)</li>
-     *   <li>finalScore ≥ 7 → 2x lots (moderate confidence)</li>
-     *   <li>finalScore ≥ 5 → 1x lot (low confidence)</li>
-     *   <li>finalScore &lt; 5 → 0 (not tradable)</li>
-     * </ul>
-     *
-     * @param finalScore the combined regime + micro score, time-adjusted
-     * @return lot multiplier (0–3)
-     */
-    private int computeLotMultiplier(int finalScore) {
-        if (finalScore >= 10) return 3;
-        if (finalScore >= 7) return 2;
-        if (finalScore >= 5) return 1;
-        return 0;
-    }
 
     // ==================================================================================
     //                       VWAP COMPUTATION (Shared)
