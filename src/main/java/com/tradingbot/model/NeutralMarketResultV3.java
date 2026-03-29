@@ -3,7 +3,6 @@ package com.tradingbot.model;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -209,13 +208,6 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
     @Override
     public int minimumRequired() { return 0; }
 
-    /**
-     * {@inheritDoc}
-     * V3 uses a different internal signal model; per-signal {@link SignalResult} list is not applicable.
-     * Returns an empty list.
-     */
-    @Override
-    public List<SignalResult> signals() { return Collections.emptyList(); }
 
     // ==================== FACTORY METHODS ====================
 

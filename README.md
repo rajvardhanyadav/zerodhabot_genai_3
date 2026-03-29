@@ -151,7 +151,10 @@ src/main/java/com/tradingbot/
 | File | Purpose |
 |------|---------|
 | [README.md](README.md) | Quick start (this file) |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Complete technical docs, API reference |
+| [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Comprehensive architecture & AI agent context |
+| [docs/BACKTEST_FRONTEND_INTEGRATION.md](docs/BACKTEST_FRONTEND_INTEGRATION.md) | Backtest API integration guide |
+| [docs/MARKET_ANALYSIS_API_SPEC.md](docs/MARKET_ANALYSIS_API_SPEC.md) | Neutral market logs API spec |
+| [docs/LAZY_AUDIT.md](docs/LAZY_AUDIT.md) | `@Lazy` circular dependency audit |
 
 ---
 

@@ -8,6 +8,7 @@ import com.tradingbot.model.Regime;
 import com.tradingbot.service.InstrumentCacheService;
 import com.tradingbot.service.MarketDataEngine;
 import com.tradingbot.service.TradingService;
+import com.tradingbot.util.CandleUtils;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.HistoricalData;
 import com.zerodhatech.models.Instrument;
@@ -443,12 +444,14 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
 
         long elapsed = System.currentTimeMillis() - startTime;
 
-        log.info("V3 decision: instrument={}, price={}, regime={}, regimeScore={}, microScore={}, " +
-                        "finalScore={}, breakoutRisk={}, excessiveRange={}, tradable={}, confidence={}, " +
-                        "vetoReason={}, elapsedMs={}, signals=[{}]",
-                instrumentType, String.format("%.2f", spotPrice), regime, regimeScore, microScore,
-                finalScore, breakoutRisk, excessiveRange, tradable,
-                String.format("%.2f", confidence), vetoReason, elapsed, summary);
+        if (log.isInfoEnabled()) {
+            log.info("V3 decision: instrument={}, price={}, regime={}, regimeScore={}, microScore={}, " +
+                            "finalScore={}, breakoutRisk={}, excessiveRange={}, tradable={}, confidence={}, " +
+                            "vetoReason={}, elapsedMs={}, signals=[{}]",
+                    instrumentType, String.format("%.2f", spotPrice), regime, regimeScore, microScore,
+                    finalScore, breakoutRisk, excessiveRange, tradable,
+                    String.format("%.2f", confidence), vetoReason, elapsed, summary);
+        }
 
         return new NeutralMarketResultV3(
                 tradable, regimeScore, microScore, finalScore, confidence,
@@ -477,9 +480,11 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         }
         double deviation = Math.abs(spotPrice - vwap) / vwap;
         boolean passed = deviation < config.getVwapProximityThreshold();
-        log.debug("V3 R1 VWAP_PROXIMITY: price={}, vwap={}, deviation={}, threshold={}, passed={}",
-                String.format("%.2f", spotPrice), String.format("%.2f", vwap),
-                String.format("%.5f", deviation), config.getVwapProximityThreshold(), passed);
+        if (log.isDebugEnabled()) {
+            log.debug("V3 R1 VWAP_PROXIMITY: price={}, vwap={}, deviation={}, threshold={}, passed={}",
+                    String.format("%.2f", spotPrice), String.format("%.2f", vwap),
+                    String.format("%.5f", deviation), config.getVwapProximityThreshold(), passed);
+        }
         return passed;
     }
 
@@ -508,9 +513,11 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
 
         double rangeFraction = (highestHigh - lowestLow) / spotPrice;
         boolean passed = rangeFraction < config.getRangeCompressionThreshold();
-        log.debug("V3 R2 RANGE_COMPRESSION: range={}, rangePct={}, threshold={}, candles={}, passed={}",
-                String.format("%.2f", highestHigh - lowestLow), String.format("%.5f", rangeFraction),
-                config.getRangeCompressionThreshold(), required, passed);
+        if (log.isDebugEnabled()) {
+            log.debug("V3 R2 RANGE_COMPRESSION: range={}, rangePct={}, threshold={}, candles={}, passed={}",
+                    String.format("%.2f", highestHigh - lowestLow), String.format("%.5f", rangeFraction),
+                    config.getRangeCompressionThreshold(), required, passed);
+        }
         return passed;
     }
 
@@ -613,7 +620,7 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
             List<HistoricalData> adxCandles = fetchADXCandles(instrumentType, instrumentToken);
             int minRequired = config.getAdxPeriod() * 2 + 1;
             if (adxCandles == null || adxCandles.size() < minRequired) return 0.0;
-            double[] adxValues = NeutralMarketDetectorService.computeADXSeries(adxCandles, config.getAdxPeriod());
+            double[] adxValues = CandleUtils.computeADXSeries(adxCandles, config.getAdxPeriod());
             return (adxValues.length > 0) ? adxValues[adxValues.length - 1] : 0.0;
         } catch (Exception e) {
             return 0.0;
@@ -624,7 +631,7 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
      * R4: ADX Trend Strength — ADX below threshold = no strong trend = ranging market.
      * Low weight (1) because ADX is a lagging indicator; used only as confirmation.
      *
-     * <p>Reuses the static {@link NeutralMarketDetectorService#computeADXSeries} for Wilder's
+     * <p>Reuses {@link CandleUtils#computeADXSeries} for Wilder's
      * smoothed ADX computation. Candles sourced from MarketDataEngine cache.</p>
      *
      * @return true if ADX < threshold
@@ -646,8 +653,8 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
             return false;
         }
 
-        // Compute ADX using V1's proven static method
-        double[] adxValues = NeutralMarketDetectorService.computeADXSeries(adxCandles, config.getAdxPeriod());
+        // Compute ADX using CandleUtils (Wilder's smoothed ADX)
+        double[] adxValues = CandleUtils.computeADXSeries(adxCandles, config.getAdxPeriod());
         if (adxValues.length == 0) {
             log.debug("V3 R4 ADX: computation returned no values");
             return false;
@@ -655,8 +662,10 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
 
         double latestADX = adxValues[adxValues.length - 1];
         boolean passed = latestADX < config.getAdxThreshold();
-        log.debug("V3 R4 ADX: value={}, threshold={}, passed={}",
-                String.format("%.2f", latestADX), config.getAdxThreshold(), passed);
+        if (log.isDebugEnabled()) {
+            log.debug("V3 R4 ADX: value={}, threshold={}, passed={}",
+                    String.format("%.2f", latestADX), config.getAdxThreshold(), passed);
+        }
         return passed;
     }
 
@@ -756,10 +765,12 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
 
             double distance = Math.abs(spotPrice - maxOIStrike) / spotPrice;
             boolean passed = distance < config.getGammaPinThreshold();
-            log.debug("V3 R5 GAMMA_PIN: price={}, maxOIStrike={}, maxOI={}, distance={}, threshold={}, passed={}",
-                    String.format("%.2f", spotPrice), String.format("%.0f", maxOIStrike),
-                    String.format("%.0f", maxOI), String.format("%.5f", distance),
-                    config.getGammaPinThreshold(), passed);
+            if (log.isDebugEnabled()) {
+                log.debug("V3 R5 GAMMA_PIN: price={}, maxOIStrike={}, maxOI={}, distance={}, threshold={}, passed={}",
+                        String.format("%.2f", spotPrice), String.format("%.0f", maxOIStrike),
+                        String.format("%.0f", maxOI), String.format("%.5f", distance),
+                        config.getGammaPinThreshold(), passed);
+            }
             return passed;
 
         } catch (Exception | KiteException e) {
@@ -815,8 +826,10 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
 
         // Must have deviated beyond minimum threshold
         if (maxDeviation < deviationThreshold) {
-            log.debug("V3 M1 MICRO_VWAP_PULLBACK: maxDeviation={} < threshold={}, no pullback",
-                    String.format("%.5f", maxDeviation), deviationThreshold);
+            if (log.isDebugEnabled()) {
+                log.debug("V3 M1 MICRO_VWAP_PULLBACK: maxDeviation={} < threshold={}, no pullback",
+                        String.format("%.5f", maxDeviation), deviationThreshold);
+            }
             return false;
         }
 
@@ -864,8 +877,10 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
             }
         }
 
-        log.debug("V3 M1 MICRO_VWAP_PULLBACK: maxDev={}, maxDevIdx={}, reverting={}, slopeCandles={}, passed={}",
-                String.format("%.5f", maxDeviation), maxDeviationIdx - startIdx, reverting, slopeCandles, reverting);
+        if (log.isDebugEnabled()) {
+            log.debug("V3 M1 MICRO_VWAP_PULLBACK: maxDev={}, maxDevIdx={}, reverting={}, slopeCandles={}, passed={}",
+                    String.format("%.5f", maxDeviation), maxDeviationIdx - startIdx, reverting, slopeCandles, reverting);
+        }
         return reverting;
     }
 
@@ -922,9 +937,11 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         boolean amplitudePassed = avgMove < config.getMicroOscillationMaxAvgMove();
         boolean passed = flipsPassed && amplitudePassed;
 
-        log.debug("V3 M2 MICRO_HF_OSCILLATION: flips={}, minFlips={}, avgMove={}, maxAvgMove={}, passed={}",
-                flipCount, config.getMicroOscillationMinFlips(),
-                String.format("%.6f", avgMove), config.getMicroOscillationMaxAvgMove(), passed);
+        if (log.isDebugEnabled()) {
+            log.debug("V3 M2 MICRO_HF_OSCILLATION: flips={}, minFlips={}, avgMove={}, maxAvgMove={}, passed={}",
+                    flipCount, config.getMicroOscillationMinFlips(),
+                    String.format("%.6f", avgMove), config.getMicroOscillationMaxAvgMove(), passed);
+        }
         return passed;
     }
 
@@ -957,9 +974,11 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         double rangeFraction = (highestHigh - lowestLow) / spotPrice;
         boolean passed = rangeFraction < config.getMicroRangeThreshold();
 
-        log.debug("V3 M3 MICRO_RANGE_STABILITY: range={}, rangeFraction={}, threshold={}, candles={}, passed={}",
-                String.format("%.2f", highestHigh - lowestLow), String.format("%.6f", rangeFraction),
-                config.getMicroRangeThreshold(), required, passed);
+        if (log.isDebugEnabled()) {
+            log.debug("V3 M3 MICRO_RANGE_STABILITY: range={}, rangeFraction={}, threshold={}, candles={}, passed={}",
+                    String.format("%.2f", highestHigh - lowestLow), String.format("%.6f", rangeFraction),
+                    config.getMicroRangeThreshold(), required, passed);
+        }
         return passed;
     }
 
@@ -1044,10 +1063,12 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
             risk = BreakoutRisk.LOW;
         }
 
-        log.debug("V3 BREAKOUT: tightRange={} (rangeFrac={}), nearEdge={} (nearHigh={}, nearLow={}), " +
-                        "momentum={}, signals={}, risk={}",
-                tightRange, String.format("%.5f", rangeFraction),
-                nearEdge, nearHigh, nearLow, momentumBuilding, breakoutSignals, risk);
+        if (log.isDebugEnabled()) {
+            log.debug("V3 BREAKOUT: tightRange={} (rangeFrac={}), nearEdge={} (nearHigh={}, nearLow={}), " +
+                            "momentum={}, signals={}, risk={}",
+                    tightRange, String.format("%.5f", rangeFraction),
+                    nearEdge, nearHigh, nearLow, momentumBuilding, breakoutSignals, risk);
+        }
         return risk;
     }
 
@@ -1090,9 +1111,11 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         double rangeFraction = (spotPrice > 0) ? (highestHigh - lowestLow) / spotPrice : 0;
         boolean excessive = rangeFraction >= config.getExcessiveRangeThreshold();
 
-        log.debug("V3 EXCESSIVE_RANGE: range={}, rangeFraction={}, threshold={}, candles={}, vetoed={}",
-                String.format("%.2f", highestHigh - lowestLow), String.format("%.5f", rangeFraction),
-                config.getExcessiveRangeThreshold(), required, excessive);
+        if (log.isDebugEnabled()) {
+            log.debug("V3 EXCESSIVE_RANGE: range={}, rangeFraction={}, threshold={}, candles={}, vetoed={}",
+                    String.format("%.2f", highestHigh - lowestLow), String.format("%.5f", rangeFraction),
+                    config.getExcessiveRangeThreshold(), required, excessive);
+        }
         return excessive;
     }
 
@@ -1141,7 +1164,9 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
             if (cachedVwap.isPresent()) {
                 double vwap = cachedVwap.get().doubleValue();
                 if (vwap > 0) {
-                    log.debug("V3 VWAP: using MDE cached value={} for {}", String.format("%.2f", vwap), instrumentType);
+                    if (log.isDebugEnabled()) {
+                        log.debug("V3 VWAP: using MDE cached value={} for {}", String.format("%.2f", vwap), instrumentType);
+                    }
                     return vwap;
                 }
             }

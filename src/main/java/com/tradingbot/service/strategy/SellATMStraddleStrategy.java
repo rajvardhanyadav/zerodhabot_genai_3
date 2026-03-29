@@ -204,13 +204,7 @@ public class SellATMStraddleStrategy extends BaseStrategy {
                 neutralResult.getRegimeLabel(), neutralResult.minimumRequired(), neutralResult.neutral(), neutralResult.summary());
 
         if (!neutralResult.neutral()) {
-            String failedSignals = neutralResult.signals().isEmpty()
-                    ? neutralResult.summary()
-                    : neutralResult.signals().stream()
-                            .filter(s -> !s.passed())
-                            .map(s -> s.name() + "=" + s.detail())
-                            .reduce((a, b) -> a + " | " + b)
-                            .orElse("none");
+            String failedSignals = neutralResult.summary();
             log.info("[{}] Skipping straddle entry because market conditions are not neutral. " +
                             "score={}/{} (minimum={}). Failed signals: {}",
                     tradingMode, neutralResult.totalScore(), neutralResult.maxScore(),

@@ -124,43 +124,11 @@ strategy:
   trailing-stop-enabled: false
 
   # Activation threshold: trailing stop activates when cumulative P&L >= this value
-  # Example: 1.0 means trailing starts after 1 point profit
-
-# Volatility Filter Configuration (India VIX based)
-volatility:
-  # Enable/disable the VIX volatility filter for straddle placement
-  enabled: true
-
-  # Symbol for India VIX in Kite format
-  vix-symbol: "NSE:INDIA VIX"
-
-  # Instrument token for India VIX (for historical data API)
-  vix-instrument-token: "264969"
-
-  # Absolute VIX threshold - allow trade if VIX >= this value (adequate premium)
-  absolute-threshold: 12.5
-
-  # 5-minute percentage change threshold (legacy — kept for reference)
-  percentage-change-threshold: 0.3
-
-  # Spike threshold: block trade if VIX 5-min change > this % (danger signal for seller)
-  spike-threshold-pct: 1.0
-
-  # Block if VIX > this % above previous day close (escalating vol = risky for seller)
-  max-vix-above-prev-close-pct: 5.0
-
-  # Enable volatility filter during backtesting (false = preserve existing backtest behavior)
-  backtest-enabled: false
-
-  # Fail-safe: allow trade if VIX data is unavailable
-  allow-on-data-unavailable: true
-
-  # Cache TTL for VIX data in milliseconds (default: 1 minute)
-  cache-ttl-ms: 60000
+  # Example: 2.5 means trailing starts after 2.5 points profit
   trailing-activation-points: 2.5
 
   # Trail distance: how far behind the high-water mark the stop trails
-  # Example: 0.5 means stop is always 0.5 points below peak profit
+  # Example: 2.5 means stop is always 2.5 points below peak profit
   trailing-distance-points: 2.5
 
   # Auto square off settings (time-based forced exit)
@@ -208,72 +176,34 @@ volatility:
   # Example: 10 or 0.10 = 10% expansion = exit when premium rises 10% from entry
   stop-loss-expansion-pct: 10
 
-
-# Neutral Market Detection Engine Configuration
-neutral-market:
-  # Master switch: enable neutral market filter before ATM straddle entry
+# Volatility Filter Configuration (India VIX based)
+volatility:
+  # Enable/disable the VIX volatility filter for straddle placement
   enabled: true
 
-  # Minimum score (0-10) to allow trade. Each signal contributes +2.
-  minimum-score: 6
+  # Symbol for India VIX in Kite format
+  vix-symbol: "NSE:INDIA VIX"
 
-  # Tighter minimum score on expiry day (elevated gamma risk)
-  expiry-day-minimum-score: 8
+  # Instrument token for India VIX (for historical data API)
+  vix-instrument-token: "264969"
 
-  # Signal 1: VWAP Deviation (SMA proxy for index — volume unavailable)
-  vwap-deviation-threshold: 0.002    # Widened from 0.0015 (SMA proxy, not true VWAP)
-  vwap-candle-count: 15              # 1-minute candles for VWAP
+  # Absolute VIX threshold - allow trade if VIX >= this value (adequate premium)
+  absolute-threshold: 12.5
 
-  # Signal 2: ADX Trend Strength
-  adx-threshold: 20.0                # Standard ranging boundary (was 18)
-  adx-period: 7                      # Short-term intraday period (was 14)
-  adx-candle-interval: "minute"      # 1-min candles for faster reaction (was 3minute)
-  adx-candle-count: 30               # 30 candles warmup — available by 9:45 IST (was 50)
-  adx-falling-check-enabled: false   # Optional: require ADX falling
+  # Spike threshold: block trade if VIX 5-min change > this % (danger signal for seller)
+  spike-threshold-pct: 1.0
 
-  # Signal 3: Gamma Pin (Max OI Strike)
-  gamma-pin-threshold: 0.002         # 0.2% max distance from max-OI strike
-  strikes-around-atm: 5              # Reduced from 10 (OI concentrated within ±3 strikes)
+  # Block if VIX > this % above previous day close (escalating vol = risky for seller)
+  max-vix-above-prev-close-pct: 5.0
 
-  # Signal 4: Range Compression
-  range-compression-threshold: 0.0035   # Widened from 0.0025; 0.35% = ~84pts at 24000
-  range-compression-candles: 10         # Last 10 one-minute candles
-  expiry-day-range-threshold: 0.002     # Tighter on expiry day (0.2% = ~48pts at 24000)
+  # Enable volatility filter during backtesting (false = preserve existing backtest behavior)
+  backtest-enabled: false
 
-  # Signal 5: Dual Premium Decay
-  # NOTE: Must be LESS than cache-ttl-ms to avoid timing race where
-  # cache expiry and snapshot interval align, causing perpetual skips.
-  premium-snapshot-min-interval-ms: 20000  # Slightly faster (was 25000)
-  premium-min-decay-pct: 0.5               # Both CE/PE must decay >= 0.5% to pass
-  premium-max-snapshot-age-ms: 120000      # Discard snapshots older than 2 minutes
+  # Fail-safe: allow trade if VIX data is unavailable
+  allow-on-data-unavailable: true
 
-  # Caching
-  cache-ttl-ms: 30000                # Cache result for 30 seconds
-  allow-on-data-unavailable: true    # Fail-safe: allow trade if data fails
-
-  # ==================== V2: PRICE OSCILLATION SIGNAL ====================
-  oscillation-candle-count: 10       # Number of 1-min candles for chop detection
-  oscillation-min-reversals: 4       # Min direction reversals to pass (out of 9 possible)
-
-  # ==================== V2: VWAP PULLBACK ENTRY SIGNAL ====================
-  vwap-pullback-threshold: 0.003     # 0.3% deviation from VWAP to qualify as pullback
-  vwap-pullback-reversion-threshold: 0.001  # 0.1% — price must revert within this band
-  vwap-pullback-candle-count: 8      # Window size for pullback pattern detection
-
-  # ==================== V2: TIME-BASED ADAPTATION ====================
-  time-based-adaptation-enabled: true  # Adjust score based on market session time
-
-  # ==================== V2: WEIGHTED SCORING ====================
-  weight-vwap: 3                     # VWAP Proximity — highest weight (core signal)
-  weight-range: 2                    # Range Compression
-  weight-oscillation: 2             # Price Oscillation (chop detection)
-  weight-vwap-pullback: 2           # VWAP Pullback Entry (mean-reversion timing)
-  weight-adx: 1                     # ADX Trend — low weight (confirmatory)
-  weight-gamma-pin: 1               # Gamma Pin — expiry day only
-
-  # ==================== V2: REGIME THRESHOLDS ====================
-  strong-neutral-threshold: 6        # Score >= 6 → STRONG_NEUTRAL (full position)
-  weak-neutral-threshold: 4          # Score >= 4 → WEAK_NEUTRAL (tradable, reduced size)
+  # Cache TTL for VIX data in milliseconds (default: 1 minute)
+  cache-ttl-ms: 60000
 
 # ==================== NEUTRAL MARKET V3: 3-LAYER DETECTION ENGINE ====================
 # Three-layer tradable opportunity detector with "danger veto + confidence scoring" model:
@@ -450,9 +380,6 @@ management:
 logging:
   level:
     com.tradingbot: DEBUG
-    # Neutral market detector: DEBUG shows all calculation internals.
-    # Includes candle counts, volume availability, ADX series lengths, OI aggregation.
-    com.tradingbot.service.strategy.NeutralMarketDetectorService: DEBUG
     # V3 detector: DEBUG shows per-signal evaluation, INFO shows final decision only.
     com.tradingbot.service.strategy.NeutralMarketDetectorServiceV3: DEBUG
     # Suppress Hibernate JTA platform warning (not needed for local transactions)

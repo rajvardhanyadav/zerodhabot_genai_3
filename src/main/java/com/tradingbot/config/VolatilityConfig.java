@@ -50,11 +50,6 @@ public class VolatilityConfig {
      */
     private BigDecimal absoluteThreshold = new BigDecimal("12.5");
 
-    /**
-     * 5-minute VIX percentage change threshold (legacy — used by original OR-logic rules).
-     * Default: 0.3 (0.3%)
-     */
-    private BigDecimal percentageChangeThreshold = new BigDecimal("0.3");
 
     /**
      * Spike threshold: block trade if VIX 5-min change exceeds this percentage.

@@ -136,7 +136,7 @@ public class StrategyConfig {
     /**
      * Polling interval (in milliseconds) for checking neutral market conditions
      * after a strategy trade exits. The scheduler will evaluate
-     * {@code NeutralMarketDetectorService.isMarketNeutral()} at this frequency
+     * {@code NeutralMarketDetectorServiceV3.evaluate()} at this frequency
      * until the market becomes neutral or market hours end.
      * <p>
      * Default: 30000 (30 seconds)

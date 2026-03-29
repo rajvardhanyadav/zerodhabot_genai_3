@@ -6,7 +6,7 @@ import java.time.Instant;
 /**
  * Event published by {@code MarketStateUpdater} every evaluation cycle.
  * Consumers (e.g. {@code StrategyRestartScheduler}) listen for this event
- * instead of polling {@code NeutralMarketDetectorService} directly.
+ * instead of polling {@code NeutralMarketDetectorServiceV3} directly.
  *
  * <p>This decouples market-state evaluation from strategy restart logic,
  * eliminating thread-blocking polling loops and redundant API calls.

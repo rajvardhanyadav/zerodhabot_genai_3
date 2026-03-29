@@ -44,7 +44,6 @@ class VolatilityFilterServiceTest {
         volatilityConfig.setVixSymbol(VIX_SYMBOL);
         volatilityConfig.setVixInstrumentToken(VIX_TOKEN);
         volatilityConfig.setAbsoluteThreshold(new BigDecimal("12.5"));
-        volatilityConfig.setPercentageChangeThreshold(new BigDecimal("0.3"));
         volatilityConfig.setSpikeThresholdPct(new BigDecimal("1.0"));
         volatilityConfig.setMaxVixAbovePrevClosePct(new BigDecimal("5.0"));
         volatilityConfig.setBacktestEnabled(false);

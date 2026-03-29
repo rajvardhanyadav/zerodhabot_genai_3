@@ -73,9 +73,9 @@ public class MarketStateUpdater {
                 "(2) active Kite session required (POST /auth/login), " +
                 "(3) market hours IST {}-{} weekdays only, " +
                 "(4) persistence enabled. " +
-                "Evaluation cycle interval: {}ms (from volatility.neutral-market-poll-interval-ms)",
+                "Evaluation cycle interval: {}ms (from strategy.neutral-market-poll-interval-ms)",
                 neutralMarketV3Config.isEnabled(), MARKET_OPEN, MARKET_CLOSE,
-                "${volatility.neutral-market-poll-interval-ms:30000}");
+                "${strategy.neutral-market-poll-interval-ms:30000}");
     }
 
     /** Tracks whether we've already warned about missing sessions (to avoid log spam). */
@@ -83,12 +83,12 @@ public class MarketStateUpdater {
 
     /**
      * Scheduled evaluation cycle. Runs at the interval configured by
-     * {@code volatility.neutral-market-poll-interval-ms} (default 30 000 ms).
+     * {@code strategy.neutral-market-poll-interval-ms} (default 30 000 ms).
      *
      * <p>For each instrument, evaluates the neutral market detector and publishes
      * a {@link MarketStateEvent}. Listeners decide how to react (e.g. restart strategies).
      */
-    @Scheduled(fixedRateString = "${volatility.neutral-market-poll-interval-ms:30000}")
+    @Scheduled(fixedRateString = "${strategy.neutral-market-poll-interval-ms:30000}")
     public void evaluateAndPublish() {
         if (!neutralMarketV3Config.isEnabled()) {
             log.trace("MarketStateUpdater: V3 neutral-market filter disabled, skipping evaluation cycle");

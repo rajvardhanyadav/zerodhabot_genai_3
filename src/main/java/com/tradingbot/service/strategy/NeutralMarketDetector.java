@@ -5,13 +5,12 @@ import com.tradingbot.model.NeutralMarketEvaluation;
 /**
  * Common interface for neutral market detection engines.
  *
- * <p>Abstracts over the differences between V2 ({@link NeutralMarketDetectorServiceV2})
- * and V3 ({@link NeutralMarketDetectorServiceV3}) so that strategies, updaters, and
- * schedulers can be wired to any detector version via {@code @Qualifier}.</p>
+ * <p>Currently implemented by {@link NeutralMarketDetectorServiceV3} — the 3-layer
+ * tradable opportunity detector with regime scoring, microstructure bonuses, and
+ * breakout risk veto gates.</p>
  *
  * <h2>Bean Names</h2>
  * <ul>
- *   <li>{@code "neutralMarketDetectorV2"} — V2 weighted confidence scoring engine</li>
  *   <li>{@code "neutralMarketDetectorV3"} — V3 3-layer tradable opportunity detector</li>
  * </ul>
  *
@@ -28,7 +27,6 @@ import com.tradingbot.model.NeutralMarketEvaluation;
  * triggers a fresh evaluation only when the cache expires.
  *
  * @since 6.1
- * @see NeutralMarketDetectorServiceV2
  * @see NeutralMarketDetectorServiceV3
  */
 public interface NeutralMarketDetector {

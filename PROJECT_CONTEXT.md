@@ -2,7 +2,7 @@
 
 > **Purpose:** Comprehensive project reference for AI agents.
 > All details needed to understand, modify, and extend this codebase are documented here.
-> Last updated: 2026-03-21 | Version: 6.1
+> Last updated: 2026-03-29 | Version: 6.2
 
 ---
 
@@ -102,43 +102,43 @@
 ### Three-Tier Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  REST API Layer (Controllers)                                │
-│  ┌───────────┬──────────────┬──────────────┬──────────────┐  │
-│  │ Strategy  │ MarketData   │ Order        │ Portfolio    │  │
-│  │ Controller│ Controller   │ Controller   │ Controller   │  │
-│  └─────┬─────┴──────┬───────┴──────┬───────┴──────┬───────┘  │
-├────────┼────────────┼──────────────┼──────────────┼──────────┤
-│  Service Layer (Business Logic)                              │
-│  ┌─────┴────────────┴──────────────┴──────────────┴───────┐  │
-│  │              UnifiedTradingService                      │  │
-│  │         (Routes: Paper vs Live trading)                 │  │
-│  │    ┌──────────────┐    ┌──────────────────────┐        │  │
-│  │    │PaperTrading  │    │   TradingService     │        │  │
-│  │    │Service       │    │  (Kite API Wrapper)  │        │  │
-│  │    └──────────────┘    └──────────────────────┘        │  │
-│  │                                                         │  │
-│  │  ┌─────────────────────────────────────────────────┐   │  │
-│  │  │         MarketDataEngine (HFT Cache)            │   │  │
-│  │  │   Spot | OptionChain | Delta | VWAP | Candle    │   │  │
-│  │  └─────────────────────────────────────────────────┘   │  │
-│  │                                                         │  │
-│  │  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐  │  │
-│  │  │ Strategy    │  │PositionMoni- │  │ Neutral      │  │  │
-│  │  │ Service     │  │torV2 (Exit)  │  │ MarketDet.   │  │  │
-│  │  └─────────────┘  └──────────────┘  └──────────────┘  │  │
-│  └─────────────────────────────────────────────────────────┘  │
-├───────────────────────────────────────────────────────────────┤
-│  Persistence Layer                                            │
-│  ┌──────────────────┐  ┌──────────────┐  ┌───────────────┐   │
-│  │TradePersistence  │  │EndOfDayPer-  │  │DataCleanup    │   │
-│  │Service (Async)   │  │sistenceServ. │  │Service        │   │
-│  └──────────┬───────┘  └──────┬───────┘  └──────┬────────┘   │
-│             │                  │                  │            │
-│  ┌──────────┴──────────────────┴──────────────────┴────────┐  │
-│  │  Spring Data JPA Repositories → H2 (dev) / Postgres    │  │
-│  └─────────────────────────────────────────────────────────┘  │
-└───────────────────────────────────────────────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚  REST API Layer (Controllers)                                â”‚
+â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”‚
+â”‚  â”‚ Strategy  â”‚ MarketData   â”‚ Order        â”‚ Portfolio    â”‚  â”‚
+â”‚  â”‚ Controllerâ”‚ Controller   â”‚ Controller   â”‚ Controller   â”‚  â”‚
+â”‚  â””â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚  Service Layer (Business Logic)                              â”‚
+â”‚  â”Œâ”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”  â”‚
+â”‚  â”‚              UnifiedTradingService                      â”‚  â”‚
+â”‚  â”‚         (Routes: Paper vs Live trading)                 â”‚  â”‚
+â”‚  â”‚    â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”    â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”        â”‚  â”‚
+â”‚  â”‚    â”‚PaperTrading  â”‚    â”‚   TradingService     â”‚        â”‚  â”‚
+â”‚  â”‚    â”‚Service       â”‚    â”‚  (Kite API Wrapper)  â”‚        â”‚  â”‚
+â”‚  â”‚    â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜        â”‚  â”‚
+â”‚  â”‚                                                         â”‚  â”‚
+â”‚  â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”‚  â”‚
+â”‚  â”‚  â”‚         MarketDataEngine (HFT Cache)            â”‚   â”‚  â”‚
+â”‚  â”‚  â”‚   Spot | OptionChain | Delta | VWAP | Candle    â”‚   â”‚  â”‚
+â”‚  â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚  â”‚
+â”‚  â”‚                                                         â”‚  â”‚
+â”‚  â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”‚  â”‚
+â”‚  â”‚  â”‚ Strategy    â”‚  â”‚PositionMoni- â”‚  â”‚ Neutral      â”‚  â”‚  â”‚
+â”‚  â”‚  â”‚ Service     â”‚  â”‚torV2 (Exit)  â”‚  â”‚ MarketDet.   â”‚  â”‚  â”‚
+â”‚  â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚  â”‚
+â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚  Persistence Layer                                            â”‚
+â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”‚
+â”‚  â”‚TradePersistence  â”‚  â”‚EndOfDayPer-  â”‚  â”‚DataCleanup    â”‚   â”‚
+â”‚  â”‚Service (Async)   â”‚  â”‚sistenceServ. â”‚  â”‚Service        â”‚   â”‚
+â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”˜  â””â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”˜  â””â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚
+â”‚             â”‚                  â”‚                  â”‚            â”‚
+â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”  â”‚
+â”‚  â”‚  Spring Data JPA Repositories â†’ H2 (dev) / Postgres    â”‚  â”‚
+â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ### Key Architectural Decisions
@@ -147,7 +147,7 @@
 2. **Paper/Live Routing:** `UnifiedTradingService` is the single entry point for all order operations. It transparently routes to `PaperTradingService` or `TradingService` based on `trading.paper-trading-enabled`.
 3. **Strategy Pattern for Exits:** `PositionMonitorV2` evaluates a priority-ordered chain of `ExitStrategy` implementations on every tick. Each strategy is stateless; all state flows through `ExitContext`.
 4. **Event-Driven Restart:** `MarketStateUpdater` publishes `MarketStateEvent` records; `StrategyRestartScheduler` listens and triggers buffered re-entry — no polling loops.
-5. **Async Persistence:** All trade/order writes go through `TradePersistenceService` → `PersistenceBufferService` (buffered batch writes) to avoid blocking strategy threads on DB I/O.
+5. **Async Persistence:** All trade/order writes go through `TradePersistenceService` â†’ `PersistenceBufferService` (buffered batch writes) to avoid blocking strategy threads on DB I/O.
 6. **Multi-User Support:** `UserSessionManager` manages per-user Kite sessions with DB-backed recovery (for Cloud Run container restarts). `CurrentUserContext` (ThreadLocal) provides the active user to any service.
 7. **Interface-Based Detector Injection:** Neutral market detection uses `NeutralMarketDetector` interface with `@Qualifier` for version selection (`"neutralMarketDetectorV2"` / `"neutralMarketDetectorV3"`). Results use `NeutralMarketEvaluation` interface.
 8. **Constructor-First DI:** All non-circular dependencies use constructor injection (`final` fields + `@RequiredArgsConstructor`). `@Lazy` is reserved only for genuine bidirectional cycles (6 remaining — see `docs/LAZY_AUDIT.md`).
@@ -158,195 +158,192 @@
 
 ```
 com.tradingbot
-├── TradingBotApplication.java                    # Spring Boot main class
+â”œâ”€â”€ TradingBotApplication.java                    # Spring Boot main class
 
-├── config/                                        # @Configuration / @ConfigurationProperties
-│   ├── AsyncPersistenceConfig.java               # Async thread pool for persistence (HFTSafeRejectionHandler, UserContextPropagatingTaskDecorator)
-│   ├── CorsConfig.java                           # CORS configuration
-│   ├── KiteConfig.java                           # kite.* properties (API key, secret, access token)
-│   ├── MarketDataEngineConfig.java               # market-data-engine.* properties
-│   ├── NeutralMarketConfig.java                  # neutral-market.* properties (5-signal thresholds)
-│   ├── NeutralMarketV3Config.java                # neutral-market-v3.* properties (3-layer: regime, micro, breakout)
-│   ├── PaperTradingConfig.java                   # trading.* properties (paper mode, charges, slippage)
-│   ├── PersistenceConfig.java                    # persistence.* (retention, cleanup cron) + nested RetentionConfig, CleanupConfig
-│   ├── StrategyConfig.java                       # strategy.* (SL, target, hedge, entry windows, trailing SL)
-│   ├── SwaggerConfig.java                        # SpringDoc OpenAPI configuration
-│   ├── SwaggerGlobalHeaderConfig.java            # Global header parameter injection for Swagger
-│   ├── UserContextFilter.java                    # Servlet filter: sets MDC / CurrentUserContext per request
-│   └── VolatilityConfig.java                     # volatility.* (VIX filter, auto square-off, daily P&L limits, premium-based exit, trailing SL)
+â”œâ”€â”€ config/                                        # @Configuration / @ConfigurationProperties
+â”‚   â”œâ”€â”€ AsyncPersistenceConfig.java               # Async thread pool for persistence (HFTSafeRejectionHandler, UserContextPropagatingTaskDecorator)
+â”‚   â”œâ”€â”€ CorsConfig.java                           # CORS configuration
+â”‚   â”œâ”€â”€ KiteConfig.java                           # kite.* properties (API key, secret, access token)
+â”‚   â”œâ”€â”€ MarketDataEngineConfig.java               # market-data-engine.* properties
+â”‚   â”œâ”€â”€ NeutralMarketV3Config.java                # neutral-market-v3.* properties (3-layer: regime, micro, breakout)
+â”‚   â”œâ”€â”€ PaperTradingConfig.java                   # trading.* properties (paper mode, charges, slippage)
+â”‚   â”œâ”€â”€ PersistenceConfig.java                    # persistence.* (retention, cleanup cron) + nested RetentionConfig, CleanupConfig
+â”‚   â”œâ”€â”€ StrategyConfig.java                       # strategy.* (SL, target, hedge, entry windows, trailing SL)
+â”‚   â”œâ”€â”€ SwaggerConfig.java                        # SpringDoc OpenAPI configuration
+â”‚   â”œâ”€â”€ SwaggerGlobalHeaderConfig.java            # Global header parameter injection for Swagger
+â”‚   â”œâ”€â”€ UserContextFilter.java                    # Servlet filter: sets MDC / CurrentUserContext per request
+â”‚   â””â”€â”€ VolatilityConfig.java                     # volatility.* (VIX filter, auto square-off, daily P&L limits, premium-based exit, trailing SL)
 
-├── controller/                                    # REST controllers (@RestController)
-│   ├── AccountController.java                    # /api/account — margins
-│   ├── AuthController.java                       # /api/auth — login URL, session, profile, logout
-│   ├── GTTController.java                        # /api/gtt — Good-Till-Triggered order CRUD
-│   ├── HealthController.java                     # /api/health — system health + session status
-│   ├── MarketDataController.java                 # /api/market — quotes, OHLC, LTP, historical, instruments, engine status
-│   ├── MonitoringController.java                 # /api/monitoring — WebSocket, delta cache, rate limiter, persistence buffer, system health
-│   ├── OrderController.java                      # /api/orders — place, modify, cancel, list, history, charges
-│   ├── PaperTradingController.java               # /api/paper-trading — status, account, reset, statistics, mode toggle
-│   ├── PortfolioController.java                  # /api/portfolio — positions, holdings, trades, position convert, day P&L
-│   ├── StrategyController.java                   # /api/strategies — execute, stop, stop-all, active, types, instruments, expiries, bot-status
-│   └── TradingHistoryController.java             # /api/history — trades, strategies, daily summary, position snapshots, alerts, MTM
+â”œâ”€â”€ controller/                                    # REST controllers (@RestController)
+â”‚   â”œâ”€â”€ AccountController.java                    # /api/account — margins
+â”‚   â”œâ”€â”€ AuthController.java                       # /api/auth — login URL, session, profile, logout
+â”‚   â”œâ”€â”€ GTTController.java                        # /api/gtt — Good-Till-Triggered order CRUD
+â”‚   â”œâ”€â”€ HealthController.java                     # /api/health — system health + session status
+â”‚   â”œâ”€â”€ MarketDataController.java                 # /api/market — quotes, OHLC, LTP, historical, instruments, engine status
+â”‚   â”œâ”€â”€ MonitoringController.java                 # /api/monitoring — WebSocket, delta cache, rate limiter, persistence buffer, system health
+â”‚   â”œâ”€â”€ OrderController.java                      # /api/orders — place, modify, cancel, list, history, charges
+â”‚   â”œâ”€â”€ PaperTradingController.java               # /api/paper-trading — status, account, reset, statistics, mode toggle
+â”‚   â”œâ”€â”€ PortfolioController.java                  # /api/portfolio — positions, holdings, trades, position convert, day P&L
+â”‚   â”œâ”€â”€ StrategyController.java                   # /api/strategies — execute, stop, stop-all, active, types, instruments, expiries, bot-status
+â”‚   â””â”€â”€ TradingHistoryController.java             # /api/history — trades, strategies, daily summary, position snapshots, alerts, MTM
 
-├── service/                                       # Core business logic
-│   ├── BotStatusService.java                     # Bot start/stop/status tracking
-│   ├── InstrumentCacheService.java               # NFO instrument token lookup cache
-│   ├── LogoutService.java                        # Session cleanup on logout
-│   ├── MarketDataEngine.java                     # ⭐ Central HFT cache engine (see §8)
-│   ├── RateLimiterService.java                   # Kite API rate limiting (prevents 429s)
-│   ├── StrategyService.java                      # Strategy lifecycle management (execute, stop, status tracking)
-│   ├── TradingConstants.java                     # String constants (exchanges, order types, products)
-│   ├── TradingService.java                       # Direct Kite API wrapper (live orders, quotes, instruments)
-│   ├── UnifiedTradingService.java                # ⭐ Routes: Paper vs Live based on config toggle
-│   │
-│   ├── greeks/
-│   │   └── DeltaCacheService.java                # Black-Scholes delta pre-computation cache
-│   │
-│   ├── session/
-│   │   └── UserSessionManager.java               # Multi-user Kite session management + DB-backed recovery
-│   │
-│   ├── strategy/                                  # Strategy implementations & support
-│   │   ├── TradingStrategy.java                  # Interface: execute(), getName(), getType()
-│   │   ├── BaseStrategy.java                     # Abstract base: common instrument/order/delta utilities
-│   │   ├── SellATMStraddleStrategy.java          # ⭐ Primary: Sell ATM CE + PE + optional hedge legs
-│   │   ├── ATMStraddleStrategy.java              # Buy ATM CE + PE
-│   │   ├── ShortStrangleStrategy.java            # Sell 0.4Δ CE/PE + Buy 0.1Δ hedge CE/PE
-│   │   ├── StrategyFactory.java                  # Creates strategy instances by StrategyType enum
-│   │   ├── StrategyCompletionCallback.java       # Callback interface for strategy lifecycle events
-│   │   ├── StraddleExitHandler.java              # Handles exit order execution
-│   │   ├── LegReplacementHandler.java            # Roll/replace individual legs
-│   │   ├── MonitoringSetupHelper.java            # Wires up PositionMonitorV2 after order placement
-│   │   ├── MarketStateUpdater.java               # Publishes MarketStateEvent (neutral/trending) on a timer
-│   │   ├── StrategyRestartScheduler.java         # Listens for neutral market events → triggers re-entry
-│   │   ├── DailyPnlGateService.java              # Halts restart if daily P&L limit hit
-│   │   ├── NeutralMarketDetectorService.java     # V1: 5-signal neutral market scoring engine (binary +2 per signal)
-│   │   ├── NeutralMarketDetector.java            # ⭐ Interface: evaluate(), isMarketNeutral(), clearCache() — shared by V2 and V3
-│   │   ├── NeutralMarketDetectorServiceV2.java   # @Deprecated V2: Weighted confidence scoring engine (bean: "neutralMarketDetectorV2") (see §12)
-│   │   ├── NeutralMarketDetectorServiceV3.java   # ⭐ V3 (ACTIVE): 3-Layer tradable opportunity detector (bean: "neutralMarketDetectorV3") (see §13)
-│   │   └── VolatilityFilterService.java          # India VIX filter before strategy entry
-│   │
-│   │   └── monitoring/
-│   │       ├── WebSocketService.java             # Kite WebSocket tick subscription management
-│   │       ├── PositionMonitorV2.java            # ⭐ HFT: Strategy-pattern exit evaluation on every tick
-│   │       ├── LegMonitor.java                   # Individual option leg tracking
-│   │       └── exit/                              # Exit strategy implementations
-│   │           ├── ExitStrategy.java             # Interface: getPriority(), evaluate(ExitContext), getName()
-│   │           ├── ExitContext.java               # Shared state object passed to all exit strategies
-│   │           ├── ExitResult.java               # Result: ExitType enum, reason, isStopLoss (pre-allocated NO_EXIT singleton)
-│   │           ├── AbstractExitStrategy.java     # Base class with common helper methods
-│   │           ├── PointsBasedExitStrategy.java  # Fixed-point target (priority 100) + SL (priority 400)
-│   │           ├── PremiumBasedExitStrategy.java  # % premium decay/expansion (priority 50)
-│   │           ├── TimeBasedForcedExitStrategy.java # Auto square-off at configured time (priority 0)
-│   │           ├── TrailingStopLossStrategy.java  # Dynamic trailing SL from high-water mark (priority 300)
-│   │           └── package-info.java
-│   │
-│   └── persistence/
-│       ├── TradePersistenceService.java           # Async trade/order write-through to DB
-│       ├── PersistenceBufferService.java          # Buffer + batch DB writes
-│       ├── EndOfDayPersistenceService.java        # EOD P&L summary aggregation
-│       ├── SystemHealthMonitorService.java        # Periodic health snapshots to DB
-│       └── DataCleanupService.java                # Scheduled old-data pruning (cron: 2 AM daily)
+â”œâ”€â”€ service/                                       # Core business logic
+â”‚   â”œâ”€â”€ BotStatusService.java                     # Bot start/stop/status tracking
+â”‚   â”œâ”€â”€ InstrumentCacheService.java               # NFO instrument token lookup cache
+â”‚   â”œâ”€â”€ LogoutService.java                        # Session cleanup on logout
+â”‚   â”œâ”€â”€ MarketDataEngine.java                     # â­ Central HFT cache engine (see Â§8)
+â”‚   â”œâ”€â”€ RateLimiterService.java                   # Kite API rate limiting (prevents 429s)
+â”‚   â”œâ”€â”€ StrategyService.java                      # Strategy lifecycle management (execute, stop, status tracking)
+â”‚   â”œâ”€â”€ TradingConstants.java                     # String constants (exchanges, order types, products)
+â”‚   â”œâ”€â”€ TradingService.java                       # Direct Kite API wrapper (live orders, quotes, instruments)
+â”‚   â”œâ”€â”€ UnifiedTradingService.java                # â­ Routes: Paper vs Live based on config toggle
+â”‚   â”‚
+â”‚   â”œâ”€â”€ greeks/
+â”‚   â”‚   â””â”€â”€ DeltaCacheService.java                # Black-Scholes delta pre-computation cache
+â”‚   â”‚
+â”‚   â”œâ”€â”€ session/
+â”‚   â”‚   â””â”€â”€ UserSessionManager.java               # Multi-user Kite session management + DB-backed recovery
+â”‚   â”‚
+â”‚   â”œâ”€â”€ strategy/                                  # Strategy implementations & support
+â”‚   â”‚   â”œâ”€â”€ TradingStrategy.java                  # Interface: execute(), getName(), getType()
+â”‚   â”‚   â”œâ”€â”€ BaseStrategy.java                     # Abstract base: common instrument/order/delta utilities
+â”‚   â”‚   â”œâ”€â”€ SellATMStraddleStrategy.java          # â­ Primary: Sell ATM CE + PE + optional hedge legs
+â”‚   â”‚   â”œâ”€â”€ ATMStraddleStrategy.java              # Buy ATM CE + PE
+â”‚   â”‚   â”œâ”€â”€ ShortStrangleStrategy.java            # Sell 0.4Î” CE/PE + Buy 0.1Î” hedge CE/PE
+â”‚   â”‚   â”œâ”€â”€ StrategyFactory.java                  # Creates strategy instances by StrategyType enum
+â”‚   â”‚   â”œâ”€â”€ StrategyCompletionCallback.java       # Callback interface for strategy lifecycle events
+â”‚   â”‚   â”œâ”€â”€ StraddleExitHandler.java              # Handles exit order execution
+â”‚   â”‚   â”œâ”€â”€ LegReplacementHandler.java            # Roll/replace individual legs
+â”‚   â”‚   â”œâ”€â”€ MonitoringSetupHelper.java            # Wires up PositionMonitorV2 after order placement
+â”‚   â”‚   â”œâ”€â”€ MarketStateUpdater.java               # Publishes MarketStateEvent (neutral/trending) on a timer
+â”‚   â”‚   â”œâ”€â”€ StrategyRestartScheduler.java         # Listens for neutral market events â†’ triggers re-entry
+â”‚   â”‚   â”œâ”€â”€ DailyPnlGateService.java              # Halts restart if daily P&L limit hit
+â”‚   â”‚   â”œâ”€â”€ NeutralMarketDetector.java            # â­ Interface: evaluate(), isMarketNeutral(), clearCache()
+â”‚   â”‚   â”œâ”€â”€ NeutralMarketDetectorServiceV3.java   # â­ V3 (ACTIVE): 3-Layer tradable opportunity detector (bean: "neutralMarketDetectorV3") (see Â§11)
+â”‚   â”‚   â””â”€â”€ VolatilityFilterService.java          # India VIX filter before strategy entry
+â”‚   â”‚
+â”‚   â”‚   â””â”€â”€ monitoring/
+â”‚   â”‚       â”œâ”€â”€ WebSocketService.java             # Kite WebSocket tick subscription management
+â”‚   â”‚       â”œâ”€â”€ PositionMonitorV2.java            # â­ HFT: Strategy-pattern exit evaluation on every tick
+â”‚   â”‚       â”œâ”€â”€ LegMonitor.java                   # Individual option leg tracking
+â”‚   â”‚       â””â”€â”€ exit/                              # Exit strategy implementations
+â”‚   â”‚           â”œâ”€â”€ ExitStrategy.java             # Interface: getPriority(), evaluate(ExitContext), getName()
+â”‚   â”‚           â”œâ”€â”€ ExitContext.java               # Shared state object passed to all exit strategies
+â”‚   â”‚           â”œâ”€â”€ ExitResult.java               # Result: ExitType enum, reason, isStopLoss (pre-allocated NO_EXIT singleton)
+â”‚   â”‚           â”œâ”€â”€ AbstractExitStrategy.java     # Base class with common helper methods
+â”‚   â”‚           â”œâ”€â”€ PointsBasedExitStrategy.java  # Fixed-point target (priority 100) + SL (priority 400)
+â”‚   â”‚           â”œâ”€â”€ PremiumBasedExitStrategy.java  # % premium decay/expansion (priority 50)
+â”‚   â”‚           â”œâ”€â”€ TimeBasedForcedExitStrategy.java # Auto square-off at configured time (priority 0)
+â”‚   â”‚           â”œâ”€â”€ TrailingStopLossStrategy.java  # Dynamic trailing SL from high-water mark (priority 300)
+â”‚   â”‚           â””â”€â”€ package-info.java
+â”‚   â”‚
+â”‚   â””â”€â”€ persistence/
+â”‚       â”œâ”€â”€ TradePersistenceService.java           # Async trade/order write-through to DB
+â”‚       â”œâ”€â”€ PersistenceBufferService.java          # Buffer + batch DB writes
+â”‚       â”œâ”€â”€ EndOfDayPersistenceService.java        # EOD P&L summary aggregation
+â”‚       â”œâ”€â”€ SystemHealthMonitorService.java        # Periodic health snapshots to DB
+â”‚       â””â”€â”€ DataCleanupService.java                # Scheduled old-data pruning (cron: 2 AM daily)
 
-├── paper/                                         # Paper trading simulation
-│   ├── PaperTradingService.java                  # In-memory order/position/P&L simulation
-│   ├── PaperAccount.java                         # Virtual account state (balance, positions)
-│   ├── PaperOrder.java                           # Simulated order model
-│   ├── PaperPosition.java                        # Simulated position model
-│   ├── ZerodhaChargeCalculator.java              # Realistic brokerage/STT/GST charge computation
-│   ├── entity/
-│   │   └── OrderCharges.java                     # Charge breakdown value object
-│   └── repository/                                # (empty — paper data is in-memory only)
+â”œâ”€â”€ paper/                                         # Paper trading simulation
+â”‚   â”œâ”€â”€ PaperTradingService.java                  # In-memory order/position/P&L simulation
+â”‚   â”œâ”€â”€ PaperAccount.java                         # Virtual account state (balance, positions)
+â”‚   â”œâ”€â”€ PaperOrder.java                           # Simulated order model
+â”‚   â”œâ”€â”€ PaperPosition.java                        # Simulated position model
+â”‚   â”œâ”€â”€ ZerodhaChargeCalculator.java              # Realistic brokerage/STT/GST charge computation
+â”‚   â”œâ”€â”€ entity/
+â”‚   â”‚   â””â”€â”€ OrderCharges.java                     # Charge breakdown value object
+â”‚   â””â”€â”€ repository/                                # (empty — paper data is in-memory only)
 
-├── backtest/                                      # Backtesting engine
-│   ├── adapter/
-│   │   ├── HistoricalCandleAdapter.java          # Adapts Kite historical candles to tick feed
-│   │   └── TickFeedMerger.java                   # Merges multiple tick feeds chronologically
-│   ├── config/
-│   │   └── BacktestConfig.java                   # Backtest async pool and cache configuration
-│   ├── controller/
-│   │   └── BacktestController.java               # /api/backtest — run, batch, async, results, cache
-│   ├── dto/
-│   │   ├── BacktestRequest.java                  # Backtest run parameters
-│   │   ├── BacktestResult.java                   # Backtest output with trades and metrics
-│   │   └── BacktestTrade.java                    # Individual trade in backtest results
-│   ├── engine/
-│   │   ├── BacktestEngine.java                   # Historical replay engine
-│   │   ├── BacktestException.java                # Custom exception
-│   │   ├── HistoricalDataFetcher.java            # Kite historical candle API client
-│   │   └── InstrumentResolver.java               # Resolves instruments for historical dates
-│   └── service/
-│       └── BacktestService.java                  # Orchestrates backtest execution
+â”œâ”€â”€ backtest/                                      # Backtesting engine
+â”‚   â”œâ”€â”€ adapter/
+â”‚   â”‚   â”œâ”€â”€ HistoricalCandleAdapter.java          # Adapts Kite historical candles to tick feed
+â”‚   â”‚   â””â”€â”€ TickFeedMerger.java                   # Merges multiple tick feeds chronologically
+â”‚   â”œâ”€â”€ config/
+â”‚   â”‚   â””â”€â”€ BacktestConfig.java                   # Backtest async pool and cache configuration
+â”‚   â”œâ”€â”€ controller/
+â”‚   â”‚   â””â”€â”€ BacktestController.java               # /api/backtest — run, batch, async, results, cache
+â”‚   â”œâ”€â”€ dto/
+â”‚   â”‚   â”œâ”€â”€ BacktestRequest.java                  # Backtest run parameters
+â”‚   â”‚   â”œâ”€â”€ BacktestResult.java                   # Backtest output with trades and metrics
+â”‚   â”‚   â””â”€â”€ BacktestTrade.java                    # Individual trade in backtest results
+â”‚   â”œâ”€â”€ engine/
+â”‚   â”‚   â”œâ”€â”€ BacktestEngine.java                   # Historical replay engine
+â”‚   â”‚   â”œâ”€â”€ BacktestException.java                # Custom exception
+â”‚   â”‚   â”œâ”€â”€ HistoricalDataFetcher.java            # Kite historical candle API client
+â”‚   â”‚   â””â”€â”€ InstrumentResolver.java               # Resolves instruments for historical dates
+â”‚   â””â”€â”€ service/
+â”‚       â””â”€â”€ BacktestService.java                  # Orchestrates backtest execution
 
-├── entity/                                        # JPA entities (@Entity)
-│   ├── TradeEntity.java                          # Individual trade executions
-│   ├── StrategyExecutionEntity.java              # Strategy execution lifecycle
-│   ├── StrategyConfigHistoryEntity.java          # Strategy config snapshots
-│   ├── OrderLegEntity.java                       # Individual order legs within strategy
-│   ├── OrderTimingEntity.java                    # HFT latency metrics per order
-│   ├── DeltaSnapshotEntity.java                  # Greeks/delta snapshots
-│   ├── MTMSnapshotEntity.java                    # Mark-to-market snapshots
-│   ├── PositionSnapshotEntity.java               # EOD position snapshots
-│   ├── DailyPnLSummaryEntity.java                # Aggregated daily P&L
-│   ├── AlertHistoryEntity.java                   # Alert/notification history
-│   ├── WebSocketEventEntity.java                 # WebSocket connection events
-│   ├── SystemHealthSnapshotEntity.java           # Periodic system health data
-│   └── UserSessionEntity.java                    # Kite session persistence for Cloud Run recovery
+â”œâ”€â”€ entity/                                        # JPA entities (@Entity)
+â”‚   â”œâ”€â”€ TradeEntity.java                          # Individual trade executions
+â”‚   â”œâ”€â”€ StrategyExecutionEntity.java              # Strategy execution lifecycle
+â”‚   â”œâ”€â”€ StrategyConfigHistoryEntity.java          # Strategy config snapshots
+â”‚   â”œâ”€â”€ OrderLegEntity.java                       # Individual order legs within strategy
+â”‚   â”œâ”€â”€ OrderTimingEntity.java                    # HFT latency metrics per order
+â”‚   â”œâ”€â”€ DeltaSnapshotEntity.java                  # Greeks/delta snapshots
+â”‚   â”œâ”€â”€ MTMSnapshotEntity.java                    # Mark-to-market snapshots
+â”‚   â”œâ”€â”€ PositionSnapshotEntity.java               # EOD position snapshots
+â”‚   â”œâ”€â”€ DailyPnLSummaryEntity.java                # Aggregated daily P&L
+â”‚   â”œâ”€â”€ AlertHistoryEntity.java                   # Alert/notification history
+â”‚   â”œâ”€â”€ WebSocketEventEntity.java                 # WebSocket connection events
+â”‚   â”œâ”€â”€ SystemHealthSnapshotEntity.java           # Periodic system health data
+â”‚   â””â”€â”€ UserSessionEntity.java                    # Kite session persistence for Cloud Run recovery
 
-├── repository/                                    # Spring Data JPA repositories
-│   ├── TradeRepository.java
-│   ├── StrategyExecutionRepository.java
-│   ├── StrategyConfigHistoryRepository.java
-│   ├── OrderLegRepository.java
-│   ├── OrderTimingRepository.java
-│   ├── DeltaSnapshotRepository.java
-│   ├── MTMSnapshotRepository.java
-│   ├── PositionSnapshotRepository.java
-│   ├── DailyPnLSummaryRepository.java
-│   ├── AlertHistoryRepository.java
-│   ├── WebSocketEventRepository.java
-│   ├── SystemHealthSnapshotRepository.java
-│   └── UserSessionRepository.java
+â”œâ”€â”€ repository/                                    # Spring Data JPA repositories
+â”‚   â”œâ”€â”€ TradeRepository.java
+â”‚   â”œâ”€â”€ StrategyExecutionRepository.java
+â”‚   â”œâ”€â”€ StrategyConfigHistoryRepository.java
+â”‚   â”œâ”€â”€ OrderLegRepository.java
+â”‚   â”œâ”€â”€ OrderTimingRepository.java
+â”‚   â”œâ”€â”€ DeltaSnapshotRepository.java
+â”‚   â”œâ”€â”€ MTMSnapshotRepository.java
+â”‚   â”œâ”€â”€ PositionSnapshotRepository.java
+â”‚   â”œâ”€â”€ DailyPnLSummaryRepository.java
+â”‚   â”œâ”€â”€ AlertHistoryRepository.java
+â”‚   â”œâ”€â”€ WebSocketEventRepository.java
+â”‚   â”œâ”€â”€ SystemHealthSnapshotRepository.java
+â”‚   â””â”€â”€ UserSessionRepository.java
 
-├── dto/                                           # Request/response DTOs
-│   ├── ApiResponse.java                          # Standard wrapper: {success: boolean, message: string, data: T}
-│   ├── StrategyRequest.java                      # Strategy execution parameters
-│   ├── StrategyExecutionResponse.java            # Strategy execution result
-│   ├── StrategyTypeInfo.java                     # Strategy type metadata
-│   ├── OrderRequest.java                         # Order placement parameters
-│   ├── OrderResponse.java                        # Order result
-│   ├── OrderChargesResponse.java                 # Charge breakdown
-│   ├── BasketOrderRequest.java                   # Multi-leg basket order
-│   ├── BasketOrderResponse.java                  # Basket order result
-│   ├── LoginRequest.java                         # Auth request
-│   ├── LogoutResponse.java                       # Auth response
-│   ├── DayPnLResponse.java                       # Daily P&L data
-│   ├── BotStatusResponse.java                    # Bot state info
-│   └── InstrumentInfo.java                       # Instrument metadata
+â”œâ”€â”€ dto/                                           # Request/response DTOs
+â”‚   â”œâ”€â”€ ApiResponse.java                          # Standard wrapper: {success: boolean, message: string, data: T}
+â”‚   â”œâ”€â”€ StrategyRequest.java                      # Strategy execution parameters
+â”‚   â”œâ”€â”€ StrategyExecutionResponse.java            # Strategy execution result
+â”‚   â”œâ”€â”€ StrategyTypeInfo.java                     # Strategy type metadata
+â”‚   â”œâ”€â”€ OrderRequest.java                         # Order placement parameters
+â”‚   â”œâ”€â”€ OrderResponse.java                        # Order result
+â”‚   â”œâ”€â”€ OrderChargesResponse.java                 # Charge breakdown
+â”‚   â”œâ”€â”€ BasketOrderRequest.java                   # Multi-leg basket order
+â”‚   â”œâ”€â”€ BasketOrderResponse.java                  # Basket order result
+â”‚   â”œâ”€â”€ LoginRequest.java                         # Auth request
+â”‚   â”œâ”€â”€ LogoutResponse.java                       # Auth response
+â”‚   â”œâ”€â”€ DayPnLResponse.java                       # Daily P&L data
+â”‚   â”œâ”€â”€ BotStatusResponse.java                    # Bot state info
+â”‚   â””â”€â”€ InstrumentInfo.java                       # Instrument metadata
 
-├── model/                                         # Domain enums & value objects
-│   ├── StrategyType.java                         # ATM_STRADDLE, SELL_ATM_STRADDLE, SHORT_STRANGLE
-│   ├── StrategyStatus.java                       # PENDING, EXECUTING, ACTIVE, COMPLETED, FAILED, SKIPPED
-│   ├── StrategyCompletionReason.java             # TARGET_HIT, STOPLOSS_HIT, MANUAL_STOP, TIME_BASED_EXIT, ERROR, DAY_PROFIT_LIMIT_HIT, DAY_LOSS_LIMIT_HIT, OTHER
-│   ├── SlTargetMode.java                         # POINTS, PREMIUM, MTM
-│   ├── BotStatus.java                            # Bot lifecycle state
-│   ├── StrategyExecution.java                    # Runtime execution state model
-│   ├── MarketStateEvent.java                     # Record: instrumentType, neutral, score, maxScore, result, evaluatedAt
-│   ├── NeutralMarketEvaluation.java              # ⭐ Interface: neutral(), isTradable(), totalScore(), maxScore(), summary(), getRegimeLabel(), signals() — shared by V2 and V3 results
-│   ├── NeutralMarketResult.java                  # V2 result: implements NeutralMarketEvaluation. Score (0–10), confidence, regime, tradable flag, signal breakdown
-│   ├── NeutralMarketResultV3.java                # V3 result: implements NeutralMarketEvaluation. Regime + micro + breakout composite (immutable, pre-allocated disabled singleton)
-│   ├── SignalResult.java                         # V2 signal: record with name, score, maxScore, passed, detail (factory methods: passed/failed/unavailable/partial)
-│   ├── Regime.java                               # V3 regime classification: STRONG_NEUTRAL, WEAK_NEUTRAL, TRENDING
-│   └── BreakoutRisk.java                         # V3 breakout risk: LOW, MEDIUM, HIGH
+â”œâ”€â”€ model/                                         # Domain enums & value objects
+â”‚   â”œâ”€â”€ StrategyType.java                         # ATM_STRADDLE, SELL_ATM_STRADDLE, SHORT_STRANGLE
+â”‚   â”œâ”€â”€ StrategyStatus.java                       # PENDING, EXECUTING, ACTIVE, COMPLETED, FAILED, SKIPPED
+â”‚   â”œâ”€â”€ StrategyCompletionReason.java             # TARGET_HIT, STOPLOSS_HIT, MANUAL_STOP, TIME_BASED_EXIT, ERROR, DAY_PROFIT_LIMIT_HIT, DAY_LOSS_LIMIT_HIT, OTHER
+â”‚   â”œâ”€â”€ SlTargetMode.java                         # POINTS, PREMIUM, MTM
+â”‚   â”œâ”€â”€ BotStatus.java                            # Bot lifecycle state
+â”‚   â”œâ”€â”€ StrategyExecution.java                    # Runtime execution state model
+â”‚   â”œâ”€â”€ MarketStateEvent.java                     # Record: instrumentType, neutral, score, maxScore, result, evaluatedAt
+â”‚   â”œâ”€â”€ NeutralMarketEvaluation.java              # â­ Interface: neutral(), isTradable(), totalScore(), maxScore(), summary(), getRegimeLabel(), signals() — shared by V2 and V3 results
+â”‚   â”œâ”€â”€ NeutralMarketResult.java                  # V2 result: implements NeutralMarketEvaluation. Score (0—10), confidence, regime, tradable flag, signal breakdown
+â”‚   â”œâ”€â”€ NeutralMarketResultV3.java                # V3 result: implements NeutralMarketEvaluation. Regime + micro + breakout composite (immutable, pre-allocated disabled singleton)
+â”‚   â”œâ”€â”€ SignalResult.java                         # V2 signal: record with name, score, maxScore, passed, detail (factory methods: passed/failed/unavailable/partial)
+â”‚   â”œâ”€â”€ Regime.java                               # V3 regime classification: STRONG_NEUTRAL, WEAK_NEUTRAL, TRENDING
+â”‚   â””â”€â”€ BreakoutRisk.java                         # V3 breakout risk: LOW, MEDIUM, HIGH
 
-├── util/
-│   ├── ApiConstants.java                         # API path constants
-│   ├── TradingConstants.java                     # Exchange/order/product type strings (NSE, NFO, MIS, LIMIT, etc.)
-│   ├── StrategyConstants.java                    # Strategy-specific constants
-│   ├── CandleUtils.java                          # OHLCV candle computation helpers
-│   └── CurrentUserContext.java                   # ThreadLocal<String> for current user ID
+â”œâ”€â”€ util/
+â”‚   â”œâ”€â”€ ApiConstants.java                         # API path constants
+â”‚   â”œâ”€â”€ TradingConstants.java                     # Exchange/order/product type strings (NSE, NFO, MIS, LIMIT, etc.)
+â”‚   â”œâ”€â”€ StrategyConstants.java                    # Strategy-specific constants
+â”‚   â”œâ”€â”€ CandleUtils.java                          # OHLCV candle computation helpers
+â”‚   â””â”€â”€ CurrentUserContext.java                   # ThreadLocal<String> for current user ID
 
-└── exception/
-    └── GlobalExceptionHandler.java               # @ControllerAdvice — maps exceptions to ApiResponse
+â””â”€â”€ exception/
+    â””â”€â”€ GlobalExceptionHandler.java               # @ControllerAdvice — maps exceptions to ApiResponse
 ```
 
 ---
@@ -355,7 +352,7 @@ com.tradingbot
 
 All behavior is driven by `application.yml` (dev) and `application-prod.yml` (prod). Key configuration prefixes:
 
-### 5.1 Kite Connect (`kite.*` → `KiteConfig`)
+### 5.1 Kite Connect (`kite.*` â†’ `KiteConfig`)
 
 | Property | Default (Dev) | Description |
 |---|---|---|
@@ -364,7 +361,7 @@ All behavior is driven by `application.yml` (dev) and `application-prod.yml` (pr
 | `kite.access-token` | `${KITE_ACCESS_TOKEN:}` | Session access token |
 | `kite.login-url` | `https://kite.zerodha.com/connect/login` | OAuth login URL |
 
-### 5.2 Paper Trading (`trading.*` → `PaperTradingConfig`)
+### 5.2 Paper Trading (`trading.*` â†’ `PaperTradingConfig`)
 
 | Property | Default | Description |
 |---|---|---|
@@ -383,7 +380,7 @@ All behavior is driven by `application.yml` (dev) and `application-prod.yml` (pr
 | `trading.enable-order-rejection` | `false` | Simulate random rejections |
 | `trading.rejection-probability` | `0.02` | Rejection probability |
 
-### 5.3 Strategy (`strategy.*` → `StrategyConfig`)
+### 5.3 Strategy (`strategy.*` â†’ `StrategyConfig`)
 
 | Property | Default | Description |
 |---|---|---|
@@ -399,7 +396,7 @@ All behavior is driven by `application.yml` (dev) and `application-prod.yml` (pr
 | `strategy.expiry-day-entry-end-time` | `"13:00"` | Tighter cutoff on expiry |
 | `strategy.trailing-stop-enabled` | `false` | Enable trailing SL mode |
 
-### 5.4 Volatility (`volatility.*` → `VolatilityConfig`)
+### 5.4 Volatility (`volatility.*` â†’ `VolatilityConfig`)
 
 | Property | Default | Description |
 |---|---|---|
@@ -423,46 +420,9 @@ All behavior is driven by `application.yml` (dev) and `application-prod.yml` (pr
 | `volatility.target-decay-pct` | `5` | Target: exit when premium decays 5% |
 | `volatility.stop-loss-expansion-pct` | `10` | SL: exit when premium expands 10% |
 
-### 5.5 Neutral Market Detection (`neutral-market.*` → `NeutralMarketConfig`)
+### 5.5 Neutral Market Detection V3 (`neutral-market-v3.*` â†’ `NeutralMarketV3Config`)
 
-| Property | Default | Description |
-|---|---|---|
-| `neutral-market.enabled` | `true` | Master switch |
-| `neutral-market.minimum-score` | `6` (dev) / `7` (prod) | Min score to allow trade (0-10) |
-| `neutral-market.expiry-day-minimum-score` | `8` | Tighter threshold on expiry |
-| `neutral-market.vwap-deviation-threshold` | `0.002` | VWAP signal: max 0.2% deviation |
-| `neutral-market.adx-threshold` | `20.0` | ADX signal: below 20 = ranging |
-| `neutral-market.adx-period` | `7` | ADX calculation period |
-| `neutral-market.adx-candle-interval` | `"minute"` | ADX candle interval |
-| `neutral-market.adx-candle-count` | `30` | ADX warmup candles |
-| `neutral-market.gamma-pin-threshold` | `0.002` | Max distance from max-OI strike |
-| `neutral-market.strikes-around-atm` | `5` | OI scan range |
-| `neutral-market.range-compression-threshold` | `0.0035` | Max range of last N candles |
-| `neutral-market.range-compression-candles` | `10` | Number of candles for range check |
-| `neutral-market.premium-snapshot-min-interval-ms` | `20000` | Premium decay snapshot interval |
-| `neutral-market.premium-min-decay-pct` | `0.5` | Min decay % for signal pass |
-| `neutral-market.cache-ttl-ms` | `30000` | Result cache TTL |
-
-#### V2 Weighted Scoring Properties (since 5.0)
-
-| Property | Default | Description |
-|---|---|---|
-| `neutral-market.oscillation-candle-count` | `10` | Candles for price oscillation (chop) detection |
-| `neutral-market.oscillation-min-reversals` | `4` | Min direction reversals to confirm chop |
-| `neutral-market.vwap-pullback-threshold` | `0.003` | Max deviation from VWAP for pullback zone (0.3%) |
-| `neutral-market.vwap-pullback-reversion-threshold` | `0.001` | Max deviation qualifying as "reverted" (0.1%) |
-| `neutral-market.vwap-pullback-candle-count` | `8` | Candles for VWAP pullback pattern |
-| `neutral-market.time-based-adaptation-enabled` | `true` | Enable time-of-day score adjustment |
-| `neutral-market.weight-vwap` | `3` | Signal weight: VWAP Proximity |
-| `neutral-market.weight-range` | `2` | Signal weight: Range Compression |
-| `neutral-market.weight-oscillation` | `2` | Signal weight: Price Oscillation |
-| `neutral-market.weight-vwap-pullback` | `2` | Signal weight: VWAP Pullback |
-| `neutral-market.weight-adx` | `1` | Signal weight: ADX Trend |
-| `neutral-market.weight-gamma-pin` | `1` | Signal weight: Gamma Pin (expiry only) |
-| `neutral-market.strong-neutral-threshold` | `6` | Min score for STRONG_NEUTRAL regime |
-| `neutral-market.weak-neutral-threshold` | `4` | Min score for WEAK_NEUTRAL regime (tradable) |
-
-#### V3 3-Layer Detection Properties (`neutral-market-v3.*` → `NeutralMarketV3Config`, since 6.0)
+> **Note:** The V1/V2 `neutral-market.*` config prefix (`NeutralMarketConfig`) was removed in V6.2. All neutral market config is now under `neutral-market-v3.*`.
 
 | Property | Default | Description |
 |---|---|---|
@@ -489,8 +449,8 @@ All behavior is driven by `application.yml` (dev) and `application-prod.yml` (pr
 | `neutral-market-v3.gamma-pin-threshold` | `0.002` | Max distance from max-OI strike (0.2%) |
 | `neutral-market-v3.strikes-around-atm` | `5` | Strikes each side of ATM for OI scan |
 | **Regime Classification** | | |
-| `neutral-market-v3.regime-strong-neutral-threshold` | `6` | Score ≥ 6 → STRONG_NEUTRAL |
-| `neutral-market-v3.regime-weak-neutral-threshold` | `4` | Score ≥ 4 → WEAK_NEUTRAL |
+| `neutral-market-v3.regime-strong-neutral-threshold` | `6` | Score â‰¥ 6 â†’ STRONG_NEUTRAL |
+| `neutral-market-v3.regime-weak-neutral-threshold` | `4` | Score â‰¥ 4 â†’ WEAK_NEUTRAL |
 | `neutral-market-v3.micro-neutral-override-regime-threshold` | `3` | Min regime for micro-neutral override |
 | `neutral-market-v3.micro-neutral-override-micro-threshold` | `3` | Min micro score for micro-neutral override |
 | **Microstructure Weights** | | |
@@ -512,9 +472,9 @@ All behavior is driven by `application.yml` (dev) and `application-prod.yml` (pr
 | `neutral-market-v3.breakout-edge-proximity-pct` | `0.2` | Within 20% of range from edge |
 | `neutral-market-v3.breakout-momentum-candles` | `3` | Consecutive same-direction candles |
 | **Time Adaptation** | | |
-| `neutral-market-v3.time-based-adaptation-enabled` | `true` | 09:15–10:00 → −1, 13:30–15:00 → +1 |
+| `neutral-market-v3.time-based-adaptation-enabled` | `true` | 09:15—10:00 â†’ âˆ’1, 13:30—15:00 â†’ +1 |
 
-### 5.6 Market Data Engine (`market-data-engine.*` → `MarketDataEngineConfig`)
+### 5.6 Market Data Engine (`market-data-engine.*` â†’ `MarketDataEngineConfig`)
 
 | Property | Default | Description |
 |---|---|---|
@@ -532,10 +492,10 @@ All behavior is driven by `application.yml` (dev) and `application-prod.yml` (pr
 | `market-data-engine.thread-pool-size` | `4` | Background refresh threads |
 | `market-data-engine.supported-instruments` | `NIFTY` | Instruments to track |
 | `market-data-engine.delta-targets` | `"0.05,0.1,...,0.5"` | Pre-computed delta values |
-| `market-data-engine.delta-strike-range-near-atm` | `10` | Strike scan for Δ ≥ 0.3 |
-| `market-data-engine.delta-strike-range-far-otm` | `30` | Strike scan for Δ < 0.3 |
+| `market-data-engine.delta-strike-range-near-atm` | `10` | Strike scan for Î” â‰¥ 0.3 |
+| `market-data-engine.delta-strike-range-far-otm` | `30` | Strike scan for Î” < 0.3 |
 
-### 5.7 Persistence (`persistence.*` → `PersistenceConfig`)
+### 5.7 Persistence (`persistence.*` â†’ `PersistenceConfig`)
 
 | Property | Default (Dev) | Prod | Description |
 |---|---|---|---|
@@ -568,7 +528,6 @@ All behavior is driven by `application.yml` (dev) and `application-prod.yml` (pr
 | Trading Mode | Paper | Live |
 | Logging | DEBUG | INFO |
 | H2 Console | `/h2-console` | Disabled |
-| Neutral Market Min Score | 6 | 7 |
 | Auto Square-off | 15:10 | 15:15 |
 
 ---
@@ -717,65 +676,65 @@ All endpoints return `ApiResponse<T>` wrapper: `{ success: boolean, message: str
 
 ```
 REST POST /api/strategies/execute (StrategyRequest)
-    │
-    ▼
-StrategyController → StrategyService.executeStrategy()
-    │
-    ▼
+    â”‚
+    â–¼
+StrategyController â†’ StrategyService.executeStrategy()
+    â”‚
+    â–¼
 StrategyFactory.create(StrategyType)
-    → Returns: SellATMStraddleStrategy | ShortStrangleStrategy | ATMStraddleStrategy
-    │
-    ▼
+    â†’ Returns: SellATMStraddleStrategy | ShortStrangleStrategy | ATMStraddleStrategy
+    â”‚
+    â–¼
 [Pre-flight checks — all must pass]
   1. DailyPnlGateService    — daily profit/loss limits not exceeded
   2. VolatilityFilterService — India VIX above absolute-threshold (12.5)
                                AND VIX 5-min change < spike-threshold (1.0%)
                                AND VIX not too far above prev close
   3. NeutralMarketDetectorServiceV3 — 3-layer evaluation: Regime (macro) + Micro (entry timing) + Breakout Risk (safety gate)
-                                       Tradable if: regime ≥ 4 AND micro ≥ 2 AND breakoutRisk ≠ HIGH
+                                       Tradable if: regime â‰¥ 4 AND micro â‰¥ 2 AND breakoutRisk â‰  HIGH
                                        (SellATMStraddleStrategy uses V3 via @Qualifier("neutralMarketDetectorV3"))
-    │
-    ▼
+    â”‚
+    â–¼
 [Instrument resolution — from MarketDataEngine cache, NOT inline API calls]
-  MarketDataEngine.getSpotPrice("NIFTY")                    → spot price
-  MarketDataEngine.getATMStrike("NIFTY")                    → ATM strike
-  MarketDataEngine.getPrecomputedStrikeByDelta(instrument, delta, optionType)  → specific strike
-  MarketDataEngine.getOptionChain(instrument, expiry)       → full option chain
-    │
-    ▼
+  MarketDataEngine.getSpotPrice("NIFTY")                    â†’ spot price
+  MarketDataEngine.getATMStrike("NIFTY")                    â†’ ATM strike
+  MarketDataEngine.getPrecomputedStrikeByDelta(instrument, delta, optionType)  â†’ specific strike
+  MarketDataEngine.getOptionChain(instrument, expiry)       â†’ full option chain
+    â”‚
+    â–¼
 [Order placement — parallel via CompletableFuture]
   UnifiedTradingService.placeOrder() / placeBasketOrder()
-    → PaperTradingService (if paper mode) | TradingService → Kite API (if live)
-    │
-    ▼
+    â†’ PaperTradingService (if paper mode) | TradingService â†’ Kite API (if live)
+    â”‚
+    â–¼
 [Position monitoring — initiated by MonitoringSetupHelper]
   WebSocketService.subscribe(instrumentTokens)
-    → Kite WebSocket tick stream
-    → PositionMonitorV2.onTick(Tick)
-        │
-        ▼
+    â†’ Kite WebSocket tick stream
+    â†’ PositionMonitorV2.onTick(Tick)
+        â”‚
+        â–¼
     ExitStrategy[] evaluated in priority order:
         [0]   TimeBasedForcedExitStrategy   — auto square-off at configured time
         [50]  PremiumBasedExitStrategy      — % premium decay/expansion
         [100] PointsBasedExitStrategy       — fixed-point target
         [300] TrailingStopLossStrategy      — dynamic trailing SL
         [400] PointsBasedExitStrategy       — fixed-point stop loss
-    │
-    ▼
+    â”‚
+    â–¼
 [If ExitResult.exitType != NO_EXIT]
   StraddleExitHandler.executeExit()
-    → UnifiedTradingService.placeBasketOrder() (exit orders)
-    → StrategyCompletionCallback.onCompleted(reason)
-    → TradePersistenceService.persistTrade() [async, non-blocking]
-    │
-    ▼
+    â†’ UnifiedTradingService.placeBasketOrder() (exit orders)
+    â†’ StrategyCompletionCallback.onCompleted(reason)
+    â†’ TradePersistenceService.persistTrade() [async, non-blocking]
+    â”‚
+    â–¼
 [Auto-restart loop (if volatility.auto-restart-enabled = true)]
-  MarketStateUpdater evaluates every 30s → publishes MarketStateEvent
+  MarketStateUpdater evaluates every 30s â†’ publishes MarketStateEvent
   StrategyRestartScheduler listens:
     IF event.neutral == true:
       Wait neutral-market-buffer-ms (60s)
-      → DailyPnlGateService.canRestart() check
-      → Re-execute strategy
+      â†’ DailyPnlGateService.canRestart() check
+      â†’ Re-execute strategy
     IF event.neutral == false:
       Reset buffer, wait for next neutral event
 ```
@@ -830,8 +789,8 @@ boolean isHealthy()
 1. **Strategy code must ONLY call `MarketDataEngine.get*()` methods** — never `TradingService` directly for price/instrument lookups during execution.
 2. If engine is disabled or data is stale, strategies may fall back to inline API calls (degraded mode).
 3. Pre-computed delta targets: `0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5`
-4. Near-ATM scan range (Δ ≥ 0.3): ±10 strikes from ATM.
-5. Far-OTM scan range (Δ < 0.3): ±30 strikes from ATM.
+4. Near-ATM scan range (Î” â‰¥ 0.3): Â±10 strikes from ATM.
+5. Far-OTM scan range (Î” < 0.3): Â±30 strikes from ATM.
 
 ---
 
@@ -855,9 +814,9 @@ All strategies extend `BaseStrategy` which provides common utilities for instrum
 
 | StrategyType Enum | Class | Legs | Entry Conditions |
 |---|---|---|---|
-| `SELL_ATM_STRADDLE` | `SellATMStraddleStrategy` | Sell ATM CE + Sell ATM PE + optional 0.1Δ hedge Buy CE + Buy PE | Neutral market score ≥ min-score AND VIX filter pass |
+| `SELL_ATM_STRADDLE` | `SellATMStraddleStrategy` | Sell ATM CE + Sell ATM PE + optional 0.1Î” hedge Buy CE + Buy PE | Neutral market score â‰¥ min-score AND VIX filter pass |
 | `ATM_STRADDLE` | `ATMStraddleStrategy` | Buy ATM CE + Buy ATM PE | VIX filter pass |
-| `SHORT_STRANGLE` | `ShortStrangleStrategy` | Sell 0.4Δ CE + Sell 0.4Δ PE + Buy 0.1Δ CE hedge + Buy 0.1Δ PE hedge | VIX filter pass |
+| `SHORT_STRANGLE` | `ShortStrangleStrategy` | Sell 0.4Î” CE + Sell 0.4Î” PE + Buy 0.1Î” CE hedge + Buy 0.1Î” PE hedge | VIX filter pass |
 
 ### 9.3 Key Config Flags
 
@@ -872,7 +831,7 @@ All strategies extend `BaseStrategy` which provides common utilities for instrum
 ### 9.4 Strategy Lifecycle
 
 ```
-PENDING → EXECUTING → ACTIVE → COMPLETED / FAILED / SKIPPED
+PENDING â†’ EXECUTING â†’ ACTIVE â†’ COMPLETED / FAILED / SKIPPED
 ```
 
 - `PENDING`: Strategy queued
@@ -907,11 +866,11 @@ public interface ExitStrategy {
 
 | Priority | Strategy | Trigger | ExitResult Type |
 |---|---|---|---|
-| 0 | `TimeBasedForcedExitStrategy` | Clock ≥ auto-square-off-time (default 15:10 IST) | EXIT_ALL |
+| 0 | `TimeBasedForcedExitStrategy` | Clock â‰¥ auto-square-off-time (default 15:10 IST) | EXIT_ALL |
 | 50 | `PremiumBasedExitStrategy` | Combined LTP decays by target-decay-pct OR expands by stop-loss-expansion-pct | EXIT_ALL |
-| 100 | `PointsBasedExitStrategy` | Cumulative P&L ≥ target points (TARGET) | EXIT_ALL |
+| 100 | `PointsBasedExitStrategy` | Cumulative P&L â‰¥ target points (TARGET) | EXIT_ALL |
 | 300 | `TrailingStopLossStrategy` | P&L drops from high-water mark by trailing-distance-points | EXIT_ALL |
-| 400 | `PointsBasedExitStrategy` | Cumulative P&L ≤ -stop-loss-points (STOP_LOSS) | EXIT_ALL |
+| 400 | `PointsBasedExitStrategy` | Cumulative P&L â‰¤ -stop-loss-points (STOP_LOSS) | EXIT_ALL |
 
 ### 10.3 ExitResult Types
 
@@ -933,254 +892,75 @@ public enum ExitType {
 
 ---
 
-## 11. Neutral Market Detection V1 (5-Signal Engine)
-
-> **Status:** Legacy — superseded by V2/V3 for active strategy execution.
-> V1 (`NeutralMarketDetectorService`) is retained for backward compatibility and provides `computeADXSeries()` used by V2 and V3.
-
-`NeutralMarketDetectorService` scores 5 independent signals. Each passing signal contributes **+2 points**. Maximum score = 10. Minimum score to allow trade entry is configurable (default 6 dev / 7 prod).
-
-### 11.1 Signal Details
-
-| # | Signal | Metric | Threshold (Default) | Data Source |
-|---|---|---|---|---|
-| 1 | VWAP Deviation | \|NIFTY price − VWAP\| / VWAP | ≤ 0.2% | `MarketDataEngine.getVWAP()` |
-| 2 | ADX Trend Strength | ADX(7) on 1-min candles | < 20.0 | `MarketDataEngine.getCandles()` |
-| 3 | Gamma Pin (Max OI Strike) | Distance from max open-interest strike | ≤ 0.2% | Option chain OI data |
-| 4 | Range Compression | Range of last 10 × 1-min candles | ≤ 0.35% | `MarketDataEngine.getCandles()` |
-| 5 | Dual Premium Decay | Both CE + PE LTP declining vs previous snapshot | Snapshot ≥ 20s apart, both decay ≥ 0.5% | Option chain LTP |
-
-### 11.2 Data Flow
-
-```
-MarketDataEngine (cache) → NeutralMarketDetectorService (scores)
-    → MarketStateUpdater (publishes MarketStateEvent every 30s)
-    → StrategyRestartScheduler (listens for NEUTRAL → re-entry)
-```
-
-### 11.3 Special Cases
-
-- **Expiry day**: Tighter range-compression threshold (0.2%), higher minimum score (8).
-- **Data unavailable**: Configurable fail-safe (`allow-on-data-unavailable: true` = allow trade).
-- **Cache**: Result cached for 30s to avoid redundant computation.
-
----
-
-## 12. Neutral Market Detection V2 (Weighted Confidence Engine)
-
-> **Since:** Version 5.0 | **Deprecated** since Version 6.1 (superseded by V3)
-> **Class:** `NeutralMarketDetectorServiceV2` | **Bean:** `"neutralMarketDetectorV2"` | **Implements:** `NeutralMarketDetector`
-> **Active consumers:** `MarketStateUpdater`, `StrategyRestartScheduler` (TODO: migrate to V3)
-
-Redesign of V1 to increase tradable opportunities, eliminate over-filtering, and provide dynamic confidence-based regime classification optimised for SELL ATM STRADDLE.
-
-### 12.1 Key Improvements over V1
-
-| Aspect | V1 | V2 |
-|---|---|---|
-| Scoring | Binary +2 per signal (0–10) | Weighted 0–10 with configurable weights |
-| Regime | Pass/fail only | STRONG_NEUTRAL / WEAK_NEUTRAL / TRENDING |
-| Signals | 5 fixed | 5 core + 1 expiry-only (Gamma Pin) |
-| New signals | — | Price Oscillation, VWAP Pullback Entry |
-| Removed | — | Premium Decay (lagging) |
-| Gamma Pin | Always evaluated | Expiry day only |
-| Time adaptation | None | Opening -1, mid-session 0, pre-close +1 |
-| Position sizing | Fixed | Confidence-based lot multiplier (1×/2×/3×) |
-| Caching | Single-slot AtomicReference | Per-instrument ConcurrentHashMap |
-| Error cache | Full 30s TTL | Short 5s TTL for fast recovery |
-
-### 12.2 Signal Weights & Scoring
-
-| # | Signal | Weight | Condition | Data Source |
-|---|---|---|---|---|
-| 1 | VWAP Proximity | 3 | \|price − VWAP\| / VWAP < threshold (0.2%) | `MarketDataEngine.getVWAP()` |
-| 2 | Range Compression | 2 | (highestHigh − lowestLow) / spotPrice < threshold (0.35%) | `MarketDataEngine.getCandles()` |
-| 3 | Price Oscillation | 2 | Close-to-close direction reversals ≥ min (4 in 10 candles) | `MarketDataEngine.getCandles()` |
-| 4 | VWAP Pullback | 2 | Price deviated ≥ 0.3% from VWAP then reverted within 0.1% | `MarketDataEngine.getCandles()` |
-| 5 | ADX Trend | 1 | ADX(7) < threshold (20.0) — confirmatory only | `NeutralMarketDetectorService.computeADXSeries()` |
-| 6 | Gamma Pin | 1 | **Expiry day only** — spot within 0.2% of max-OI strike | NFO instrument OI data |
-
-**Total (non-expiry):** 3+2+2+2+1 = **10** (matches `MAX_SCORE`)
-**Total (expiry day):** 3+2+2+2+1+1 = **11** → capped to 10 (Gamma Pin acts as bonus/compensator)
-
-### 12.3 Regime Classification
-
-| Regime | Score Threshold | `tradable` | Lot Multiplier |
-|---|---|---|---|
-| `STRONG_NEUTRAL` | ≥ 6 | `true` | 2× (score 6–7), 3× (score ≥ 8) |
-| `WEAK_NEUTRAL` | ≥ 4 | `true` | 1× |
-| `TRENDING` | < 4 | `false` | 0× (no trade) |
-
-### 12.4 Time-Based Score Adaptation
-
-| Session | IST Window | Score Adjustment | Rationale |
-|---|---|---|---|
-| Opening | 09:15–10:00 | **-1** (stricter) | High opening volatility |
-| Mid-session | 10:00–13:30 | **0** (normal) | Stable session |
-| Pre-close | 13:30–15:30 | **+1** (lenient) | Theta decay accelerates |
-
-### 12.5 Result Object — `NeutralMarketResult`
-
-Immutable after construction. Provides both V2 accessors and backward-compatible V1 accessors.
-
-```java
-public final class NeutralMarketResult {
-    // V2 accessors
-    boolean isTradable();           // score >= weakNeutralThreshold
-    int getScore();                 // Weighted score (0–10)
-    double getConfidence();         // score / MAX_SCORE (0.0–1.0)
-    String getRegime();             // STRONG_NEUTRAL | WEAK_NEUTRAL | TRENDING
-    Map<String, Boolean> getSignalBreakdown();  // Per-signal pass/fail
-
-    // V1 backward-compat accessors
-    boolean neutral();              // alias for isTradable()
-    int totalScore();               // alias for getScore()
-    int maxScore();                 // always 10
-    List<SignalResult> signals();   // Per-signal results
-    String summary();               // Human-readable summary
-    Instant evaluatedAt();          // Evaluation timestamp
-    int minimumRequired();          // Configured minimum score
-
-    // Factory methods
-    static NeutralMarketResult disabled();         // Filter off → max score
-    static NeutralMarketResult dataUnavailable(...); // Fallback on error
-}
-```
-
-### 12.6 Signal Result — `SignalResult`
-
-```java
-public record SignalResult(String name, int score, int maxScore, boolean passed, String detail) {
-    static SignalResult passed(String name, int weight, String detail);
-    static SignalResult failed(String name, int weight, String detail);
-    static SignalResult unavailable(String name, int weight, String reason);
-    static SignalResult partial(String name, int partialScore, int weight, String detail);
-}
-```
-
-### 12.7 Caching Architecture
-
-| Feature | Implementation |
-|---|---|
-| Cache type | `ConcurrentHashMap<String, CachedResult>` — per-instrument |
-| Cache TTL | 30s (configurable via `neutral-market.cache-ttl-ms`) |
-| Error TTL | ~5s (short TTL allows fast recovery from transient API failures) |
-| Thread safety | Lock-free reads via ConcurrentHashMap; immutable result objects |
-| Instrument token cache | `ConcurrentHashMap<String, String>` — resolved once, cached forever |
-
-### 12.8 Data Flow
-
-```
-MarketDataEngine (cache) → NeutralMarketDetectorServiceV2.evaluate("NIFTY")
-    │
-    ├─ getIndexPrice() → spot price
-    ├─ getCandles() → 1-min candles (shared across VWAP, Range, Oscillation, Pullback)
-    ├─ getVWAP() → pre-computed VWAP (fallback: compute from candles)
-    ├─ getNearestWeeklyExpiry() → expiry date (fallback: NFO instrument scan)
-    │
-    ▼
-    Evaluate 5–6 signals → aggregate weighted score → time adjustment
-    → classify regime → build NeutralMarketResult (immutable)
-    → cache per-instrument with TTL
-    │
-    ▼
-MarketStateUpdater.evaluateAndPublish() [every 30s]
-    → publishes MarketStateEvent with V2 result
-    → StrategyRestartScheduler listens for tradable events → re-entry
-
-### 12.9 HFT Safety
-
-- All price arithmetic uses `double` primitives — no BigDecimal on hot path
-- Indexed `for` loops — no Iterator/Stream allocations
-- Per-signal logs at DEBUG level (only 1 summary INFO line per 30s cycle)
-- No `String.format()` in log arguments — raw doubles passed to SLF4J
-- `Instant.ofEpochMilli(startTime)` reused — no redundant clock calls
-- Epoch-day arithmetic for same-day checks — no `new Date()` or Calendar allocations
-- `KiteException extends Throwable` (not Exception) — requires explicit catch clause
-```
-
----
-
-## 13. Neutral Market Detection V3 (3-Layer Tradable Opportunity Detector)
+## 11. Neutral Market Detection V3 (3-Layer Tradable Opportunity Detector)
 
 > **Since:** Version 6.0 | **Interface-wired** since Version 6.1
+> **Note:** V1 (`NeutralMarketDetectorService`) and V2 (`NeutralMarketDetectorServiceV2`) were
+> removed in Version 6.2. The ADX computation originally in V1 is now in `CandleUtils.computeADXSeries()`.
+> V3 is the sole implementation of `NeutralMarketDetector`.
+
 > **Class:** `NeutralMarketDetectorServiceV3` | **Bean:** `"neutralMarketDetectorV3"` | **Implements:** `NeutralMarketDetector`
 > **Config:** `NeutralMarketV3Config` (`neutral-market-v3.*`)
-> **Active consumers:** `SellATMStraddleStrategy` (via `@Qualifier("neutralMarketDetectorV3")`)
+> **Active consumers:** `SellATMStraddleStrategy`, `MarketStateUpdater`, `StrategyRestartScheduler` (all via `@Qualifier("neutralMarketDetectorV3")`)
 
 A production-grade, HFT-safe 3-layer detection engine that determines not just *whether* the market is neutral, but whether a **real-time tradable opportunity** exists right now for SELL ATM STRADDLE. Combines macro regime analysis, microstructure opportunity detection, and breakout risk assessment.
 
-### 13.1 Key Improvements over V2
-
-| Aspect | V2 | V3 |
-|---|---|---|
-| Layers | 1 (flat scoring) | 3 (Regime + Microstructure + Breakout Risk) |
-| Entry timing | Regime-only | Micro signals detect precise entry moment |
-| Breakout protection | None | Breakout Risk layer blocks imminent breakouts |
-| Scoring | 0–10 weighted | Regime 0–9 + Micro 0–5 = Final 0–15 (time-adjusted) |
-| Regime source | Same signals for scoring + tradability | Regime ≠ tradability (micro can override borderline regime) |
-| Caching | 30s TTL | 15s TTL (faster refresh for micro signals) |
-| Error cache | ~5s TTL | ~5s TTL (same) |
-| New signals | — | VWAP Pullback Momentum (M1), HF Oscillation (M2), Micro Range Stability (M3) |
-| New safety | — | Breakout Risk: tight range + edge proximity + momentum → block |
-| Position sizing | Score-based | Score-based with breakout-aware multiplier (0 when not tradable) |
-
-### 13.2 Architecture: 3-Layer Detection
+### 11.1 Architecture: 3-Layer Detection
 
 ```
-Layer 1: REGIME (0–9 pts) — Macro neutrality
-    ├─ R1: VWAP Proximity (+3)     — |price − VWAP| / VWAP < 0.2%
-    ├─ R2: Range Compression (+2)  — (high−low) / price < 0.35% over 10 candles
-    ├─ R3: Price Oscillation (+2)  — ≥4 direction reversals in 10 candles
-    ├─ R4: ADX Trend (+1)         — ADX(7) < 20.0 (confirmatory)
-    └─ R5: Gamma Pin (+1)         — expiry day only: spot within 0.2% of max-OI strike
+Layer 1: REGIME (0—9 pts) — Macro neutrality
+    â”œâ”€ R1: VWAP Proximity (+3)     — |price âˆ’ VWAP| / VWAP < 0.2%
+    â”œâ”€ R2: Range Compression (+2)  — (highâˆ’low) / price < 0.35% over 10 candles
+    â”œâ”€ R3: Price Oscillation (+2)  — â‰¥4 direction reversals in 10 candles
+    â”œâ”€ R4: ADX Trend (+1)         — ADX(7) < 20.0 (confirmatory)
+    â””â”€ R5: Gamma Pin (+1)         — expiry day only: spot within 0.2% of max-OI strike
 
-Layer 2: MICROSTRUCTURE (0–5 pts) — Immediate tradable signal
-    ├─ M1: VWAP Pullback Momentum (+2) — price deviated then slope reverting toward VWAP
-    ├─ M2: HF Oscillation (+2)         — ≥4 flips AND avg move < 0.1% (small-amplitude chop)
-    └─ M3: Micro Range Stability (+1)  — (high−low) / price < 0.1% over 5 candles
+Layer 2: MICROSTRUCTURE (0—5 pts) — Immediate tradable signal
+    â”œâ”€ M1: VWAP Pullback Momentum (+2) — price deviated then slope reverting toward VWAP
+    â”œâ”€ M2: HF Oscillation (+2)         — â‰¥4 flips AND avg move < 0.1% (small-amplitude chop)
+    â””â”€ M3: Micro Range Stability (+1)  — (highâˆ’low) / price < 0.1% over 5 candles
 
 Layer 3: BREAKOUT RISK — Safety gate
-    ├─ Tight range (consolidation < 0.15%)
-    ├─ Edge proximity (price within 20% of range from high/low)
-    └─ Momentum buildup (3 consecutive same-direction candles)
-    → 3/3 = HIGH (block), 2/3 = MEDIUM, 0–1/3 = LOW
+    â”œâ”€ Tight range (consolidation < 0.15%)
+    â”œâ”€ Edge proximity (price within 20% of range from high/low)
+    â””â”€ Momentum buildup (3 consecutive same-direction candles)
+    â†’ 3/3 = HIGH (block), 2/3 = MEDIUM, 0—1/3 = LOW
 ```
 
-### 13.3 Regime Classification (from Regime Layer score)
+### 11.2 Regime Classification (from Regime Layer score)
 
 | Regime | Regime Score | Classification |
 |---|---|---|
-| `STRONG_NEUTRAL` | ≥ 6 | High confidence, full position size |
-| `WEAK_NEUTRAL` | ≥ 4 | Moderate confidence, reduced size |
+| `STRONG_NEUTRAL` | â‰¥ 6 | High confidence, full position size |
+| `WEAK_NEUTRAL` | â‰¥ 4 | Moderate confidence, reduced size |
 | `TRENDING` | < 4 | Not suitable for straddle |
 
-### 13.4 Final Decision Logic
+### 11.3 Final Decision Logic
 
 ```
-if (breakoutRisk == HIGH)                                           → NOT tradable
-if (regimeScore >= weakNeutralThreshold AND microScore >= 2)        → tradable
+if (breakoutRisk == HIGH)                                           â†’ NOT tradable
+if (regimeScore >= weakNeutralThreshold AND microScore >= 2)        â†’ tradable
 if (regimeScore >= microNeutralOverrideRegime AND microScore >= microNeutralOverrideMicro)
-                                                                    → tradable (micro-neutral opportunity)
-else                                                                → NOT tradable
+                                                                    â†’ tradable (micro-neutral opportunity)
+else                                                                â†’ NOT tradable
 ```
 
-Key: The micro-neutral override (default regime ≥ 3 AND micro ≥ 3) allows entry when the regime is borderline but microstructure signals are very strong — catching opportunities that V2 would miss.
+Key: The micro-neutral override (default regime â‰¥ 3 AND micro â‰¥ 3) allows entry when the regime is borderline but microstructure signals are very strong — catching opportunities that V2 would miss.
 
-### 13.5 Scoring & Confidence
+### 11.4 Scoring & Confidence
 
 | Metric | Range | Computation |
 |---|---|---|
-| Regime score | 0–9 | Sum of passed regime signal weights |
-| Micro score | 0–5 | Sum of passed micro signal weights |
-| Time adjustment | −1, 0, +1 | Opening -1 / Mid 0 / Pre-close +1 |
-| Final score | 0–15 | `min(max(regime + micro + timeAdj, 0), 15)` |
-| Confidence | 0.0–1.0 | `finalScore / 15.0` |
-| Lot multiplier | 0–3 | 0 (not tradable or score < 5), 1 (≥5), 2 (≥7), 3 (≥10) |
+| Regime score | 0—9 | Sum of passed regime signal weights |
+| Micro score | 0—5 | Sum of passed micro signal weights |
+| Time adjustment | âˆ’1, 0, +1 | Opening -1 / Mid 0 / Pre-close +1 |
+| Final score | 0—15 | `min(max(regime + micro + timeAdj, 0), 15)` |
+| Confidence | 0.0—1.0 | `finalScore / 15.0` |
+| Lot multiplier | 0—3 | 0 (not tradable or score < 5), 1 (â‰¥5), 2 (â‰¥7), 3 (â‰¥10) |
 
 **Note:** `lotMultiplier` is forced to 0 when `tradable == false` — consumers can safely check either field.
 
-### 13.6 Microstructure Signals (Detail)
+### 11.5 Microstructure Signals (Detail)
 
 #### M1: VWAP Pullback Momentum (+2)
 
@@ -1196,16 +976,16 @@ Detects mean-reversion entry: price moved *away* from VWAP, then started reverti
 
 Dual condition: high flip count AND small average move per candle.
 
-- Direction flips ≥ `microOscillationMinFlips` (4) in last 8 candles
+- Direction flips â‰¥ `microOscillationMinFlips` (4) in last 8 candles
 - Average absolute move / price < `microOscillationMaxAvgMove` (0.1%)
 - Rejects large swings (fake chop) via the amplitude check
 
 #### M3: Micro Range Stability (+1)
 
-Last `microRangeCandles` (5) × 1-min candles confined to a very tight range:
+Last `microRangeCandles` (5) Ã— 1-min candles confined to a very tight range:
 - `(highestHigh - lowestLow) / spotPrice < microRangeThreshold` (0.1%)
 
-### 13.7 Breakout Risk Detection (Detail)
+### 11.6 Breakout Risk Detection (Detail)
 
 Three conditions that together form the classic breakout setup:
 
@@ -1217,25 +997,25 @@ Three conditions that together form the classic breakout setup:
 |---|---|---|
 | 3/3 | `HIGH` | Block entry completely |
 | 2/3 | `MEDIUM` | Entry allowed (logged for monitoring) |
-| 0–1/3 | `LOW` | Safe to enter |
+| 0—1/3 | `LOW` | Safe to enter |
 
-### 13.8 Result Object — `NeutralMarketResultV3`
+### 11.7 Result Object — `NeutralMarketResultV3`
 
 Immutable after construction. Thread-safe for concurrent reads.
 
 ```java
 public final class NeutralMarketResultV3 {
     boolean isTradable();                    // Final decision incorporating all 3 layers
-    int getRegimeScore();                    // Regime layer (0–9)
-    int getMicroScore();                     // Microstructure layer (0–5)
-    int getFinalScore();                     // regime + micro, time-adjusted (0–15)
-    double getConfidence();                  // finalScore / 15.0 (0.0–1.0)
+    int getRegimeScore();                    // Regime layer (0—9)
+    int getMicroScore();                     // Microstructure layer (0—5)
+    int getFinalScore();                     // regime + micro, time-adjusted (0—15)
+    double getConfidence();                  // finalScore / 15.0 (0.0—1.0)
     Regime getRegime();                      // STRONG_NEUTRAL | WEAK_NEUTRAL | TRENDING
     BreakoutRisk getBreakoutRisk();          // LOW | MEDIUM | HIGH
     boolean isMicroTradable();              // micro layer independently tradable
-    int getRecommendedLotMultiplier();       // 0–3 (0 when not tradable)
+    int getRecommendedLotMultiplier();       // 0—3 (0 when not tradable)
     Map<String, Boolean> getSignals();       // Per-signal pass/fail
-    String getSummary();                     // Human-readable: R[V✓ RC✗ O✓ A✓]=6 M[VP✓ HF✗ RS✓]=3 BR=LOW → TRADE
+    String getSummary();                     // Human-readable: R[Vâœ“ RCâœ— Oâœ“ Aâœ“]=6 M[VPâœ“ HFâœ— RSâœ“]=3 BR=LOW â†’ TRADE
     Instant getEvaluatedAt();                // Evaluation timestamp
 
     // Backward-compat accessors
@@ -1249,7 +1029,7 @@ public final class NeutralMarketResultV3 {
 }
 ```
 
-### 13.9 Caching Architecture
+### 11.8 Caching Architecture
 
 | Feature | Implementation |
 |---|---|
@@ -1258,29 +1038,29 @@ public final class NeutralMarketResultV3 {
 | Error TTL | ~5s (backdated timestamp trick for fast recovery) |
 | Thread safety | Lock-free reads via ConcurrentHashMap; immutable result objects |
 | Instrument token cache | `ConcurrentHashMap<String, String>` — resolved once, cached forever |
-| Hot-path behavior | Cache hit → return as-is (zero allocation). Evaluation runs only on cache miss. |
+| Hot-path behavior | Cache hit â†’ return as-is (zero allocation). Evaluation runs only on cache miss. |
 
-### 13.10 Data Flow
+### 11.9 Data Flow
 
 ```
-MarketDataEngine (cache) → NeutralMarketDetectorServiceV3.evaluate("NIFTY")
-    │
-    ├─ getIndexPrice() → spot price (fallback: tradingService.getLTP)
-    ├─ getCandles() → 1-min candles (shared across ALL signals)
-    ├─ getVWAP() → pre-computed VWAP (fallback: compute from candles)
-    ├─ getNearestWeeklyExpiry() → expiry date (for gamma pin)
-    │
-    ▼
-Layer 1: Evaluate 5 regime signals → regimeScore (0–9) → classify Regime
-Layer 2: Evaluate 3 micro signals → microScore (0–5) → microTradable
-Layer 3: Evaluate breakout risk → BreakoutRisk (LOW/MEDIUM/HIGH)
-    │
-    ▼
-Time adjustment → Final decision → Confidence → Lot multiplier
-    → Build NeutralMarketResultV3 (immutable) → Cache with TTL
+MarketDataEngine (cache) â†’ NeutralMarketDetectorServiceV3.evaluate("NIFTY")
+    â”‚
+    â”œâ”€ getIndexPrice() â†’ spot price (fallback: tradingService.getLTP)
+    â”œâ”€ getCandles() â†’ 1-min candles (shared across ALL signals)
+    â”œâ”€ getVWAP() â†’ pre-computed VWAP (fallback: compute from candles)
+    â”œâ”€ getNearestWeeklyExpiry() â†’ expiry date (for gamma pin)
+    â”‚
+    â–¼
+Layer 1: Evaluate 5 regime signals â†’ regimeScore (0—9) â†’ classify Regime
+Layer 2: Evaluate 3 micro signals â†’ microScore (0—5) â†’ microTradable
+Layer 3: Evaluate breakout risk â†’ BreakoutRisk (LOW/MEDIUM/HIGH)
+    â”‚
+    â–¼
+Time adjustment â†’ Final decision â†’ Confidence â†’ Lot multiplier
+    â†’ Build NeutralMarketResultV3 (immutable) â†’ Cache with TTL
 ```
 
-### 13.11 HFT Safety
+### 11.10 HFT Safety
 
 - All price arithmetic uses `double` primitives — zero BigDecimal on hot path
 - Indexed `for` loops only — no Iterator, Stream, or lambda
@@ -1291,7 +1071,7 @@ Time adjustment → Final decision → Confidence → Lot multiplier
 - Epoch-day arithmetic for same-day checks — no Calendar or LocalDate allocations
 - `KiteException extends Throwable` (not Exception) in SDK 3.5.1 — requires explicit multi-catch
 
-### 13.12 Integration Points
+### 11.11 Integration Points
 
 | Consumer | Usage | Status |
 |---|---|---|
@@ -1302,7 +1082,7 @@ Time adjustment → Final decision → Confidence → Lot multiplier
 
 ---
 
-## 14. Paper Trading Simulation
+## 12. Paper Trading Simulation
 
 `PaperTradingService` provides a complete in-memory trading simulation with realistic charge computation.
 
@@ -1328,7 +1108,7 @@ Time adjustment → Final decision → Confidence → Lot multiplier
 
 ---
 
-## 15. Backtesting Engine
+## 13. Backtesting Engine
 
 The backtest module replays historical market data through the strategy engine.
 
@@ -1341,7 +1121,7 @@ The backtest module replays historical market data through the strategy engine.
 | `InstrumentResolver` | Resolves instrument tokens for historical dates |
 | `HistoricalCandleAdapter` | Converts historical candles to simulated tick feed |
 | `TickFeedMerger` | Merges CE + PE + underlying tick feeds chronologically |
-| `BacktestService` | Orchestrates full backtest: fetch data → resolve instruments → run engine → return results |
+| `BacktestService` | Orchestrates full backtest: fetch data â†’ resolve instruments â†’ run engine â†’ return results |
 | `BacktestController` | REST API for running backtests (sync, async, batch) |
 
 ### DTOs
@@ -1359,9 +1139,9 @@ The backtest module replays historical market data through the strategy engine.
 
 ---
 
-## 16. Database Schema & Entities
+## 14. Database Schema & Entities
 
-### 16.1 Tables (from Flyway Migrations)
+### 14.1 Tables (from Flyway Migrations)
 
 #### `trades` — Individual Trade Executions
 | Column Group | Key Columns |
@@ -1410,7 +1190,7 @@ The backtest module replays historical market data through the strategy engine.
 #### `user_sessions` — Kite Session Persistence (Cloud Run Recovery)
 | Key Columns | `user_id` (unique), `kite_user_id`, `access_token`, `public_token`, `created_at`, `last_accessed_at`, `expires_at`, `active`, `version` (optimistic lock) |
 
-### 16.2 Entity-to-Table Mapping
+### 14.2 Entity-to-Table Mapping
 
 | Entity Class | Table | Repository |
 |---|---|---|
@@ -1432,15 +1212,15 @@ All repositories are standard `JpaRepository<Entity, Long>`.
 
 ---
 
-## 17. Persistence Layer
+## 15. Persistence Layer
 
 ### Write Path (Async, Non-Blocking)
 
 ```
 Strategy thread
-    → TradePersistenceService.persistTrade() [async]
-        → PersistenceBufferService.buffer(entity) [in-memory buffer]
-            → Batch flush to DB via HikariCP (every N records or on timer)
+    â†’ TradePersistenceService.persistTrade() [async]
+        â†’ PersistenceBufferService.buffer(entity) [in-memory buffer]
+            â†’ Batch flush to DB via HikariCP (every N records or on timer)
 ```
 
 ### Services
@@ -1472,7 +1252,7 @@ Strategy thread
 
 ---
 
-## 18. Multi-User Session Management
+## 16. Multi-User Session Management
 
 ### `UserSessionManager`
 
@@ -1497,9 +1277,9 @@ Strategy thread
 
 ---
 
-## 19. Key Interfaces & Contracts
+## 17. Key Interfaces & Contracts
 
-### 19.1 `TradingStrategy` (Strategy Interface)
+### 17.1 `TradingStrategy` (Strategy Interface)
 
 ```java
 public interface TradingStrategy {
@@ -1510,7 +1290,7 @@ public interface TradingStrategy {
 }
 ```
 
-### 19.2 `ExitStrategy` (Exit Strategy Interface)
+### 17.2 `ExitStrategy` (Exit Strategy Interface)
 
 ```java
 public interface ExitStrategy {
@@ -1521,7 +1301,7 @@ public interface ExitStrategy {
 }
 ```
 
-### 19.3 `ApiResponse<T>` (Standard API Wrapper)
+### 17.3 `ApiResponse<T>` (Standard API Wrapper)
 
 ```java
 public class ApiResponse<T> {
@@ -1535,11 +1315,11 @@ public class ApiResponse<T> {
 }
 ```
 
-### 19.4 `StrategyCompletionCallback`
+### 17.4 `StrategyCompletionCallback`
 
 Callback interface invoked by strategy execution when a strategy completes. Used by `StrategyService` to update state and trigger auto-restart.
 
-### 19.5 `MarketStateEvent` (Record)
+### 17.5 `MarketStateEvent` (Record)
 
 ```java
 public record MarketStateEvent(
@@ -1552,11 +1332,11 @@ public record MarketStateEvent(
 ) {}
 ```
 
-### 19.6 `NeutralMarketResult` (V2 Result Object)
+### 17.6 `NeutralMarketResult` (V2 Result Object)
 
-Immutable result of neutral market evaluation. Implements `NeutralMarketEvaluation`. Provides both V2 and backward-compatible V1 accessors. See §12.5 for full API.
+Immutable result of neutral market evaluation. Implements `NeutralMarketEvaluation`. Provides both V2 and backward-compatible V1 accessors. See Â§12.5 for full API.
 
-### 19.7 `SignalResult` (V2 Signal Record)
+### 17.7 `SignalResult` (V2 Signal Record)
 
 ```java
 public record SignalResult(String name, int score, int maxScore, boolean passed, String detail) {
@@ -1567,11 +1347,11 @@ public record SignalResult(String name, int score, int maxScore, boolean passed,
 }
 ```
 
-### 19.8 `NeutralMarketResultV3` (V3 Result Object)
+### 17.8 `NeutralMarketResultV3` (V3 Result Object)
 
-Immutable 3-layer composite result. Implements `NeutralMarketEvaluation`. See §13.8 for full API.
+Immutable 3-layer composite result. Implements `NeutralMarketEvaluation`. See Â§13.8 for full API.
 
-### 19.9 `NeutralMarketDetector` (Detector Interface) — NEW in 6.1
+### 17.9 `NeutralMarketDetector` (Detector Interface) — NEW in 6.1
 
 Common interface for neutral market detection engines. Enables version-agnostic injection via `@Qualifier`.
 
@@ -1596,7 +1376,7 @@ public interface NeutralMarketDetector {
 private NeutralMarketDetector neutralMarketDetector;
 ```
 
-### 19.10 `NeutralMarketEvaluation` (Result Interface) — NEW in 6.1
+### 17.10 `NeutralMarketEvaluation` (Result Interface) — NEW in 6.1
 
 Common interface for neutral market evaluation results. Abstracts over V2 (`NeutralMarketResult`) and V3 (`NeutralMarketResultV3`).
 
@@ -1614,13 +1394,13 @@ public interface NeutralMarketEvaluation {
 }
 ```
 
-### 19.11 `Regime` (V3 Enum)
+### 17.11 `Regime` (V3 Enum)
 
 ```java
 public enum Regime { STRONG_NEUTRAL, WEAK_NEUTRAL, TRENDING }
 ```
 
-### 19.12 `BreakoutRisk` (V3 Enum)
+### 17.12 `BreakoutRisk` (V3 Enum)
 
 ```java
 public enum BreakoutRisk { LOW, MEDIUM, HIGH }
@@ -1628,7 +1408,7 @@ public enum BreakoutRisk { LOW, MEDIUM, HIGH }
 
 ---
 
-## 20. Enums & Domain Model
+## 18. Enums & Domain Model
 
 | Enum | Values | Purpose |
 |---|---|---|
@@ -1638,12 +1418,12 @@ public enum BreakoutRisk { LOW, MEDIUM, HIGH }
 | `SlTargetMode` | `POINTS`, `PREMIUM`, `MTM` | SL/target calculation mode |
 | `BotStatus` | *(bot lifecycle states)* | Overall bot state |
 | `ExitResult.ExitType` | `NO_EXIT`, `EXIT_ALL`, `EXIT_LEG`, `ADJUST_LEG` | Exit action to take |
-| `Regime` | `STRONG_NEUTRAL`, `WEAK_NEUTRAL`, `TRENDING` | V3 market regime classification (see §13.3) |
-| `BreakoutRisk` | `LOW`, `MEDIUM`, `HIGH` | V3 breakout risk assessment (see §13.7) |
+| `Regime` | `STRONG_NEUTRAL`, `WEAK_NEUTRAL`, `TRENDING` | V3 market regime classification (see Â§13.3) |
+| `BreakoutRisk` | `LOW`, `MEDIUM`, `HIGH` | V3 breakout risk assessment (see Â§13.7) |
 
 ---
 
-## 21. Deployment & Infrastructure
+## 19. Deployment & Infrastructure
 
 ### Docker
 
@@ -1658,7 +1438,7 @@ ENTRYPOINT ["java","-jar","/app/zerodhabot_genai-exec.jar"]
 ### Kubernetes
 
 - **Deployment** (`deployment.yaml`): 2 replicas, image `zerodhabot_genai_3:latest`, port 8080
-- **Service** (`service.yaml`): NodePort service exposing port 8080 → nodePort 30080
+- **Service** (`service.yaml`): NodePort service exposing port 8080 â†’ nodePort 30080
 
 ### Build
 
@@ -1703,7 +1483,7 @@ docker build -t zerodhabot_genai_3:latest .
 
 ---
 
-## 22. Testing
+## 20. Testing
 
 ### Test Location
 
@@ -1740,7 +1520,7 @@ docker build -t zerodhabot_genai_3:latest .
 
 ---
 
-## 23. Coding Conventions & HFT Rules
+## 21. Coding Conventions & HFT Rules
 
 ### Naming Conventions
 
@@ -1787,22 +1567,19 @@ docker build -t zerodhabot_genai_3:latest .
 
 ---
 
-## 24. Common Tasks — Where to Look
+## 22. Common Tasks — Where to Look
 
 | Task | Files to Read First |
 |---|---|
 | **Add a new exit strategy** | `ExitStrategy.java`, `AbstractExitStrategy.java`, `ExitContext.java`, `ExitResult.java`, `PositionMonitorV2.java` |
 | **Add a new trading strategy** | `TradingStrategy.java`, `BaseStrategy.java`, `StrategyFactory.java`, `StrategyType.java` |
-| **Change neutral market signals (V2)** | `NeutralMarketDetectorServiceV2.java`, `NeutralMarketConfig.java`, `NeutralMarketResult.java`, `SignalResult.java` |
-| **Change neutral market signals (V3)** | `NeutralMarketDetectorServiceV3.java`, `NeutralMarketV3Config.java`, `NeutralMarketResultV3.java`, `Regime.java`, `BreakoutRisk.java` |
+| **Change neutral market signals** | `NeutralMarketDetectorServiceV3.java`, `NeutralMarketV3Config.java`, `NeutralMarketResultV3.java`, `Regime.java`, `BreakoutRisk.java` |
 | **Add a V3 regime/micro/breakout signal** | `NeutralMarketDetectorServiceV3.java` (add evaluator method + wire in `evaluateAllLayers`), `NeutralMarketV3Config.java` (add weight + threshold) |
-| **Wire V3 into remaining consumers** | `MarketStateUpdater.java`, `StrategyRestartScheduler.java` — still on V2 (TODO comments mark these). Replace `NeutralMarketDetectorServiceV2` with `NeutralMarketDetector` + `@Qualifier("neutralMarketDetectorV3")` |
-| **Switch a detector version** | Change `@Qualifier` value in injection site: `"neutralMarketDetectorV2"` ↔ `"neutralMarketDetectorV3"`. Both implement `NeutralMarketDetector` |
 | **Audit @Lazy dependencies** | `docs/LAZY_AUDIT.md` — maps all remaining `@Lazy` sites with cycle explanations and decoupling plans |
 | **Modify order placement** | `UnifiedTradingService.java`, `PaperTradingService.java`, `TradingService.java` |
 | **Add a new config property** | Relevant `*Config.java` class + `application.yml` |
-| **Add a new REST endpoint** | Existing controller for reference → new/existing Service → return `ApiResponse<T>` |
-| **Add a new entity/table** | `@Entity` class in `entity/` → `JpaRepository` in `repository/` → Flyway SQL in `db/migration/` (prod) |
+| **Add a new REST endpoint** | Existing controller for reference â†’ new/existing Service â†’ return `ApiResponse<T>` |
+| **Add a new entity/table** | `@Entity` class in `entity/` â†’ `JpaRepository` in `repository/` â†’ Flyway SQL in `db/migration/` (prod) |
 | **Tune cache refresh rates** | `MarketDataEngineConfig.java`, `application.yml` (`market-data-engine.*`) |
 | **Debug delta computation** | `DeltaCacheService.java`, `MarketDataEngine.java` (delta refresh cycle), `BaseStrategy.java` |
 | **Add new backtest capability** | `BacktestEngine.java`, `BacktestService.java`, `BacktestController.java` |
@@ -1815,14 +1592,14 @@ docker build -t zerodhabot_genai_3:latest .
 
 ---
 
-## 25. Domain Vocabulary
+## 23. Domain Vocabulary
 
 | Term | Meaning |
 |---|---|
 | **ATM** | At-The-Money — strike closest to current NIFTY spot price |
 | **OTM** | Out-of-The-Money — strike away from spot (lower for PE, higher for CE) |
 | **CE / PE** | Call option / Put option |
-| **Delta (Δ)** | Option sensitivity to underlying price change. 0.5 = ATM, 0.1 = far OTM |
+| **Delta (Î”)** | Option sensitivity to underlying price change. 0.5 = ATM, 0.1 = far OTM |
 | **Gamma** | Rate of delta change (highest at ATM, peaks on expiry day) |
 | **Theta** | Time decay — premium lost per day (benefits option sellers) |
 | **Vega** | Sensitivity to implied volatility changes |
@@ -1848,36 +1625,79 @@ docker build -t zerodhabot_genai_3:latest .
 | **Kite Connect** | Zerodha's REST + WebSocket API for programmatic trading |
 | **GTT** | Good-Till-Triggered — persistent conditional orders on Kite |
 | **Trailing SL** | Stop loss that moves up with profit (locks in gains) |
-| **Regime** | Market classification: STRONG_NEUTRAL, WEAK_NEUTRAL, TRENDING (V2/V3) |
-| **Confidence** | Normalized score (0.0–1.0): V2 = score/10, V3 = score/15 |
-| **Lot multiplier** | Position sizing: 0× (no trade), 1× (weak), 2× (moderate), 3× (high confidence) |
+| **Regime** | Market classification: STRONG_NEUTRAL, WEAK_NEUTRAL, TRENDING (V3) |
+| **Confidence** | Normalized score (0.0—1.0): V3 = score/15 |
+| **Lot multiplier** | Position sizing: 0Ã— (no trade), 1Ã— (weak), 2Ã— (moderate), 3Ã— (high confidence) |
 | **Price oscillation** | Signal: choppy price action measured by close-to-close direction reversals |
 | **VWAP pullback** | Signal: mean-reversion pattern — price deviates from VWAP then reverts back |
 | **Microstructure** | V3: Real-time tick/candle-level opportunity detection layer |
 | **Breakout risk** | V3: Safety gate that blocks entry when tight range + edge proximity + momentum align |
 | **Gamma pin** | Expiry-day effect where spot price gravitates toward the highest OI strike |
-| **Micro-neutral override** | V3: Allows entry when regime is borderline (score 3) but microstructure signals are very strong (micro ≥ 3) |
+| **Micro-neutral override** | V3: Allows entry when regime is borderline (score 3) but microstructure signals are very strong (micro â‰¥ 3) |
 
 ---
 
-## 26. Changelog
+## 24. Changelog
+
+### Version 6.2 (2026-03-29) — V1/V2 Neutral Market Detector Removal + Code Audit
+
+**Deleted Files:**
+- `NeutralMarketDetectorService.java` — V1 5-signal binary scoring engine (1168 lines)
+- `NeutralMarketDetectorServiceV2.java` — V2 weighted confidence engine (1173 lines)
+- `NeutralMarketConfig.java` — V1/V2 neutral market configuration (295 lines)
+- `NeutralMarketResult.java` — V2 result model (147 lines)
+- `SignalResult.java` — V2 per-signal result record (51 lines)
+- `NeutralMarketDetectorServiceTest.java` — V1 test suite (702 lines)
+- `NeutralMarketDetectorServiceV2Test.java` — V2 test suite (697 lines)
+
+**Key Changes:**
+1. **ADX computation extracted** from V1 into `CandleUtils.computeADXSeries()` — shared utility used by V3
+2. **V3 is now the sole implementation** of `NeutralMarketDetector` — no `@Qualifier` switching needed (retained for forward compatibility)
+3. **All consumers wired to V3**: `SellATMStraddleStrategy`, `MarketStateUpdater`, `StrategyRestartScheduler`
+4. **`NeutralMarketEvaluation` interface simplified** — removed `signals()` method (V2-specific, returned `List<SignalResult>`)
+5. **`MarketStateEvent` record** — `result` field type changed from `NeutralMarketResult` to `NeutralMarketEvaluation`
+6. **`NeutralMarketResultV3`** — removed `signals()` override and `minimumRequired()` override (no longer needed without V2 interface compat)
+7. **`VolatilityConfig`** — removed stale V2-related fields
+8. **`StrategyConfig`** — minor cleanup
+9. **`application.yml`** — removed `neutral-market.*` V1/V2 config section (V3 config under `neutral-market-v3.*` retained)
+
+**Code Audit Fixes (from `full-app-review.prompt.md` and `controller-audit-fixes.prompt.md`):**
+- Removed deprecated `markStrategyAsCompleted()` from `StrategyService`
+- Removed `USE_DELTA_CACHE` constant from `BaseStrategy` (always true)
+- Removed stale Javadoc references to `PositionMonitor` (v1) — updated to `PositionMonitorV2`
+- Added `@ConditionalOnProperty` to `BacktestController`
+- Routed `getAvailableExpiries()` and `getAvailableInstruments()` through `InstrumentCacheService`
+- Replaced `BaseStrategy.instrumentCache` HashMap with `InstrumentCacheService`
+- Routed `GET /api/market/instruments` through `InstrumentCacheService`
+- Removed `GET /api/history/trading-mode` from `TradingHistoryController`
+- Replaced manual `userId == null` checks with `CurrentUserContext.getRequiredUserId()` + filter protection
+- Extended `accumulateDailyPnl()` scope to include `SHORT_STRANGLE`
+- Fixed timezone bug in `MarketDataController.parseDate()` — uses IST explicitly
+- Removed duplicate `logKiteExceptionDetails()` from `StrategyController`
+- Removed unreachable `strategyType == null` default in `StrategyController`
+- Added thread-safe `AtomicBoolean` runtime override for paper trading toggle
+- Added `@Value("${spring.application.version:unknown}")` to `HealthController`
+- Documented `Thread.MAX_PRIORITY` limitation in strategy thread factories
+- Added null guard in `stopStrategy()` for already-stopped executions
+- Fixed `DailyPnlGateService` reset schedule to use `zone = "Asia/Kolkata"`
+- Removed legacy backward-compatible constructors from `BaseStrategy`
 
 ### Version 6.1 (2026-03-20) — V3 Wiring + @Lazy Dependency Cleanup
 
 **Task 1 — Wire V3 Detector into SellATMStraddleStrategy:**
 
 *Pre-existing interfaces (already defined, now implemented):*
-- `NeutralMarketDetector.java` — Common interface for neutral market detection engines: `evaluate(String)`, `isMarketNeutral(String)`, `clearCache()`. Bean names: `"neutralMarketDetectorV2"`, `"neutralMarketDetectorV3"`.
-- `NeutralMarketEvaluation.java` — Common interface for evaluation results: `neutral()`, `isTradable()`, `totalScore()`, `maxScore()`, `summary()`, `getRegimeLabel()`, `minimumRequired()`, `signals()`.
+- `NeutralMarketDetector.java` — Common interface for neutral market detection engines: `evaluate(String)`, `isMarketNeutral(String)`, `clearCache()`.
+- `NeutralMarketEvaluation.java` — Common interface for evaluation results: `neutral()`, `isTradable()`, `totalScore()`, `maxScore()`, `summary()`, `getRegimeLabel()`, `minimumRequired()`.
 
 *Modified Files:*
-- `NeutralMarketResult.java` — Now `implements NeutralMarketEvaluation`. Added `getRegimeLabel()`.
-- `NeutralMarketResultV3.java` — Now `implements NeutralMarketEvaluation`. Added `getRegimeLabel()`, `minimumRequired()` (returns 0), `signals()` (returns empty list).
-- `NeutralMarketDetectorServiceV2.java` — Now `@Deprecated`, `@Service("neutralMarketDetectorV2")`, `implements NeutralMarketDetector`. Added `@Override` on `evaluate()`, `isMarketNeutral()`, `clearCache()`.
-- `NeutralMarketDetectorServiceV3.java` — Now `@Service("neutralMarketDetectorV3")`, `implements NeutralMarketDetector`. Added `isMarketNeutral()` (delegates to `isMarketTradable()`), `@Override` on `evaluate()`, `clearCache()`.
-- `SellATMStraddleStrategy.java` — Injection changed from `NeutralMarketDetectorServiceV2` (concrete) to `@Qualifier("neutralMarketDetectorV3") NeutralMarketDetector` (interface). Result type changed from `NeutralMarketResult` to `NeutralMarketEvaluation`. `getRegime()` → `getRegimeLabel()`.
-- `MarketStateUpdater.java` — Added TODO comment marking V2 injection for future migration.
-- `StrategyRestartScheduler.java` — Added TODO comment marking V2 injection for future migration.
+- `NeutralMarketResult.java` — Added `implements NeutralMarketEvaluation` *(removed in V6.2)*
+- `NeutralMarketResultV3.java` — Added `implements NeutralMarketEvaluation`, `getRegimeLabel()`, `minimumRequired()`
+- `NeutralMarketDetectorServiceV2.java` — Added `@Deprecated`, `implements NeutralMarketDetector` *(removed in V6.2)*
+- `NeutralMarketDetectorServiceV3.java` — Added `implements NeutralMarketDetector`, `isMarketNeutral()`
+- `SellATMStraddleStrategy.java` — Injection changed to `@Qualifier("neutralMarketDetectorV3") NeutralMarketDetector` (interface)
+- `MarketStateUpdater.java` — Migrated to V3 in V6.2
+- `StrategyRestartScheduler.java` — Migrated to V3 in V6.2
 
 **Task 2 — Eliminate @Lazy Circular Dependencies (Phase 1):**
 
@@ -1896,9 +1716,9 @@ docker build -t zerodhabot_genai_3:latest .
 | `AsyncPersistenceConfig` | `PersistenceBufferService` |
 
 *6 real-cycle `@Lazy` retained* — all documented with cycle explanation and decoupling plan:
-- Cycle A: `StrategyService` ↔ `StrategyRestartScheduler` (bidirectional)
-- Cycle B: `StrategyService` ↔ `SellATMStraddleStrategy` / `ShortStrangleStrategy` (factory cycle)
-- Cycle C: `StrategyService` ↔ `StraddleExitHandler` / `LegReplacementHandler` (handler cycle)
+- Cycle A: `StrategyService` â†” `StrategyRestartScheduler` (bidirectional)
+- Cycle B: `StrategyService` â†” `SellATMStraddleStrategy` / `ShortStrangleStrategy` (factory cycle)
+- Cycle C: `StrategyService` â†” `StraddleExitHandler` / `LegReplacementHandler` (handler cycle)
 
 *New Documentation:*
 - `docs/LAZY_AUDIT.md` updated with Phase 1 completion status and Phase 2 decoupling plan.
@@ -1911,7 +1731,7 @@ docker build -t zerodhabot_genai_3:latest .
 **New Files:**
 - `NeutralMarketDetectorServiceV3.java` — 3-layer detection engine: Regime (macro neutrality) + Microstructure (real-time opportunity) + Breakout Risk (safety gate). 1286 lines, 11 configurable signals, HFT-safe with 15s TTL caching.
 - `NeutralMarketV3Config.java` — `@ConfigurationProperties(prefix = "neutral-market-v3")` with 40+ configurable fields covering all 3 layers.
-- `NeutralMarketResultV3.java` — Immutable composite result: tradable, regimeScore (0–9), microScore (0–5), finalScore (0–15), confidence, Regime enum, BreakoutRisk enum, lotMultiplier, signal map, summary. Pre-allocated `disabled()` singleton.
+- `NeutralMarketResultV3.java` — Immutable composite result: tradable, regimeScore (0—9), microScore (0—5), finalScore (0—15), confidence, Regime enum, BreakoutRisk enum, lotMultiplier, signal map, summary. Pre-allocated `disabled()` singleton.
 - `Regime.java` — Enum: `STRONG_NEUTRAL`, `WEAK_NEUTRAL`, `TRENDING`
 - `BreakoutRisk.java` — Enum: `LOW`, `MEDIUM`, `HIGH`
 - `application.yml` — Added `neutral-market-v3:` section with all V3 properties
@@ -1919,8 +1739,8 @@ docker build -t zerodhabot_genai_3:latest .
 **Key Design Decisions:**
 1. **3-layer architecture** replaces V2's flat scoring — separates "is market neutral?" (regime) from "is now a good entry?" (microstructure) from "is breakout imminent?" (safety gate)
 2. **Microstructure layer** (new) detects precise entry moment via VWAP pullback momentum, HF oscillation with amplitude check, and micro range stability
-3. **Breakout Risk layer** (new) blocks entry when tight range + edge proximity + momentum buildup align (all 3 = HIGH → block)
-4. **Micro-neutral override** — allows trade when regime is borderline (score ≥ 3) but micro signals are very strong (micro ≥ 3), catching opportunities V2 misses
+3. **Breakout Risk layer** (new) blocks entry when tight range + edge proximity + momentum buildup align (all 3 = HIGH â†’ block)
+4. **Micro-neutral override** — allows trade when regime is borderline (score â‰¥ 3) but micro signals are very strong (micro â‰¥ 3), catching opportunities V2 misses
 5. **15s cache TTL** (vs V2's 30s) for faster micro-signal responsiveness
 6. **Lot multiplier forced to 0** when not tradable — prevents semantic mismatch
 7. **Breakout momentum** uses strict inequality — flat candles don't falsely kill directional momentum
@@ -1937,10 +1757,10 @@ docker build -t zerodhabot_genai_3:latest .
 
 **Integration Status:**
 - V3 is compiled and available as a Spring `@Service("neutralMarketDetectorV3")` bean implementing `NeutralMarketDetector`
-- ✅ **Wired into `SellATMStraddleStrategy`** as of V6.1 via `@Qualifier("neutralMarketDetectorV3")`
-- `MarketStateUpdater` and `StrategyRestartScheduler` still use V2 (migration TODO)
-- Can be tested via direct `evaluate("NIFTY")` call
-- No unit tests yet (to be added)
+- âœ… **Wired into `SellATMStraddleStrategy`** as of V6.1 via `@Qualifier("neutralMarketDetectorV3")`
+- âœ… **Wired into `MarketStateUpdater`** as of V6.2
+- âœ… **Wired into `StrategyRestartScheduler`** as of V6.2
+- V1 and V2 removed in V6.2 — V3 is sole implementation
 
 **Known Limitations:**
 - Gamma Pin signal still uses `tradingService.getQuote()` (direct API call) for OI data on expiry days
@@ -1950,20 +1770,22 @@ docker build -t zerodhabot_genai_3:latest .
 
 ### Version 5.0 (2026-03-20) — Neutral Market Detector V2
 
-**New Files:**
+> **Note:** V2 was fully removed in Version 6.2. This changelog is retained for historical context.
+
+**New Files** *(all removed in V6.2):*
 - `NeutralMarketDetectorServiceV2.java` — Weighted confidence scoring engine with 6 signals, regime classification, per-instrument caching
-- `NeutralMarketResult.java` — Immutable result model with score (0–10), confidence (0.0–1.0), regime, tradable flag, per-signal breakdown
+- `NeutralMarketResult.java` — Immutable result model with score (0—10), confidence (0.0—1.0), regime, tradable flag, per-signal breakdown
 - `SignalResult.java` — Immutable record for individual signal evaluation results
 - `NeutralMarketDetectorServiceV2Test.java` — 24 unit tests covering all signals, regimes, time adaptation, caching, backward compatibility
 
-**Modified Files:**
+**Modified Files** *(NeutralMarketConfig.java removed in V6.2; MarketStateUpdater and StrategyRestartScheduler migrated to V3 in V6.2):*
 - `NeutralMarketConfig.java` — Added 14 V2 config properties (oscillation, pullback, time adaptation, weights, regime thresholds)
 - `MarketStateUpdater.java` — Now uses `NeutralMarketDetectorServiceV2` instead of V1
 - `SellATMStraddleStrategy.java` — Used V2 detector for pre-flight neutral market check (later migrated to V3 in v6.1)
 - `StrategyRestartScheduler.java` — Now uses V2 detector for restart gating
 
 **Key Design Decisions:**
-1. **Weighted scoring** (0–10) replaces binary +2/signal — allows nuanced regime classification
+1. **Weighted scoring** (0—10) replaces binary +2/signal — allows nuanced regime classification
 2. **Three regimes** (STRONG_NEUTRAL / WEAK_NEUTRAL / TRENDING) replace binary pass/fail
 3. **Premium Decay signal removed** — too lagging for intraday use
 4. **Gamma Pin** now expiry-day-only — avoids noise on non-expiry days
