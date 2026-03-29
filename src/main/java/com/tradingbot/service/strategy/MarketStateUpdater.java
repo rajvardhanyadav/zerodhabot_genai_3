@@ -4,8 +4,11 @@ import com.tradingbot.config.MarketDataEngineConfig;
 import com.tradingbot.config.NeutralMarketV3Config;
 import com.tradingbot.model.MarketStateEvent;
 import com.tradingbot.model.NeutralMarketEvaluation;
+import com.tradingbot.model.NeutralMarketResultV3;
+import com.tradingbot.service.persistence.NeutralMarketLogService;
 import com.tradingbot.service.session.UserSessionManager;
 import com.tradingbot.util.CurrentUserContext;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationEventPublisher;
@@ -47,27 +50,45 @@ public class MarketStateUpdater {
     private final MarketDataEngineConfig marketDataEngineConfig;
     private final ApplicationEventPublisher eventPublisher;
     private final UserSessionManager userSessionManager;
+    private final NeutralMarketLogService neutralMarketLogService;
 
     public MarketStateUpdater(@Qualifier("neutralMarketDetectorV3") NeutralMarketDetector neutralMarketDetectorService,
                               NeutralMarketV3Config neutralMarketV3Config,
                               MarketDataEngineConfig marketDataEngineConfig,
                               ApplicationEventPublisher eventPublisher,
-                              UserSessionManager userSessionManager) {
+                              UserSessionManager userSessionManager,
+                              NeutralMarketLogService neutralMarketLogService) {
         this.neutralMarketDetectorService = neutralMarketDetectorService;
         this.neutralMarketV3Config = neutralMarketV3Config;
         this.marketDataEngineConfig = marketDataEngineConfig;
         this.eventPublisher = eventPublisher;
         this.userSessionManager = userSessionManager;
+        this.neutralMarketLogService = neutralMarketLogService;
     }
+
+    @PostConstruct
+    void logStartupInfo() {
+        log.info("MarketStateUpdater initialized. Neutral market log persistence prerequisites: " +
+                "(1) V3 detector enabled={}, " +
+                "(2) active Kite session required (POST /auth/login), " +
+                "(3) market hours IST {}-{} weekdays only, " +
+                "(4) persistence enabled. " +
+                "Evaluation cycle interval: {}ms (from volatility.neutral-market-poll-interval-ms)",
+                neutralMarketV3Config.isEnabled(), MARKET_OPEN, MARKET_CLOSE,
+                "${volatility.neutral-market-poll-interval-ms:30000}");
+    }
+
+    /** Tracks whether we've already warned about missing sessions (to avoid log spam). */
+    private volatile boolean warnedNoSessions = false;
 
     /**
      * Scheduled evaluation cycle. Runs at the interval configured by
-     * {@code strategy.neutral-market-poll-interval-ms} (default 30 000 ms).
+     * {@code volatility.neutral-market-poll-interval-ms} (default 30 000 ms).
      *
      * <p>For each instrument, evaluates the neutral market detector and publishes
      * a {@link MarketStateEvent}. Listeners decide how to react (e.g. restart strategies).
      */
-    @Scheduled(fixedRateString = "${strategy.neutral-market-poll-interval-ms:30000}")
+    @Scheduled(fixedRateString = "${volatility.neutral-market-poll-interval-ms:30000}")
     public void evaluateAndPublish() {
         if (!neutralMarketV3Config.isEnabled()) {
             log.trace("MarketStateUpdater: V3 neutral-market filter disabled, skipping evaluation cycle");
@@ -85,9 +106,18 @@ public class MarketStateUpdater {
         // instead of falling back to PAPER_DEFAULT_USER.
         Set<String> activeUserIds = userSessionManager.getActiveUserIds();
         if (activeUserIds.isEmpty()) {
-            log.debug("MarketStateUpdater: no active user sessions, skipping evaluation cycle");
+            if (!warnedNoSessions) {
+                log.warn("MarketStateUpdater: no active user sessions — neutral market evaluations " +
+                        "and persistence are PAUSED. Log in via POST /auth/login to activate. " +
+                        "(This warning is logged once; subsequent skips logged at DEBUG level.)");
+                warnedNoSessions = true;
+            } else {
+                log.debug("MarketStateUpdater: no active user sessions, skipping evaluation cycle");
+            }
             return;
         }
+        // Reset warning flag when sessions become available
+        warnedNoSessions = false;
 
         // Use the first active user's session for market data API calls.
         // Neutral market evaluation is user-agnostic (same market data for all users),
@@ -116,6 +146,16 @@ public class MarketStateUpdater {
                             instrument, result.neutral(), result.totalScore(), result.maxScore());
 
                     eventPublisher.publishEvent(event);
+
+                    // Persist evaluation log asynchronously for historical analysis
+                    if (result instanceof NeutralMarketResultV3 v3Result) {
+                        log.debug("MarketStateUpdater: persisting V3 evaluation log for {} (tradable={}, regime={}, score={})",
+                                instrument, v3Result.isTradable(), v3Result.getRegime(), v3Result.getFinalScore());
+                        neutralMarketLogService.persistEvaluationAsync(v3Result, instrument);
+                    } else {
+                        log.debug("MarketStateUpdater: evaluation result for {} is not V3 (type={}), skipping persistence",
+                                instrument, result.getClass().getSimpleName());
+                    }
 
                 } catch (Exception e) {
                     log.error("MarketStateUpdater: failed to evaluate {}: {}", instrument, e.getMessage(), e);

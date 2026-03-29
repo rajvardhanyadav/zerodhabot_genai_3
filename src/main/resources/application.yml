@@ -419,6 +419,7 @@ persistence:
     strategy-config-days: 365
     websocket-events-days: 30
     system-health-days: 7
+    neutral-market-log-days: 30
 
   # Cleanup job settings
   cleanup:

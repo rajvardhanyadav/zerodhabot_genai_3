@@ -253,6 +253,12 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         // Pre-allocate with expected capacity: 5 regime + 3 micro + 3 breakout = 11
         Map<String, Boolean> signalMap = new LinkedHashMap<>(12);
 
+        // ==================== PER-SIGNAL NUMERIC TRACKERS (for persistence) ====================
+        double numericVwapDeviation = (vwap > 0) ? Math.abs(spotPrice - vwap) / vwap : 0.0;
+        double numericRangeFraction = 0.0;
+        int numericOscillationReversals = 0;
+        double numericAdxValue = 0.0;
+
         // ======================================================================
         //                       LAYER 1: REGIME (0–9 pts)
         // ======================================================================
@@ -271,6 +277,8 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         if (rangeCompressionPassed) {
             regimeScore += config.getWeightRangeCompression();
         }
+        // Capture numeric range fraction for persistence
+        numericRangeFraction = computeRangeFraction(spotPrice, candles, config.getRangeCompressionCandles());
 
         // Signal R3: Price Oscillation (+2)
         boolean oscillationPassed = evaluateOscillation(candles);
@@ -278,6 +286,8 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         if (oscillationPassed) {
             regimeScore += config.getWeightOscillation();
         }
+        // Capture numeric oscillation reversals for persistence
+        numericOscillationReversals = computeReversalCount(candles, config.getOscillationCandleCount());
 
         // Signal R4: ADX Trend Strength (+1)
         boolean adxPassed = evaluateADX(instrumentType);
@@ -285,6 +295,8 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         if (adxPassed) {
             regimeScore += config.getWeightAdx();
         }
+        // Capture numeric ADX value for persistence
+        numericAdxValue = computeLatestADX(instrumentType);
 
         // Signal R5: Gamma Pin (+1) — expiry day only
         boolean gammaPinPassed = false;
@@ -441,7 +453,10 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         return new NeutralMarketResultV3(
                 tradable, regimeScore, microScore, finalScore, confidence,
                 regime, breakoutRisk, microTradable,
-                signalMap, summary, Instant.ofEpochMilli(startTime)
+                signalMap, summary, Instant.ofEpochMilli(startTime),
+                spotPrice, vwap, elapsed, vetoReason, timeAdjustment, isExpiryDay,
+                numericVwapDeviation, numericRangeFraction,
+                numericOscillationReversals, numericAdxValue
         );
     }
 
@@ -545,6 +560,64 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         log.debug("V3 R3 OSCILLATION: reversals={}, minRequired={}, candles={}, passed={}",
                 reversals, config.getOscillationMinReversals(), required, passed);
         return passed;
+    }
+
+    // ==================================================================================
+    //            NUMERIC VALUE EXTRACTORS (for persistence enrichment)
+    // ==================================================================================
+
+    /**
+     * Compute range fraction = (highestHigh − lowestLow) / spotPrice for persistence.
+     * Lightweight double arithmetic; duplicates R2 logic but returns the numeric value.
+     */
+    private double computeRangeFraction(double spotPrice, List<HistoricalData> candles, int required) {
+        if (spotPrice <= 0 || candles == null || candles.size() < required) return 0.0;
+        int startIdx = candles.size() - required;
+        double highestHigh = Double.MIN_VALUE;
+        double lowestLow = Double.MAX_VALUE;
+        for (int i = startIdx; i < candles.size(); i++) {
+            HistoricalData c = candles.get(i);
+            if (c.high > highestHigh) highestHigh = c.high;
+            if (c.low < lowestLow) lowestLow = c.low;
+        }
+        return (highestHigh - lowestLow) / spotPrice;
+    }
+
+    /**
+     * Count direction reversals for persistence. Duplicates R3 logic but returns int count.
+     */
+    private int computeReversalCount(List<HistoricalData> candles, int required) {
+        if (candles == null || candles.size() < required) return 0;
+        int startIdx = candles.size() - required;
+        int reversals = 0;
+        int previousDirection = 0;
+        for (int i = startIdx + 1; i < candles.size(); i++) {
+            double prevClose = candles.get(i - 1).close;
+            double currClose = candles.get(i).close;
+            int direction = (currClose > prevClose) ? 1 : (currClose < prevClose) ? -1 : 0;
+            if (direction != 0 && previousDirection != 0 && direction != previousDirection) {
+                reversals++;
+            }
+            if (direction != 0) previousDirection = direction;
+        }
+        return reversals;
+    }
+
+    /**
+     * Compute latest ADX value for persistence. Returns 0 if unavailable.
+     */
+    private double computeLatestADX(String instrumentType) {
+        try {
+            if (!hasEnoughTimeForADX()) return 0.0;
+            String instrumentToken = resolveInstrumentToken(instrumentType);
+            List<HistoricalData> adxCandles = fetchADXCandles(instrumentType, instrumentToken);
+            int minRequired = config.getAdxPeriod() * 2 + 1;
+            if (adxCandles == null || adxCandles.size() < minRequired) return 0.0;
+            double[] adxValues = NeutralMarketDetectorService.computeADXSeries(adxCandles, config.getAdxPeriod());
+            return (adxValues.length > 0) ? adxValues[adxValues.length - 1] : 0.0;
+        } catch (Exception e) {
+            return 0.0;
+        }
     }
 
     /**

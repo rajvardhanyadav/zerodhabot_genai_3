@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import com.tradingbot.service.persistence.NeutralMarketLogService;
 import com.tradingbot.service.session.UserSessionManager;
 import org.springframework.context.ApplicationEventPublisher;
 
@@ -44,6 +45,9 @@ class MarketStateUpdaterTest {
     @Mock
     private UserSessionManager userSessionManager;
 
+    @Mock
+    private NeutralMarketLogService neutralMarketLogService;
+
     private MarketStateUpdater updater;
 
     @BeforeEach
@@ -51,7 +55,7 @@ class MarketStateUpdaterTest {
         try (AutoCloseable mocks = MockitoAnnotations.openMocks(this)) {
             when(marketDataEngineConfig.getSupportedInstrumentsArray()).thenReturn(new String[]{"NIFTY"});
             updater = new MarketStateUpdater(neutralMarketDetectorService, neutralMarketV3Config,
-                    marketDataEngineConfig, eventPublisher, userSessionManager);
+                    marketDataEngineConfig, eventPublisher, userSessionManager, neutralMarketLogService);
             // Default: at least one active user session
             when(userSessionManager.getActiveUserIds()).thenReturn(Set.of("TEST_USER"));
         } catch (Exception e) {
@@ -131,8 +135,80 @@ class MarketStateUpdaterTest {
         // When
         spyUpdater.evaluateAndPublish();
 
-        // Then: No evaluation, no events
+        // Then: No evaluation, no events, no persistence
         verify(neutralMarketDetectorService, never()).evaluate(any());
         verify(eventPublisher, never()).publishEvent(any());
+        verify(neutralMarketLogService, never()).persistEvaluationAsync(any(), any());
+    }
+
+    @Test
+    void testEvaluateAndPublish_NoActiveSessions_SkipsEvaluationAndPersistence() {
+        // Given: V3 enabled, within market hours, but NO active sessions
+        when(neutralMarketV3Config.isEnabled()).thenReturn(true);
+        when(userSessionManager.getActiveUserIds()).thenReturn(Collections.emptySet());
+
+        MarketStateUpdater spyUpdater = spy(updater);
+        doReturn(true).when(spyUpdater).isWithinMarketHours();
+
+        // When
+        spyUpdater.evaluateAndPublish();
+
+        // Then: No evaluation, no events, no persistence
+        verify(neutralMarketDetectorService, never()).evaluate(any());
+        verify(eventPublisher, never()).publishEvent(any());
+        verify(neutralMarketLogService, never()).persistEvaluationAsync(any(), any());
+    }
+
+    @Test
+    void testEvaluateAndPublish_V3Result_PersistenceIsCalled() {
+        // Given: V3 enabled, sessions active, market hours OK
+        when(neutralMarketV3Config.isEnabled()).thenReturn(true);
+
+        NeutralMarketResultV3 niftyResult = new NeutralMarketResultV3(
+                true, 6, 3, 9, 0.6,
+                Regime.STRONG_NEUTRAL, BreakoutRisk.LOW,
+                true, Collections.emptyMap(), "persistence-test", Instant.now());
+
+        when(neutralMarketDetectorService.evaluate("NIFTY")).thenReturn(niftyResult);
+
+        MarketStateUpdater spyUpdater = spy(updater);
+        doReturn(true).when(spyUpdater).isWithinMarketHours();
+
+        // When
+        spyUpdater.evaluateAndPublish();
+
+        // Then: Persistence IS called with the V3 result
+        ArgumentCaptor<NeutralMarketResultV3> resultCaptor = ArgumentCaptor.forClass(NeutralMarketResultV3.class);
+        ArgumentCaptor<String> instrumentCaptor = ArgumentCaptor.forClass(String.class);
+        verify(neutralMarketLogService, times(1)).persistEvaluationAsync(
+                resultCaptor.capture(), instrumentCaptor.capture());
+
+        assertEquals("NIFTY", instrumentCaptor.getValue());
+        assertTrue(resultCaptor.getValue().isTradable());
+        assertEquals(6, resultCaptor.getValue().getRegimeScore());
+    }
+
+    @Test
+    void testEvaluateAndPublish_NonV3Result_PersistenceNotCalled() {
+        // Given: V3 enabled, but detector returns a non-V3 result (e.g., V2 detector wired)
+        when(neutralMarketV3Config.isEnabled()).thenReturn(true);
+
+        // Create a mock NeutralMarketEvaluation that is NOT NeutralMarketResultV3
+        NeutralMarketEvaluation nonV3Result = mock(NeutralMarketEvaluation.class);
+        when(nonV3Result.neutral()).thenReturn(true);
+        when(nonV3Result.totalScore()).thenReturn(8);
+        when(nonV3Result.maxScore()).thenReturn(10);
+
+        when(neutralMarketDetectorService.evaluate("NIFTY")).thenReturn(nonV3Result);
+
+        MarketStateUpdater spyUpdater = spy(updater);
+        doReturn(true).when(spyUpdater).isWithinMarketHours();
+
+        // When
+        spyUpdater.evaluateAndPublish();
+
+        // Then: Event IS published, but persistence is NOT called (wrong result type)
+        verify(eventPublisher, times(1)).publishEvent(any(MarketStateEvent.class));
+        verify(neutralMarketLogService, never()).persistEvaluationAsync(any(), any());
     }
 }

@@ -73,6 +73,11 @@ public class PersistenceConfig {
          * Number of days to retain system health snapshots
          */
         private int systemHealthDays = 7;
+
+        /**
+         * Number of days to retain neutral market detection logs
+         */
+        private int neutralMarketLogDays = 30;
     }
 
     @Data

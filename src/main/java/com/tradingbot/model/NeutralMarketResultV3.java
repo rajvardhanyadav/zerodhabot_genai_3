@@ -51,11 +51,42 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
     private final String summary;
     private final Instant evaluatedAt;
 
-    // ==================== CONSTRUCTOR ====================
+    // ==================== ENRICHMENT FIELDS FOR PERSISTENCE ====================
+    // These fields capture raw evaluation context so the persistence layer can
+    // store complete diagnostics without re-computation. Set via the enriched constructor
+    // or via the enrich() builder. All default to safe zero/null values for backward compat.
+    private final double spotPrice;
+    private final double vwapValue;
+    private final long evaluationDurationMs;
+    private final String vetoReason;
+    private final int timeAdjustment;
+    private final boolean expiryDay;
+    // Per-signal numeric values (beyond pass/fail)
+    private final double vwapDeviation;
+    private final double rangeFraction;
+    private final int oscillationReversals;
+    private final double adxValue;
+
+    // ==================== CONSTRUCTOR (original — backward compat) ====================
     public NeutralMarketResultV3(boolean tradable, int regimeScore, int microScore, int finalScore,
                                  double confidence, Regime regime, BreakoutRisk breakoutRisk,
                                  boolean microTradable,
                                  Map<String, Boolean> signals, String summary, Instant evaluatedAt) {
+        this(tradable, regimeScore, microScore, finalScore, confidence, regime, breakoutRisk,
+                microTradable, signals, summary, evaluatedAt,
+                0.0, 0.0, 0L, null, 0, false,
+                0.0, 0.0, 0, 0.0);
+    }
+
+    // ==================== CONSTRUCTOR (enriched — with persistence detail) ====================
+    public NeutralMarketResultV3(boolean tradable, int regimeScore, int microScore, int finalScore,
+                                 double confidence, Regime regime, BreakoutRisk breakoutRisk,
+                                 boolean microTradable,
+                                 Map<String, Boolean> signals, String summary, Instant evaluatedAt,
+                                 double spotPrice, double vwapValue, long evaluationDurationMs,
+                                 String vetoReason, int timeAdjustment, boolean expiryDay,
+                                 double vwapDeviation, double rangeFraction,
+                                 int oscillationReversals, double adxValue) {
         this.tradable = tradable;
         this.regimeScore = regimeScore;
         this.microScore = microScore;
@@ -67,6 +98,16 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
         this.signals = signals != null ? Collections.unmodifiableMap(new LinkedHashMap<>(signals)) : Collections.emptyMap();
         this.summary = summary;
         this.evaluatedAt = evaluatedAt;
+        this.spotPrice = spotPrice;
+        this.vwapValue = vwapValue;
+        this.evaluationDurationMs = evaluationDurationMs;
+        this.vetoReason = vetoReason;
+        this.timeAdjustment = timeAdjustment;
+        this.expiryDay = expiryDay;
+        this.vwapDeviation = vwapDeviation;
+        this.rangeFraction = rangeFraction;
+        this.oscillationReversals = oscillationReversals;
+        this.adxValue = adxValue;
     }
 
     // ==================== ACCESSORS ====================
@@ -103,6 +144,38 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
 
     /** Timestamp of evaluation (IST). */
     public Instant getEvaluatedAt() { return evaluatedAt; }
+
+    // ==================== ENRICHMENT ACCESSORS (for persistence) ====================
+
+    /** NIFTY spot price at time of evaluation. 0 if not enriched. */
+    public double getSpotPrice() { return spotPrice; }
+
+    /** Computed VWAP value. 0 if not enriched or unavailable. */
+    public double getVwapValue() { return vwapValue; }
+
+    /** Evaluation duration in milliseconds. 0 if not enriched. */
+    public long getEvaluationDurationMs() { return evaluationDurationMs; }
+
+    /** Veto reason string (e.g., "BREAKOUT_HIGH", "EXCESSIVE_RANGE"). Null if no veto. */
+    public String getVetoReason() { return vetoReason; }
+
+    /** Time-based adjustment applied to final score. 0 if none. */
+    public int getTimeAdjustment() { return timeAdjustment; }
+
+    /** Whether the evaluation occurred on an expiry day. */
+    public boolean isExpiryDay() { return expiryDay; }
+
+    /** R1 VWAP deviation fraction (|price − VWAP| / VWAP). */
+    public double getVwapDeviation() { return vwapDeviation; }
+
+    /** R2 Range fraction ((highest − lowest) / price). */
+    public double getRangeFraction() { return rangeFraction; }
+
+    /** R3 Number of direction reversals in oscillation check. */
+    public int getOscillationReversals() { return oscillationReversals; }
+
+    /** R4 Latest ADX value. 0 if unavailable. */
+    public double getAdxValue() { return adxValue; }
 
     // ==================== BACKWARD-COMPAT ACCESSORS ====================
     // Compatible with MarketStateEvent consumers that use NeutralMarketResult conventions

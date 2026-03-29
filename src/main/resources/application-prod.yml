@@ -93,6 +93,7 @@ persistence:
     delta-snapshots-days: 180
     position-snapshots-days: 365
     order-timing-days: 180
+    neutral-market-log-days: 90
   cleanup:
     enabled: true
     cron: "0 0 2 * * ?"

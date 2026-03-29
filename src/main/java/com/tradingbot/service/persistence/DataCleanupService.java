@@ -34,6 +34,7 @@ public class DataCleanupService {
     private final StrategyConfigHistoryRepository strategyConfigHistoryRepository;
     private final WebSocketEventRepository webSocketEventRepository;
     private final SystemHealthSnapshotRepository systemHealthSnapshotRepository;
+    private final NeutralMarketLogRepository neutralMarketLogRepository;
 
     /**
      * Scheduled cleanup job.
@@ -116,6 +117,11 @@ public class DataCleanupService {
         log.debug("Cleaning up system health snapshots older than {}", healthCutoff);
         systemHealthSnapshotRepository.deleteByTimestampBefore(healthCutoff);
 
+        // Cleanup neutral market detection logs
+        LocalDateTime nmlCutoff = LocalDateTime.now().minusDays(retention.getNeutralMarketLogDays());
+        log.debug("Cleaning up neutral market logs older than {}", nmlCutoff);
+        neutralMarketLogRepository.deleteByEvaluatedAtBefore(nmlCutoff);
+
         result.setSuccess(true);
         return result;
     }
@@ -137,6 +143,7 @@ public class DataCleanupService {
         private long strategyConfigHistoryDeleted;
         private long websocketEventsDeleted;
         private long systemHealthSnapshotsDeleted;
+        private long neutralMarketLogsDeleted;
     }
 }
 
