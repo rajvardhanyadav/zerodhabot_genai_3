@@ -149,11 +149,11 @@ strategy:
   # ==================== DAILY P&L THRESHOLD CONFIGURATION ====================
   # Maximum cumulative daily profit (in INR) before auto-restart is halted and bot is stopped.
   # Set to 0 to disable. Example: 5000 = stop after ₹5,000 daily profit.
-  daily-max-profit: 2500
+  daily-max-profit: 5000
 
   # Maximum cumulative daily loss (in INR, positive number) before auto-restart is halted.
   # Set to 0 to disable. Example: 3000 = stop after ₹3,000 daily loss.
-  daily-max-loss: 2500
+  daily-max-loss: 5000
 
   # ==================== PREMIUM-BASED EXIT CONFIGURATION ====================
   # Dynamic exit based on percentage change from combined entry premium.
@@ -194,7 +194,7 @@ volatility:
   spike-threshold-pct: 1.0
 
   # Block if VIX > this % above previous day close (escalating vol = risky for seller)
-  max-vix-above-prev-close-pct: 5.0
+  max-vix-above-prev-close-pct: 7.0
 
   # Enable volatility filter during backtesting (false = preserve existing backtest behavior)
   backtest-enabled: false

@@ -50,5 +50,12 @@ public interface NeutralMarketEvaluation {
      * V3 implementations return 0 (the concept does not apply in the 3-layer model).
      */
     int minimumRequired();
+
+    /**
+     * Veto reason that blocked tradability despite a neutral regime.
+     * Returns {@code null} if no veto was applied or the market was tradable.
+     * Typical values: "BREAKOUT_HIGH", "EXCESSIVE_RANGE".
+     */
+    default String getVetoReason() { return null; }
 }
 

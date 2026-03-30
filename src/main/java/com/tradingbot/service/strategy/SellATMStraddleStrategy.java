@@ -205,14 +205,30 @@ public class SellATMStraddleStrategy extends BaseStrategy {
 
         if (!neutralResult.neutral()) {
             String failedSignals = neutralResult.summary();
-            log.info("[{}] Skipping straddle entry because market conditions are not neutral. " +
-                            "score={}/{} (minimum={}). Failed signals: {}",
-                    tradingMode, neutralResult.totalScore(), neutralResult.maxScore(),
-                    neutralResult.minimumRequired(), failedSignals);
-            return buildSkippedResponse(executionId,
-                    "Neutral market filter BLOCKED: score=" + neutralResult.totalScore()
-                    + "/" + neutralResult.maxScore() + " (minimum=" + neutralResult.minimumRequired()
-                    + "). " + neutralResult.summary());
+            String vetoReason = neutralResult.getVetoReason();
+            String regimeLabel = neutralResult.getRegimeLabel();
+
+            if (vetoReason != null && !"TRENDING".equals(regimeLabel)) {
+                // Regime IS neutral but a veto gate blocked tradability
+                log.warn("[{}] ⚠ Skipping straddle entry: regime={} (score={}/{}) but VETO GATE blocked placement. " +
+                                "vetoReason={}, signals=[{}]",
+                        tradingMode, regimeLabel, neutralResult.totalScore(), neutralResult.maxScore(),
+                        vetoReason, failedSignals);
+            } else {
+                log.info("[{}] Skipping straddle entry: market regime is {}. " +
+                                "score={}/{}, signals=[{}]",
+                        tradingMode, regimeLabel, neutralResult.totalScore(), neutralResult.maxScore(),
+                        failedSignals);
+            }
+
+            String blockReason = vetoReason != null
+                    ? "Neutral market filter BLOCKED by veto gate: " + vetoReason
+                            + " (regime=" + regimeLabel + ", score=" + neutralResult.totalScore()
+                            + "/" + neutralResult.maxScore() + "). " + neutralResult.summary()
+                    : "Neutral market filter BLOCKED: regime=" + regimeLabel
+                            + ", score=" + neutralResult.totalScore()
+                            + "/" + neutralResult.maxScore() + ". " + neutralResult.summary();
+            return buildSkippedResponse(executionId, blockReason);
         }
 
         log.info("[{}] Neutral market confirmed for {}. Proceeding with ATM straddle placement.",

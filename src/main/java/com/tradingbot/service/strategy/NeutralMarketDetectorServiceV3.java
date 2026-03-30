@@ -453,6 +453,13 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
                     String.format("%.2f", confidence), vetoReason, elapsed, summary);
         }
 
+        // Highlight veto-blocked entries with a dedicated WARN log for operator visibility
+        if (!tradable && vetoReason != null && regime != Regime.TRENDING) {
+            log.warn("⚠ V3 VETO: {} is {} (regimeScore={}) but BLOCKED by {}. " +
+                            "Straddle will NOT be placed until veto clears. breakoutRisk={}, excessiveRange={}",
+                    instrumentType, regime, regimeScore, vetoReason, breakoutRisk, excessiveRange);
+        }
+
         return new NeutralMarketResultV3(
                 tradable, regimeScore, microScore, finalScore, confidence,
                 regime, breakoutRisk, microTradable,

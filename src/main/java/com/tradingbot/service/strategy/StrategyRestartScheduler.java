@@ -242,9 +242,25 @@ public class StrategyRestartScheduler {
      */
     @EventListener
     public void onMarketStateEvent(MarketStateEvent event) {
+        log.info("Received MarketStateEvent for instrument {}: neutral={}, score={}/{}, vetoReason={}, {} pending restart(s) waiting",
+                event.instrumentType(), event.neutral(), event.score(), event.maxScore(),
+                event.result() != null ? event.result().getVetoReason() : "N/A", pendingRestarts.size());
         if (!event.neutral()) {
-            log.debug("Market not neutral for {} (score={}/{}), {} pending restart(s) waiting",
-                    event.instrumentType(), event.score(), event.maxScore(), pendingRestarts.size());
+            // Check if a veto gate blocked an otherwise-neutral regime
+            String vetoReason = event.result() != null ? event.result().getVetoReason() : null;
+            String regimeLabel = event.result() != null ? event.result().getRegimeLabel() : "UNKNOWN";
+
+            if (vetoReason != null && !"TRENDING".equals(regimeLabel) && !pendingRestarts.isEmpty()) {
+                // Regime is neutral but veto blocked — log at WARN so users can see why restart isn't firing
+                log.warn("⚠ Market regime is {} but VETO GATE blocked tradability for {}. " +
+                                "vetoReason={}, score={}/{}, {} pending restart(s) waiting. " +
+                                "Restart will trigger when veto clears.",
+                        regimeLabel, event.instrumentType(), vetoReason,
+                        event.score(), event.maxScore(), pendingRestarts.size());
+            } else {
+                log.debug("Market not neutral for {} (regime={}, score={}/{}), {} pending restart(s) waiting",
+                        event.instrumentType(), regimeLabel, event.score(), event.maxScore(), pendingRestarts.size());
+            }
             return;
         }
 
@@ -297,6 +313,8 @@ public class StrategyRestartScheduler {
                 tradingMode, bufferMs, executionId);
 
         Runnable executeTask = () -> {
+            log.info("[{}] Neutral market buffer elapsed. Attempting strategy restart for execution {}",
+                    tradingMode, executionId);
             // Guard against multiple simultaneous executions
             if (!executionInProgress.compareAndSet(false, true)) {
                 log.warn("Another strategy execution is already in progress. " +

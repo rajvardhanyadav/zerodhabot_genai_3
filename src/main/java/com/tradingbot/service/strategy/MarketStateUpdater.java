@@ -145,6 +145,15 @@ public class MarketStateUpdater {
                     log.debug("MarketStateUpdater: publishing event for {}: neutral={}, score={}/{}",
                             instrument, result.neutral(), result.totalScore(), result.maxScore());
 
+                    // Log at INFO when regime is neutral but veto gate blocks tradability
+                    String vetoReason = result.getVetoReason();
+                    if (!result.neutral() && vetoReason != null && !"TRENDING".equals(result.getRegimeLabel())) {
+                        log.info("MarketStateUpdater: {} regime={} but VETO blocked tradability. " +
+                                        "vetoReason={}, score={}/{}",
+                                instrument, result.getRegimeLabel(), vetoReason,
+                                result.totalScore(), result.maxScore());
+                    }
+
                     eventPublisher.publishEvent(event);
 
                     // Persist evaluation log asynchronously for historical analysis
