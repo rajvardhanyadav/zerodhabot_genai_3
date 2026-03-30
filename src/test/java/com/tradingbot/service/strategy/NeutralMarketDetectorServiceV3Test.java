@@ -71,11 +71,12 @@ class NeutralMarketDetectorServiceV3Test {
         c.setCacheTtlMs(15000);
 
         // Regime weights
-        c.setWeightVwapProximity(3);
+        c.setWeightVwapProximity(2);
         c.setWeightRangeCompression(2);
         c.setWeightOscillation(2);
         c.setWeightAdx(1);
         c.setWeightGammaPin(1);
+        c.setWeightNetDisplacement(2);
 
         // Regime thresholds
         c.setVwapProximityThreshold(0.004);
@@ -90,11 +91,13 @@ class NeutralMarketDetectorServiceV3Test {
         c.setAdxCandleCount(30);
         c.setGammaPinThreshold(0.002);
         c.setStrikesAroundAtm(5);
+        c.setNetDisplacementThreshold(0.002);
+        c.setNetDisplacementCandles(10);
 
         // Regime classification
         c.setRegimeStrongNeutralThreshold(6);
         c.setRegimeWeakNeutralThreshold(3);
-        c.setRegimeOnlyMinimumThreshold(3);
+        c.setRegimeOnlyMinimumThreshold(2);
 
         // Micro weights
         c.setWeightMicroVwapPullback(2);
@@ -449,13 +452,14 @@ class NeutralMarketDetectorServiceV3Test {
     class ADXTests {
 
         @Test
-        void whenNotEnoughTimeForADX_signalFails() {
+        void whenNotEnoughTimeForADX_signalGrantsPoint() {
             doReturn(false).when(detector).hasEnoughTimeForADX();
             stubFullMde(SPOT_PRICE, SPOT_PRICE, buildFlatCandles(SPOT_PRICE, 30));
 
             NeutralMarketResultV3 result = detector.evaluate("NIFTY");
 
-            assertFalse(result.getSignals().getOrDefault("ADX_TREND", true));
+            assertTrue(result.getSignals().getOrDefault("ADX_TREND", false),
+                    "ADX should grant point in early session (neutral assumption)");
         }
     }
 
@@ -468,9 +472,8 @@ class NeutralMarketDetectorServiceV3Test {
 
         @Test
         void highRegimeScore_strongNeutral() {
-            // Flat candles at VWAP → all regime signals pass (except ADX which needs candle data)
-            // VWAP=3, Range=2, Oscillation=0 (flat), ADX=0 (no data) → score depends on signals
-            // To get STRONG_NEUTRAL (≥6) we need VWAP(3)+Range(2)+Osc(2)=7
+            // Oscillating candles at VWAP → most regime signals pass
+            // VWAP(2)+Range(2)+Osc(2)+ADX(1,granted)+NetDisp(2)=9 ≥ 6 → STRONG_NEUTRAL
             List<HistoricalData> candles = buildOscillatingCandles(SPOT_PRICE, 2, 30);
             stubFullMde(SPOT_PRICE, SPOT_PRICE, candles);
 
@@ -483,20 +486,78 @@ class NeutralMarketDetectorServiceV3Test {
         @Test
         void lowRegimeScore_trending() {
             // Set very strict thresholds so all signals fail
-            config.setVwapProximityThreshold(0.0001); // Extremely strict
-            config.setRangeCompressionThreshold(0.00001);
-            config.setOscillationMinReversals(100);
-            config.setAdxThreshold(0.001);
+            config.setVwapProximityThreshold(0.0001); // Extremely strict — 1% VWAP deviation will fail
+            config.setRangeCompressionThreshold(0.0);  // Zero threshold — any range fails
+            config.setOscillationMinReversals(100);     // Impossible reversal count
+            config.setAdxThreshold(0.0);                // Zero threshold — any ADX fails
+            config.setNetDisplacementThreshold(0.0);    // Zero threshold — any displacement fails
             config.setRegimeOnlyMinimumThreshold(6);
             detector = createSpiedDetector(config);
 
-            List<HistoricalData> candles = buildFlatCandles(SPOT_PRICE, 30);
+            // Trending candles → non-zero range, non-zero displacement, non-zero ADX
+            List<HistoricalData> candles = buildTrendingCandles(SPOT_PRICE, 30, 30);
             stubFullMde(SPOT_PRICE, SPOT_PRICE * 1.01, candles);
-
             NeutralMarketResultV3 result = detector.evaluate("NIFTY");
 
             assertEquals(Regime.TRENDING, result.getRegime());
             assertFalse(result.isTradable());
+        }
+    }
+
+    // ==================================================================================
+    //               REGIME LAYER: SIGNAL R6 — NET DISPLACEMENT
+    // ==================================================================================
+
+    @Nested
+    class NetDisplacementTests {
+
+        @Test
+        void flatCandles_signalPasses() {
+            // Flat candles → net displacement ≈ 0 → well below threshold → passes
+            stubFullMde(SPOT_PRICE, SPOT_PRICE, buildFlatCandles(SPOT_PRICE, 30));
+
+            NeutralMarketResultV3 result = detector.evaluate("NIFTY");
+
+            assertTrue(result.getSignals().getOrDefault("NET_DISPLACEMENT", false),
+                    "Flat candles should have near-zero displacement");
+        }
+
+        @Test
+        void trendingCandles_signalFails() {
+            // Trending up by significant amount → net displacement >> threshold → fails
+            List<HistoricalData> candles = buildTrendingCandles(SPOT_PRICE, 30, 30);
+            double endPrice = SPOT_PRICE + 29 * 30;
+            stubFullMde(endPrice, SPOT_PRICE, candles);
+
+            NeutralMarketResultV3 result = detector.evaluate("NIFTY");
+
+            assertFalse(result.getSignals().getOrDefault("NET_DISPLACEMENT", true),
+                    "Strongly trending candles should fail net displacement");
+        }
+
+        @Test
+        void slowDriftAndReturn_signalPasses() {
+            // Drift up 5pts/candle for 15 candles, then back down — net displacement ≈ 0
+            // This is the key scenario that R3 Oscillation misses (only 1 reversal)
+            List<HistoricalData> candles = new ArrayList<>(30);
+            for (int i = 0; i < 15; i++) {
+                HistoricalData c = new HistoricalData();
+                double price = SPOT_PRICE + (i * 5);
+                c.open = price; c.high = price + 2; c.low = price - 2; c.close = price; c.volume = 0;
+                candles.add(c);
+            }
+            for (int i = 0; i < 15; i++) {
+                HistoricalData c = new HistoricalData();
+                double price = SPOT_PRICE + 70 - (i * 5);
+                c.open = price; c.high = price + 2; c.low = price - 2; c.close = price; c.volume = 0;
+                candles.add(c);
+            }
+            stubFullMde(SPOT_PRICE, SPOT_PRICE, candles);
+
+            NeutralMarketResultV3 result = detector.evaluate("NIFTY");
+
+            assertTrue(result.getSignals().getOrDefault("NET_DISPLACEMENT", false),
+                    "Slow drift up then back down should pass — price went nowhere");
         }
     }
 
@@ -679,7 +740,7 @@ class NeutralMarketDetectorServiceV3Test {
 
         @Test
         void regimeAboveThreshold_noVeto_tradable() {
-            // VWAP(3)+Range(2) = 5 >= regimeOnlyMin(3) → tradable
+            // Flat candles at VWAP: VWAP(2)+Range(2)+ADX(1,granted)+NetDisp(2)=7 >= regimeOnlyMin(2) → tradable
             stubFullMde(SPOT_PRICE, SPOT_PRICE, buildFlatCandles(SPOT_PRICE, 30));
 
             NeutralMarketResultV3 result = detector.evaluate("NIFTY");
@@ -690,10 +751,10 @@ class NeutralMarketDetectorServiceV3Test {
 
         @Test
         void regimeBelowThreshold_notTradable() {
-            config.setRegimeOnlyMinimumThreshold(9); // Very high threshold
+            config.setRegimeOnlyMinimumThreshold(12); // Very high threshold
             detector = createSpiedDetector(config);
 
-            // Only VWAP passes → score 3 < 9
+            // Multiple signals pass but threshold is unreachable
             stubFullMde(SPOT_PRICE, SPOT_PRICE, buildFlatCandles(SPOT_PRICE, 30));
 
             NeutralMarketResultV3 result = detector.evaluate("NIFTY");
@@ -822,6 +883,7 @@ class NeutralMarketDetectorServiceV3Test {
             assertTrue(signals.containsKey("RANGE_COMPRESSION"));
             assertTrue(signals.containsKey("OSCILLATION"));
             assertTrue(signals.containsKey("ADX_TREND"));
+            assertTrue(signals.containsKey("NET_DISPLACEMENT"));
             assertTrue(signals.containsKey("MICRO_VWAP_PULLBACK"));
             assertTrue(signals.containsKey("MICRO_HF_OSCILLATION"));
             assertTrue(signals.containsKey("MICRO_RANGE_STABILITY"));

@@ -139,14 +139,15 @@ public class NeutralMarketLogService {
         List<Object[]> signalCounts = neutralMarketLogRepository.findSignalPassCountsByDate(date);
         if (!signalCounts.isEmpty()) {
             Object[] row = signalCounts.get(0);
-            long total = ((Number) row[8]).longValue();
+            long total = ((Number) row[9]).longValue();
             if (total > 0) {
                 Map<String, String> signalRates = new LinkedHashMap<>();
                 String[] signalNames = {
                         "VWAP_PROXIMITY", "RANGE_COMPRESSION", "OSCILLATION", "ADX_TREND",
-                        "GAMMA_PIN", "MICRO_VWAP_PULLBACK", "MICRO_HF_OSCILLATION", "MICRO_RANGE_STABILITY"
+                        "GAMMA_PIN", "NET_DISPLACEMENT",
+                        "MICRO_VWAP_PULLBACK", "MICRO_HF_OSCILLATION", "MICRO_RANGE_STABILITY"
                 };
-                for (int i = 0; i < 8; i++) {
+                for (int i = 0; i < 9; i++) {
                     long passCount = row[i] != null ? ((Number) row[i]).longValue() : 0;
                     double pct = Math.round((double) passCount / total * 10000.0) / 100.0;
                     signalRates.put(signalNames[i], passCount + "/" + total + " (" + pct + "%)");
@@ -199,6 +200,8 @@ public class NeutralMarketLogService {
                 .adxPassed(getSignal(signals, "ADX_TREND"))
                 .adxValue(result.getAdxValue())
                 .gammaPinPassed(getSignal(signals, "GAMMA_PIN"))
+                .netDisplacementPassed(getSignal(signals, "NET_DISPLACEMENT"))
+                .netDisplacement(result.getNetDisplacement())
                 .expiryDay(result.isExpiryDay())
                 // Microstructure signals (M1–M3)
                 .microVwapPullbackPassed(getSignal(signals, "MICRO_VWAP_PULLBACK"))

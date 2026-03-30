@@ -79,6 +79,7 @@ public interface NeutralMarketLogRepository extends JpaRepository<NeutralMarketL
            "SUM(CASE WHEN n.oscillationPassed = true THEN 1 ELSE 0 END), " +
            "SUM(CASE WHEN n.adxPassed = true THEN 1 ELSE 0 END), " +
            "SUM(CASE WHEN n.gammaPinPassed = true THEN 1 ELSE 0 END), " +
+           "SUM(CASE WHEN n.netDisplacementPassed = true THEN 1 ELSE 0 END), " +
            "SUM(CASE WHEN n.microVwapPullbackPassed = true THEN 1 ELSE 0 END), " +
            "SUM(CASE WHEN n.microHfOscillationPassed = true THEN 1 ELSE 0 END), " +
            "SUM(CASE WHEN n.microRangeStabilityPassed = true THEN 1 ELSE 0 END), " +

@@ -14,9 +14,9 @@ import java.util.Map;
  *
  * <h2>Score Breakdown</h2>
  * <ul>
- *   <li><b>Regime Score</b> (0–9): Macro neutrality from VWAP, range, oscillation, ADX, gamma pin</li>
+ *   <li><b>Regime Score</b> (0–10): Macro neutrality from VWAP, range, oscillation, ADX, gamma pin, net displacement</li>
  *   <li><b>Micro Score</b> (0–5): Immediate tradable opportunity from pullback, HF oscillation, range stability</li>
- *   <li><b>Final Score</b> (0–14+): regime + micro, time-adjusted. Used for confidence.</li>
+ *   <li><b>Final Score</b> (0–15+): regime + micro, time-adjusted. Used for confidence.</li>
  * </ul>
  *
  * <h2>HFT Safety</h2>
@@ -65,6 +65,7 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
     private final double rangeFraction;
     private final int oscillationReversals;
     private final double adxValue;
+    private final double netDisplacement;
 
     // ==================== CONSTRUCTOR (original — backward compat) ====================
     public NeutralMarketResultV3(boolean tradable, int regimeScore, int microScore, int finalScore,
@@ -74,7 +75,7 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
         this(tradable, regimeScore, microScore, finalScore, confidence, regime, breakoutRisk,
                 microTradable, signals, summary, evaluatedAt,
                 0.0, 0.0, 0L, null, 0, false,
-                0.0, 0.0, 0, 0.0);
+                0.0, 0.0, 0, 0.0, 0.0);
     }
 
     // ==================== CONSTRUCTOR (enriched — with persistence detail) ====================
@@ -85,7 +86,7 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
                                  double spotPrice, double vwapValue, long evaluationDurationMs,
                                  String vetoReason, int timeAdjustment, boolean expiryDay,
                                  double vwapDeviation, double rangeFraction,
-                                 int oscillationReversals, double adxValue) {
+                                 int oscillationReversals, double adxValue, double netDisplacement) {
         this.tradable = tradable;
         this.regimeScore = regimeScore;
         this.microScore = microScore;
@@ -107,6 +108,7 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
         this.rangeFraction = rangeFraction;
         this.oscillationReversals = oscillationReversals;
         this.adxValue = adxValue;
+        this.netDisplacement = netDisplacement;
     }
 
     // ==================== ACCESSORS ====================
@@ -175,6 +177,9 @@ public final class NeutralMarketResultV3 implements NeutralMarketEvaluation {
 
     /** R4 Latest ADX value. 0 if unavailable. */
     public double getAdxValue() { return adxValue; }
+
+    /** R6 Net displacement fraction (|lastClose − firstClose| / price). */
+    public double getNetDisplacement() { return netDisplacement; }
 
     // ==================== BACKWARD-COMPAT ACCESSORS ====================
     // Compatible with MarketStateEvent consumers that use NeutralMarketResult conventions

@@ -132,6 +132,12 @@ public class NeutralMarketLogEntity {
     @Column(nullable = false)
     private Boolean gammaPinPassed;
 
+    /** R6: Net Displacement — |lastClose − firstClose| / price < threshold (price went nowhere) */
+    private Boolean netDisplacementPassed;
+
+    /** R6: Actual net displacement fraction */
+    private Double netDisplacement;
+
     /** Whether evaluation occurred on an expiry day */
     @Column(nullable = false)
     private Boolean expiryDay;

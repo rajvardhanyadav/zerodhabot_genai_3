@@ -31,8 +31,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <h2>Architecture: 3-Layer Detection</h2>
  * <ol>
- *   <li><b>Regime Layer</b> (0–9 pts): Macro neutrality — VWAP proximity, range compression,
- *       price oscillation, ADX, gamma pin. Classifies market as STRONG_NEUTRAL / WEAK_NEUTRAL / TRENDING.</li>
+ *   <li><b>Regime Layer</b> (0–10 pts): Macro neutrality — VWAP proximity, range compression,
+ *       price oscillation, ADX, gamma pin, net displacement. Classifies market as STRONG_NEUTRAL / WEAK_NEUTRAL / TRENDING.</li>
  *   <li><b>Microstructure Layer</b> (0–5 pts): Immediate tradable signal — VWAP pullback momentum,
  *       high-frequency oscillation, micro range stability. Detects the precise moment to enter.</li>
  *   <li><b>Breakout Risk Layer</b>: Safety gate — tight range + edge proximity + momentum buildup.
@@ -251,14 +251,15 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         double strikeInterval = getStrikeInterval(instrumentType);
 
         // ==================== SIGNAL BREAKDOWN MAP ====================
-        // Pre-allocate with expected capacity: 5 regime + 3 micro + 3 breakout = 11
-        Map<String, Boolean> signalMap = new LinkedHashMap<>(12);
+        // Pre-allocate with expected capacity: 6 regime + 3 micro + 3 breakout = 12
+        Map<String, Boolean> signalMap = new LinkedHashMap<>(14);
 
         // ==================== PER-SIGNAL NUMERIC TRACKERS (for persistence) ====================
         double numericVwapDeviation = (vwap > 0) ? Math.abs(spotPrice - vwap) / vwap : 0.0;
         double numericRangeFraction = 0.0;
         int numericOscillationReversals = 0;
         double numericAdxValue = 0.0;
+        double numericNetDisplacement = 0.0;
 
         // ======================================================================
         //                       LAYER 1: REGIME (0–9 pts)
@@ -309,6 +310,15 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
             }
         }
 
+        // Signal R6: Net Displacement (+2) — catches slow-drift neutral markets R3 misses
+        boolean netDisplacementPassed = evaluateNetDisplacement(spotPrice, candles);
+        signalMap.put("NET_DISPLACEMENT", netDisplacementPassed);
+        if (netDisplacementPassed) {
+            regimeScore += config.getWeightNetDisplacement();
+        }
+        // Capture numeric net displacement for persistence
+        numericNetDisplacement = computeNetDisplacementFraction(spotPrice, candles, config.getNetDisplacementCandles());
+
         // Classify regime
         Regime regime;
         if (regimeScore >= config.getRegimeStrongNeutralThreshold()) {
@@ -319,9 +329,9 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
             regime = Regime.TRENDING;
         }
 
-        log.debug("V3 Regime: score={}, regime={}, vwap={}, range={}, osc={}, adx={}, gamma={}",
+        log.debug("V3 Regime: score={}, regime={}, vwap={}, range={}, osc={}, adx={}, gamma={}, netDisp={}",
                 regimeScore, regime, vwapProximityPassed, rangeCompressionPassed,
-                oscillationPassed, adxPassed, isExpiryDay ? gammaPinPassed : "N/A");
+                oscillationPassed, adxPassed, isExpiryDay ? gammaPinPassed : "N/A", netDisplacementPassed);
 
         // ======================================================================
         //                  LAYER 2: MICROSTRUCTURE (0–5 pts)
@@ -423,6 +433,7 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         if (isExpiryDay) {
             sb.append(gammaPinPassed ? " G✓" : " G✗");
         }
+        sb.append(netDisplacementPassed ? " ND✓" : " ND✗");
         sb.append("]=").append(regimeScore);
         sb.append(" M[");
         sb.append(microVwapPullbackPassed ? "VP✓" : "VP✗");
@@ -466,7 +477,7 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
                 signalMap, summary, Instant.ofEpochMilli(startTime),
                 spotPrice, vwap, elapsed, vetoReason, timeAdjustment, isExpiryDay,
                 numericVwapDeviation, numericRangeFraction,
-                numericOscillationReversals, numericAdxValue
+                numericOscillationReversals, numericAdxValue, numericNetDisplacement
         );
     }
 
@@ -576,6 +587,43 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
         return passed;
     }
 
+    /**
+     * R6: Net Displacement — |lastClose − firstClose| / price over last N candles.
+     *
+     * <p>Catches slow-drift neutral markets where price went nowhere overall despite
+     * minimal direction reversals. This complements R3 Oscillation which measures
+     * choppy <em>path</em> (many reversals), while Net Displacement measures the
+     * <em>destination</em> (did price actually go anywhere?).</p>
+     *
+     * <p>Example: NIFTY drifts slowly up 50pts over 5 candles then slowly back down 50pts
+     * over the next 5 candles. R3 sees only 1 reversal (fails), but Net Displacement sees
+     * net movement ≈ 0 (passes). This is a genuinely neutral market that R3 alone misses.</p>
+     *
+     * <p>HFT: Two array accesses + one division. Zero allocations.</p>
+     *
+     * @return true if net displacement < threshold (price went nowhere)
+     */
+    private boolean evaluateNetDisplacement(double spotPrice, List<HistoricalData> candles) {
+        int required = config.getNetDisplacementCandles();
+        if (candles.size() < required) {
+            log.debug("V3 R6 NET_DISPLACEMENT: insufficient candles ({}/{})", candles.size(), required);
+            return false;
+        }
+
+        int startIdx = candles.size() - required;
+        double firstClose = candles.get(startIdx).close;
+        double lastClose = candles.get(candles.size() - 1).close;
+        double displacement = Math.abs(lastClose - firstClose) / spotPrice;
+        boolean passed = displacement < config.getNetDisplacementThreshold();
+
+        if (log.isDebugEnabled()) {
+            log.debug("V3 R6 NET_DISPLACEMENT: first={}, last={}, displacement={}, threshold={}, passed={}",
+                    String.format("%.2f", firstClose), String.format("%.2f", lastClose),
+                    String.format("%.5f", displacement), config.getNetDisplacementThreshold(), passed);
+        }
+        return passed;
+    }
+
     // ==================================================================================
     //            NUMERIC VALUE EXTRACTORS (for persistence enrichment)
     // ==================================================================================
@@ -618,6 +666,16 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
     }
 
     /**
+     * Compute net displacement fraction for persistence.
+     * Returns |lastClose − firstClose| / spotPrice over the last N candles.
+     */
+    private double computeNetDisplacementFraction(double spotPrice, List<HistoricalData> candles, int required) {
+        if (spotPrice <= 0 || candles == null || candles.size() < required) return 0.0;
+        int startIdx = candles.size() - required;
+        return Math.abs(candles.get(candles.size() - 1).close - candles.get(startIdx).close) / spotPrice;
+    }
+
+    /**
      * Compute latest ADX value for persistence. Returns 0 if unavailable.
      */
     private double computeLatestADX(String instrumentType) {
@@ -645,9 +703,11 @@ public class NeutralMarketDetectorServiceV3 implements NeutralMarketDetector {
      */
     private boolean evaluateADX(String instrumentType) {
         // Early session guard: not enough candles for meaningful ADX
+        // Grant the point as a neutral assumption — the opening time −1 penalty
+        // already provides safety. This recovers the first 20 minutes of each trading day.
         if (!hasEnoughTimeForADX()) {
-            log.debug("V3 R4 ADX: early session, insufficient time for ADX. Failing signal.");
-            return false;
+            log.debug("V3 R4 ADX: early session, granting point (neutral assumption until proven trending)");
+            return true;
         }
 
         // Fetch candles for ADX (may use different interval than 1-min)

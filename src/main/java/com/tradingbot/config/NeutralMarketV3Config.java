@@ -53,8 +53,8 @@ public class NeutralMarketV3Config {
 
     // ==================== REGIME LAYER: WEIGHTS ====================
 
-    /** Weight for VWAP Proximity signal. Default: 3 (highest — core mean-reversion signal) */
-    private int weightVwapProximity = 3;
+    /** Weight for VWAP Proximity signal. Default: 2 (reduced from 3 to eliminate single-point-of-failure) */
+    private int weightVwapProximity = 2;
 
     /** Weight for Range Compression signal. Default: 2 */
     private int weightRangeCompression = 2;
@@ -67,6 +67,13 @@ public class NeutralMarketV3Config {
 
     /** Weight for Gamma Pin signal (expiry day only). Default: 1 */
     private int weightGammaPin = 1;
+
+    /**
+     * Weight for Net Displacement signal. Default: 2.
+     * Catches slow-drift neutral markets where R3 Oscillation fails (few reversals)
+     * but price went nowhere overall — indicating range-bound behavior.
+     */
+    private int weightNetDisplacement = 2;
 
     // ==================== REGIME LAYER: THRESHOLDS ====================
 
@@ -108,6 +115,16 @@ public class NeutralMarketV3Config {
 
     /** Number of strikes each side of ATM to scan for OI. Default: 5 */
     private int strikesAroundAtm = 5;
+
+    /**
+     * Net Displacement: max |lastClose − firstClose| / price to pass.
+     * Catches slow-drift neutral markets where price went nowhere over the window.
+     * Default: 0.002 (0.2% = ~48pts at NIFTY 24000)
+     */
+    private double netDisplacementThreshold = 0.002;
+
+    /** Number of 1-min candles for net displacement check. Default: 10 */
+    private int netDisplacementCandles = 10;
 
     // ==================== REGIME LAYER: CLASSIFICATION ====================
 
@@ -223,8 +240,8 @@ public class NeutralMarketV3Config {
      * Under the "danger veto + confidence scoring" model, the micro layer is a
      * bonus for position sizing — NOT a hard requirement for entry.
      * Trade is allowed when regimeScore >= this threshold (and no veto gates fired).
-     * Default: 3
+     * Default: 2 (allows any single 2-weight signal like Range or NetDisplacement to qualify)
      */
-    private int regimeOnlyMinimumThreshold = 3;
+    private int regimeOnlyMinimumThreshold = 2;
 }
 
